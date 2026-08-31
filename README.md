@@ -1,484 +1,563 @@
-Exir Finance AI Assistant
+# Exir AI Platform
 
-Exir Finance AI Assistant is an agentic finance intelligence platform designed to transform traditional financial reporting into an automated decision-support system for finance and treasury managers.
+> Enterprise Agentic AI Platform for automation, analytics, forecasting, and intelligent decision support across business departments.
 
-The platform connects to enterprise financial data sources, runs deterministic financial rules and forecasting services, exposes them as tools, and uses specialized AI agents to interpret the results, prioritize risks, and generate manager-friendly recommendations.
+Exir AI Platform is a modular enterprise AI system designed to connect organizational data, business rules, automation workflows, analytical engines, and specialized AI agents into one intelligent platform.
 
-The project is currently focused on treasury and finance intelligence, with a broader goal of becoming a modular enterprise AI platform.
+Finance and Treasury are currently the first implemented domains, while the architecture is designed to expand across Sales, Warehouse, Production, Planning, Marketing, HR, Procurement, Export, Quality Control, and other organizational departments.
 
-Core Idea
+---
 
-Traditional finance systems usually answer questions such as:
+## Platform Overview
 
-What is the current account balance?
-What payments were made today?
-Which cheques are overdue?
-How much was collected this month?
-
-Exir Finance AI Assistant goes one step further.
-
-It aims to answer:
-
-What needs management attention today?
-Which customers are becoming risky?
-Which receivables should be collected first?
-Is there a possible cash shortage in the coming weeks?
-Which payments may create liquidity pressure?
-What changed compared with previous periods?
-What actions should the finance team prioritize?
-
-The platform separates financial calculation from AI interpretation.
-
-SQL Server
-    ↓
-Finance Services
-    ↓
-Rules / Forecast / Prediction Engines
-    ↓
-Agent Tools
-    ↓
-Finance AI Agents
-    ↓
+```text
+Enterprise Systems
+       │
+       ▼
+SQL Server / ERP / Excel / APIs
+       │
+       ▼
+Services & Business Rules
+       │
+       ▼
+Tools & Prediction Engines
+       │
+       ▼
+Specialized AI Agents
+       │
+       ▼
+Automation & Orchestration
+       │
+       ▼
+Enterprise AI Assistant
+       │
+       ▼
 Dashboard / Alerts / Recommendations
+```
 
-Financial values are calculated by deterministic services and SQL queries. AI agents are used for interpretation, prioritization, explanation, and decision support.
+The platform is designed to go beyond traditional reporting.
 
-Architecture
-Frontend Dashboard
-        ↓
-FastAPI Backend
-        ↓
-Agent Layer
-        ↓
-Tools
-        ↓
-Services
-        ↓
-Repositories / SQL Queries
-        ↓
-SQL Server / ERP
+Instead of only answering:
 
-The system follows a layered architecture to keep financial calculations auditable and controlled.
+> What happened?
 
-Main Components
-Treasury Services
+it aims to help managers understand:
 
-Treasury services provide direct access to operational finance data.
+> Why did it happen?
 
-Current capabilities include:
+> What is changing?
 
-Account search
-Account balances
-Account transactions
-Latest receipts
-Latest payments
-Received cheques
-Issued cheques
-Cheque due reports
-Received cheque status reports
-Customer cheque settlement
-Receivable reports
-Reconciliation reports
-Treasury briefing
-Payment planning
-Treasury Tools
+> What may happen next?
 
-Treasury services are exposed to agents through a controlled tool layer.
+> Which issue should be handled first?
 
-Examples:
+> What action should be considered?
 
+---
+
+# Screenshots
+
+## Enterprise Dashboard
+
+![Exir AI Platform Dashboard](docs/images/dashboard-overview.png)
+
+The main dashboard provides management with a consolidated view of KPIs, risks, alerts, forecasts, and AI-generated insights.
+
+---
+
+## Treasury Intelligence
+
+![Treasury Dashboard](docs/images/treasury-dashboard.png)
+
+Treasury intelligence includes account balances, receipts, payments, cheque monitoring, liquidity information, and operational alerts.
+
+---
+
+## Customer Risk Intelligence
+
+![Customer Risk](docs/images/customer-risk.png)
+
+Customer intelligence combines financial exposure, overdue amounts, payment behavior, cheque history, and explainable risk indicators.
+
+---
+
+## Cash Flow Forecast
+
+![Cash Flow Forecast](docs/images/cashflow-forecast.png)
+
+The forecasting engine estimates future cash inflows, outflows, liquidity pressure, and possible shortage scenarios.
+
+---
+
+## AI Agent Analysis
+
+![AI Agent Analysis](docs/images/agent-analysis.png)
+
+AI agents receive structured and validated outputs from backend services and convert them into management-oriented explanations and recommended actions.
+
+---
+
+# Core Capabilities
+
+| Capability                  | Description                                              | Status         |
+| --------------------------- | -------------------------------------------------------- | -------------- |
+| Enterprise SQL Integration  | Connect organizational databases to the AI platform      | ✅ Implemented  |
+| Treasury Intelligence       | Accounts, transactions, receipts, payments and cheques   | ✅ Implemented  |
+| Customer Risk Analysis      | Analyze customer financial behavior and exposure         | ✅ Implemented  |
+| Cash Flow Forecasting       | Forecast future inflows, outflows and liquidity pressure | ✅ MVP          |
+| Collection Prioritization   | Rank customers based on exposure and collection risk     | ✅ Implemented  |
+| Financial Anomaly Detection | Identify unusual financial activities for review         | ✅ MVP          |
+| AI Financial Analysis       | Generate management-friendly explanations                | ✅ MVP          |
+| Automation Engine           | Automatically execute intelligence workflows             | 🟡 In Progress |
+| Historical Intelligence     | Compare risk, forecasts and KPIs over time               | 🟡 In Progress |
+| Dynamic SQL Assistant       | Answer ad-hoc questions using validated read-only SQL    | 🟡 In Progress |
+| Sales Intelligence          | Sales analysis and forecasting                           | 🔵 Planned     |
+| Warehouse Intelligence      | Inventory risk and stock optimization                    | 🔵 Planned     |
+| Production Intelligence     | Production planning and operational intelligence         | 🔵 Planned     |
+| HR Intelligence             | Workforce analytics and HR assistant                     | 🔵 Planned     |
+| Marketing Intelligence      | Campaign and marketing performance analysis              | 🔵 Planned     |
+
+---
+
+# Architecture
+
+```text
+                         ┌─────────────────────┐
+                         │      Frontend       │
+                         │ Dashboard / Chat UI │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │   FastAPI Backend   │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                       ┌─────────────────────────┐
+                       │ Enterprise Agent Manager│
+                       └────────────┬────────────┘
+                                    │
+                ┌───────────────────┼───────────────────┐
+                ▼                   ▼                   ▼
+         Finance Agent        Sales Agent       Operations Agent
+                │                   │                   │
+                ▼                   ▼                   ▼
+         Specialist Agents    Specialist Agents   Specialist Agents
+                │
+                ▼
+              Tools
+                │
+                ▼
+        Business Services
+                │
+                ▼
+        Prediction Engines
+                │
+                ▼
+       Repository / SQL Layer
+                │
+                ▼
+        SQL Server / ERP / APIs
+```
+
+---
+
+# Agent Architecture
+
+The platform follows a hierarchical multi-agent architecture.
+
+| Agent                    | Responsibility                             | Current Status           |
+| ------------------------ | ------------------------------------------ | ------------------------ |
+| Enterprise Manager Agent | Coordinate business-domain agents          | 🔵 Planned               |
+| Finance Manager Agent    | Coordinate financial intelligence          | 🟡 Planned / In Design   |
+| Treasury Agent           | Access and analyze treasury operations     | ✅ Foundation Implemented |
+| Finance Analyst Agent    | Interpret financial KPIs and risks         | ✅ MVP                    |
+| Customer Behavior Agent  | Analyze customer financial behavior        | ✅ Implemented            |
+| Collection Agent         | Prioritize collection activities           | 🔵 Planned               |
+| Cash Flow Agent          | Interpret cash-flow forecasts              | 🔵 Planned               |
+| Reconciliation Agent     | Investigate reconciliation exceptions      | 🔵 Planned               |
+| Sales Agent              | Analyze sales performance                  | 🔵 Planned               |
+| Warehouse Agent          | Analyze inventory and warehouse operations | 🔵 Planned               |
+| Production Agent         | Support production planning                | 🔵 Planned               |
+| HR Agent                 | Workforce intelligence                     | 🔵 Planned               |
+| Marketing Agent          | Marketing intelligence and ROI analysis    | 🔵 Planned               |
+
+---
+
+# Business Logic Design
+
+One of the core design principles of Exir AI Platform is separation between deterministic business logic and AI reasoning.
+
+```text
+Business Data
+     ↓
+Service Layer
+     ↓
+Rules / Calculations
+     ↓
+Tool Layer
+     ↓
+AI Agent
+     ↓
+Explanation / Recommendation
+```
+
+## Service Layer
+
+Services are responsible for:
+
+* SQL queries
+* Financial formulas
+* Company business rules
+* Risk thresholds
+* KPI calculations
+* Forecast calculations
+* Validation
+
+Example:
+
+```python
+risk_score = (
+    0.45 * late_payment_risk
+    + 0.35 * cheque_return_risk
+    + 0.20 * overdue_ratio
+)
+```
+
+These calculations remain deterministic and auditable.
+
+## Tool Layer
+
+Tools expose controlled capabilities to AI agents.
+
+Example:
+
+```python
 account_balance_tool()
-account_transactions_tool()
 latest_receipts_tool()
 latest_payments_tool()
-latest_received_cheques_tool()
-latest_issued_cheques_tool()
 cheque_due_report_tool()
-customer_cheque_settlement_tool()
+cash_shortage_prediction_tool()
+collection_priority_tool()
+```
 
-This allows an AI agent to request financial information without directly accessing or generating uncontrolled SQL.
+## Agent Layer
 
-Finance Prediction Service
+Agents are responsible for:
 
-FinancePredictionService is the analytical engine of the platform.
+* Understanding user intent
+* Selecting the correct tool
+* Combining multiple outputs
+* Interpreting results
+* Prioritizing issues
+* Explaining risks
+* Suggesting possible actions
 
-It works directly with company SQL data and produces explainable rule-based and empirical financial predictions.
+Agents should not invent financial values.
 
-Current capabilities include:
+---
 
-Customer Collection Prediction
+# Finance Module
 
-Analyzes customer cheque history and current exposure to estimate:
+Finance is currently the most developed domain.
 
-Expected collection amount
-Collection probability
-Late payment risk
-Cheque return probability
-Current overdue exposure
-Collection priority
-Late Payment Risk
+## Treasury Capabilities
 
-Late-payment risk is calculated using a transparent weighted model based on factors such as:
+| Feature                | Description                                |
+| ---------------------- | ------------------------------------------ |
+| Account Search         | Find treasury accounts by name             |
+| Account Balance        | Retrieve current account information       |
+| Account Transactions   | Review recent account transactions         |
+| Latest Receipts        | Retrieve approved receipt documents        |
+| Latest Payments        | Retrieve approved payment documents        |
+| Received Cheques       | Monitor customer cheques                   |
+| Issued Cheques         | Monitor company-issued cheques             |
+| Cheque Due Reports     | Analyze upcoming and overdue cheques       |
+| Cheque Status Analysis | Review collected and protested cheques     |
+| Customer Settlement    | Analyze cheque-based customer settlement   |
+| Payment Planning       | Estimate payment pressure                  |
+| Treasury Briefing      | Create daily treasury intelligence summary |
 
-Overdue cheque ratio
-Policy-term violations
-Historical cheque return rate
+---
 
-Example concept:
+# Prediction & Intelligence Engine
 
-Late Payment Risk =
-50% Overdue Exposure
-+
-25% Policy Deviation
-+
-25% Historical Return Risk
+The platform currently contains an explainable prediction service.
 
-These values are explainable and auditable.
+Current engines include:
 
-The current implementation is not presented as a trained machine-learning probability model.
+| Engine                         | Output                             |
+| ------------------------------ | ---------------------------------- |
+| Customer Collection Prediction | Expected customer collection       |
+| Late Payment Risk              | Estimated risk of payment delay    |
+| Cheque Return Prediction       | Explainable cheque-return risk     |
+| Cash Shortage Forecast         | Future liquidity-pressure timeline |
+| Collection Priority            | Customer collection priority score |
 
-Cheque Return Prediction
+Current financial predictions are transparent empirical and rule-based estimates.
 
-The system estimates the risk of future received cheques using:
+They are not represented as trained machine-learning probabilities unless an actual trained and validated ML model is deployed.
 
-Customer historical cheque behavior
-Cheque amount compared with historical average
-Cheque maturity period
-Current overdue exposure
-Company cheque-term policy
+---
 
-Outputs include:
+# Customer Intelligence
 
-Estimated return probability
-Risk level
-Evidence
-Calculation method
-Cash Shortage Forecast
+Customer intelligence combines:
 
-The cash-flow engine analyzes:
+* Open financial exposure
+* Overdue exposure
+* Cheque history
+* Returned cheques
+* Payment-term deviations
+* Expected collection
+* Late-payment risk
+* Collection priority
 
-Historical receipts
-Historical payments
-Upcoming received cheques
-Upcoming issued cheques
-Optional opening cash balance
+Example structured result:
 
-It creates a daily timeline containing:
-
-Projected inflow
-Projected outflow
-Net daily movement
-Cumulative movement
-Possible shortage date
-Number of negative cash-pressure days
-Collection Priority
-
-Customers are ranked according to a weighted collection-priority score using factors such as:
-
-Open financial exposure
-Overdue ratio
-Late-payment risk
-Cheque-return risk
-
-This allows the finance team to focus collection efforts where they can have the highest short-term impact.
-
-Customer Intelligence Service
-
-CustomerIntelligenceService sits above the prediction engine.
-
-It converts prediction outputs into a structured customer intelligence dashboard.
-
-Responsibilities include:
-
-Customer risk scoring
-Risk-level classification
-Customer prioritization
-Exposure aggregation
-Expected collection aggregation
-Risk alerts
-Customer-level decision context
-
-Example output:
-
+```json
 {
-  "counterpart_name": "Customer A",
+  "customer": "Customer A",
   "risk_score": 78,
   "risk_level": "high",
   "open_exposure": 5000000000,
-  "overdue_open_amount": 1800000000,
-  "expected_collection_amount": 3200000000
+  "overdue_amount": 1800000000,
+  "expected_collection": 3200000000
 }
-AI Agents
-Customer Behavior Agent
+```
 
-The Customer Behavior Agent receives structured outputs from the financial engines and converts them into human-readable managerial analysis.
+The AI agent can then explain why this customer needs management attention.
 
-The agent is instructed not to invent, recalculate, or modify financial values.
+---
 
-Its responsibilities include:
+# Automation
 
-Executive summary
-Good signals
-Bad signals
-Future outlook
-Recommended actions
-Next best action
+The platform is being designed to operate proactively.
 
-Example flow:
-
-SQL Data
-   ↓
-FinancePredictionService
-   ↓
-CustomerIntelligenceService
-   ↓
-Customer Behavior Agent
-   ↓
-Manager-Friendly Analysis
-
-The agent can use an LLM when configured. If the LLM is unavailable, the system can fall back to rule-based analysis.
-
-Treasury Agent
-
-The Treasury Agent acts as an intelligent assistant for treasury operations.
-
-Instead of directly querying the database, it uses controlled treasury tools.
-
-Example questions:
-
-What is the balance of this treasury account?
-Show the latest payments.
-Which cheques are due this week?
-Which received cheques were protested?
-Show the financial profile of this customer.
-
-The agent chooses the appropriate tool and returns a structured response.
-
-Finance Analyst Agent
-
-The Finance Analyst Agent focuses on interpretation rather than raw data retrieval.
-
-Its role is to analyze outputs from:
-
-Treasury services
-Customer risk engines
-Cash-flow forecasts
-Alerts
-Collection priorities
-Financial prediction services
-
-The goal is to answer:
-
-What do these financial signals mean for management?
-
-Planned Finance Manager Agent
-
-A higher-level Finance Manager Agent is planned as the orchestration layer above specialized finance agents.
-
-Its role will be to:
-
-Understand management questions
-Select the appropriate specialist agent
-Combine multiple agent outputs
-Produce executive-level finance summaries
-Prioritize actions across treasury, risk, collection, and forecasting
-
-Planned architecture:
-
-Finance Manager Agent
-        ↓
------------------------------------
-|                |                |
-Treasury Agent   Finance Analyst  Customer Behavior Agent
-|                |                |
-Tools            Tools            Tools
------------------------------------
-        ↓
-Finance Services
-        ↓
-SQL Server
-Automation
-
-The long-term direction of the project is not only conversational AI.
-
-The platform is designed to support autonomous finance monitoring.
-
-Example daily workflow:
-
+```text
 Scheduler
     ↓
-Read Latest SQL Data
+Read Latest Business Data
     ↓
-Run Finance Engines
+Run Business Rules
     ↓
-Run Risk Checks
+Run Prediction Engines
     ↓
-Run Cashflow Forecast
-    ↓
-Run Collection Priorities
+Detect Important Changes
     ↓
 Generate Alerts
     ↓
-Run Finance AI Analysis
+Run AI Analysis
     ↓
-Save History Snapshot
+Save Historical Snapshot
     ↓
 Update Dashboard
+```
 
-This allows management to receive financial intelligence without manually asking questions.
+Instead of waiting for the manager to ask questions, the system can automatically identify important changes.
 
-History and Trend Analysis
+Example:
 
-A history layer is being designed to allow agents to understand changes over time.
+> Three high-risk customers require attention today.
 
-Planned historical datasets include:
+> Cash-flow pressure is expected to increase during the next 14 days.
 
-Daily finance snapshots
-Customer risk history
-Cash-flow forecast history
-Alert history
-Agent analysis history
-Decision history
+> Two large issued cheques may create a liquidity gap if expected receivables are delayed.
 
-This will enable the system to produce insights such as:
+---
 
-Customer risk has increased over the last 10 days.
-Critical alerts are rising.
-Cash-flow pressure is worsening.
-Forecast accuracy has improved.
-Customer collection behavior has changed.
+# History & Organizational Intelligence
 
-History is stored as auditable structured data, not as free-form LLM memory.
+Historical data is stored as structured business history rather than uncontrolled LLM memory.
 
-Explainability and Safety
+Planned datasets include:
 
-The project follows several important design principles.
+| History Type             | Purpose                                   |
+| ------------------------ | ----------------------------------------- |
+| Daily Business Snapshots | Compare operational KPIs                  |
+| Customer Risk History    | Identify worsening or improving customers |
+| Forecast History         | Measure forecast performance              |
+| Alert History            | Detect recurring problems                 |
+| Agent Analysis History   | Audit AI analysis                         |
+| Decision History         | Track management actions                  |
 
-Financial numbers are not generated by the LLM
+This enables insights such as:
 
-Financial calculations come from:
+> Customer risk has increased for three consecutive weeks.
 
-SQL
-Services
-Rule engines
-Prediction engines
+> Cash-flow pressure is worsening compared with the previous period.
 
-The AI agent receives structured values and explains them.
+> The same reconciliation issue has appeared multiple times.
 
-Human approval for sensitive actions
+---
 
-The system may recommend actions such as:
+# Dynamic Enterprise Query
 
-Credit review
-Collection prioritization
-Payment rescheduling
-Customer follow-up
+Critical financial reports use controlled SQL and business services.
 
-However, sensitive financial actions remain subject to human approval.
+For ad-hoc management questions, the platform is designed to support controlled dynamic SQL generation.
 
-The goal is decision support, not uncontrolled autonomous finance execution.
-
-Read-only SQL for dynamic queries
-
-For ad-hoc financial questions, the platform can support controlled SQL generation.
-
-The intended pipeline is:
-
-User Question
-    ↓
-Schema Context
-    ↓
+```text
+Manager Question
+       ↓
+Schema Context Builder
+       ↓
 SQL Generator
-    ↓
+       ↓
 SQL Validator
-    ↓
+       ↓
 Schema Validator
-    ↓
-Query Executor
-    ↓
-SQL Server
+       ↓
+Read-Only Query Executor
+       ↓
+Enterprise Database
+```
 
-Only safe read-only queries should be allowed.
+This allows managers to ask questions in natural language while maintaining database safety.
 
-Current Technology Stack
-Backend
-Python
-FastAPI
-SQLAlchemy
-Pydantic
-Database
-Microsoft SQL Server
-SQLite / local storage for platform metadata and history where needed
-AI
-OpenAI API / LLM integration
-Custom agent classes
-Tool-based agent architecture
-Rule-based fallback analysis
-Data Sources
+---
 
-Current financial integrations are designed around enterprise ERP and treasury data stored in SQL Server.
+# Planned Enterprise Domains
 
-Current Project Status
+| Department      | Planned Intelligence                            |
+| --------------- | ----------------------------------------------- |
+| Finance         | Treasury, risk, forecast, budgeting, FP&A       |
+| Sales           | Performance, forecasting, customer intelligence |
+| Warehouse       | Inventory health, stock risk, replenishment     |
+| Production      | Capacity, scheduling, material planning         |
+| Planning        | Demand and supply planning                      |
+| Procurement     | Supplier risk and purchase intelligence         |
+| Marketing       | Campaign performance and ROI                    |
+| HR              | Workforce analytics and planning                |
+| Export          | Customer, market and currency intelligence      |
+| Quality Control | Quality trends and non-conformance analysis     |
+| R&D             | Product and research intelligence               |
 
-Implemented or partially implemented:
+---
 
-SQL Server connectivity
-Treasury account tools
-Receipt and payment tools
-Received and issued cheque tools
-Cheque due reports
-Customer cheque settlement
-Reconciliation support
-Treasury briefing
-Financial anomaly reporting
-Payment planning
-Customer financial profiles
-Cash-flow scenarios
-Customer collection prediction
-Late-payment risk
-Cheque return prediction
-Cash-shortage forecasting
-Collection prioritization
-Customer Intelligence Service
-Customer Behavior Agent
-Finance Analyst Agent foundation
-Finance dashboard foundation
-Automation and history architecture
-Roadmap
+# Human-in-the-Loop
 
-Planned future capabilities include:
+Exir AI Platform follows a supervised autonomy approach.
 
-Finance Manager Agent
-Automated daily finance assistant
-Complete historical trend engine
-Reconciliation Agent
-Invoice OCR and invoice-processing workflow
-Budget vs Actual analysis
-FP&A Agent
-What-if simulation
-Supplier risk analysis
-Advanced anomaly and fraud detection
-Customer credit-limit recommendation
-Working-capital optimization
-DSO / DPO prediction
-Multi-month financial forecasting
-Decision tracking and human approval workflows
-Vision
+AI may:
 
-The goal of Exir Finance AI Assistant is not to build another reporting dashboard.
+* Detect
+* Analyze
+* Forecast
+* Prioritize
+* Recommend
+* Prepare workflows
 
-The goal is to build an AI-powered financial decision-support system that can continuously observe financial activity, identify risks, forecast future conditions, explain what is happening, and help finance managers decide what to do next.
+Humans remain responsible for sensitive decisions.
 
-Data
- ↓
-Understanding
- ↓
-Prediction
- ↓
-Explanation
- ↓
-Recommendation
- ↓
-Human Decision
+```text
+AI Recommendation
+       ↓
+Manager Review
+       ↓
+Approval
+       ↓
+Business Action
+```
 
-The platform is being designed with enterprise reliability, explainability, auditability, and human oversight as core principles.
+Examples of actions requiring approval include:
+
+* Payment execution
+* Credit-limit changes
+* Customer restrictions
+* Supplier blocking
+* Financial approvals
+
+---
+
+# Technology Stack
+
+| Layer               | Technology                              |
+| ------------------- | --------------------------------------- |
+| Backend             | Python / FastAPI                        |
+| API Validation      | Pydantic                                |
+| ORM / Database      | SQLAlchemy                              |
+| Enterprise Database | Microsoft SQL Server                    |
+| Local Metadata      | SQLite                                  |
+| AI                  | LLM + Tool Calling + Agent Architecture |
+| Automation          | Scheduled and event-based workflows     |
+| Frontend            | Enterprise Web Dashboard                |
+| Data Sources        | ERP, SQL Server, Excel, APIs            |
+
+---
+
+# Current Status
+
+```text
+████████████████░░░░░░░░ Enterprise Data Integration
+██████████████░░░░░░░░░░ Finance Intelligence
+████████████░░░░░░░░░░░░ Agent Architecture
+██████████░░░░░░░░░░░░░░ Automation
+██████░░░░░░░░░░░░░░░░░░ Multi-Department Expansion
+```
+
+Finance and Treasury currently serve as the first real-world implementation and validation environment for the broader platform architecture.
+
+---
+
+# Roadmap
+
+### Phase 1 — Finance Intelligence
+
+* Treasury integration
+* Finance prediction
+* Customer risk
+* Cash-flow intelligence
+* Collection intelligence
+* Explainable alerts
+
+### Phase 2 — Enterprise Automation
+
+* Automated AI Assistant
+* Scheduler
+* History engine
+* Alert workflows
+* Human approval flows
+
+### Phase 3 — Cross-Department Intelligence
+
+* Sales Agent
+* Warehouse Agent
+* Production Agent
+* Planning Agent
+* HR Agent
+* Marketing Agent
+
+### Phase 4 — Enterprise Manager Agent
+
+* Cross-department reasoning
+* Multi-agent orchestration
+* Management briefing
+* Strategic recommendations
+* Organization-wide AI assistant
+
+---
+
+# Project Vision
+
+Exir AI Platform is not intended to become another reporting application.
+
+It is designed to become an intelligent layer above enterprise systems.
+
+```text
+DATA
+  ↓
+CONTEXT
+  ↓
+ANALYSIS
+  ↓
+PREDICTION
+  ↓
+RECOMMENDATION
+  ↓
+AUTOMATION
+  ↓
+HUMAN DECISION
+```
+
+The long-term goal is to build a modular Enterprise AI Assistant capable of continuously observing organizational data, understanding business context, identifying important changes, predicting future conditions, and helping managers decide what to do next.
