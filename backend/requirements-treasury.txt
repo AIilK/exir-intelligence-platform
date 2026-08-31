@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pyodbc
+pydantic-settings
+openai-agents
+openpyxl
+xlrd
+jdatetime
+python-multipart
+passlib
+openai
+pytest
+apscheduler

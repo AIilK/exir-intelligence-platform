@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+exir.db
+treasury_agent_sessions.db
+treasury_reconciliation.db
+.pytest_cache/

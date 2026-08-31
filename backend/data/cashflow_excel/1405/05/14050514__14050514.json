@@ -1,0 +1,47 @@
+{
+  "jalali_date": "1405/05/14",
+  "jalali_year": 1405,
+  "jalali_month": 5,
+  "jalali_day": 14,
+  "filename": "14050514.xlsx",
+  "liquidity_rial": 327038427220.0,
+  "overdue_cheques_rial": 0.0,
+  "upcoming_cheques_rial": 30335356000.0,
+  "loan_installments_rial": 0.0,
+  "obligations_rial": 30335356000.0,
+  "remaining_cash_rial": 296703071220.0,
+  "pressure_percent": 9.275777240572799,
+  "coverage_percent": 100.0,
+  "shortfall_rial": 0.0,
+  "source_sections": [
+    {
+      "sheet": "Sheet1",
+      "section": "حساب‌های رسمی",
+      "liquidity_rial": 190488031191.0,
+      "overdue_cheques_rial": 0.0,
+      "upcoming_cheques_rial": 30335356000.0,
+      "loan_installments_rial": 0.0,
+      "remaining_cash_rial": 160152675191.0
+    },
+    {
+      "sheet": "Sheet2",
+      "section": "حساب‌های غیررسمی",
+      "liquidity_rial": 13909143458.0,
+      "overdue_cheques_rial": 0.0,
+      "upcoming_cheques_rial": 0.0,
+      "loan_installments_rial": 0.0,
+      "remaining_cash_rial": 13909143458.0
+    },
+    {
+      "sheet": "Sheet3",
+      "section": "زرین کالای کادوس",
+      "liquidity_rial": 122641252571.0,
+      "overdue_cheques_rial": 0.0,
+      "upcoming_cheques_rial": 0.0,
+      "loan_installments_rial": 0.0,
+      "remaining_cash_rial": 122641252571.0
+    }
+  ],
+  "stored_file": "14050514__14050514.xlsx",
+  "uploaded_at": "2026-08-24T09:35:47.658180+00:00"
+}
