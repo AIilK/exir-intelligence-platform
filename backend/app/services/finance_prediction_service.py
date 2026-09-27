@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 from app.core.config import settings
@@ -267,6 +267,107 @@ class FinancePredictionService:
             "calculation_method": "voucher_dl_receivable_sl_fiscal_year",
             "receivable_sl_codes": ["123003", "123004", "123011"],
         }
+
+    def bulk_customer_account_positions(self, counterpart_refs: list[int]) -> dict[int, dict[str, Any]]:
+        """Same figures as ``customer_account_position`` for many customers in ONE query.
+
+        The per-customer version costs ~0.5s each; the collection portfolio called it
+        for every customer (N+1, ~2 minutes for 300 customers). Same rules: current
+        fiscal year, SLs 123003/123004/123011, an item belongs to the DL when any of
+        DLLevel4/5/6 equals its code (counted once per item and DL).
+        """
+        refs = sorted({int(x) for x in counterpart_refs})
+        if not refs:
+            return {}
+        query = text(
+            """
+            WITH active_fy AS (
+                SELECT TOP (1) lfy.[StartDate], lfy.[EndDate]
+                FROM GNR3.[LedgerFiscalYear] lfy
+                WHERE lfy.[LedgerRef] = 1
+                  AND CAST(GETDATE() AS date) >= CAST(lfy.[StartDate] AS date)
+                  AND CAST(GETDATE() AS date) <= CAST(lfy.[EndDate] AS date)
+                ORDER BY lfy.[StartDate] DESC
+            ),
+            customer_dl AS (
+                SELECT dl.[DLID], TRY_CONVERT(bigint, dl.[Code]) AS [DLCode]
+                FROM FIN3.[DL] dl
+                WHERE dl.[DLID] IN :refs
+            ),
+            receivable_sl AS (
+                SELECT sl.[SLID], sl.[Code], sl.[Title]
+                FROM FIN3.[SL] sl
+                WHERE sl.[Code] IN (N'123003', N'123004', N'123011')
+            ),
+            items AS (
+                SELECT vi.[VoucherItemID], vi.[SLRef], vi.[Debit], vi.[Credit],
+                       vi.[DLLevel4], vi.[DLLevel5], vi.[DLLevel6]
+                FROM FIN3.[VoucherItem] vi
+                INNER JOIN FIN3.[Voucher] v ON v.[VoucherID] = vi.[VoucherRef]
+                CROSS JOIN active_fy fy
+                WHERE vi.[SLRef] IN (SELECT [SLID] FROM receivable_sl)
+                  AND (vi.[DLLevel4] IN :codes OR vi.[DLLevel5] IN :codes OR vi.[DLLevel6] IN :codes)
+                  AND v.[Date] >= fy.[StartDate]
+                  AND v.[Date] < DATEADD(day, 1, fy.[EndDate])
+            ),
+            item_dl AS (
+                SELECT DISTINCT i.[VoucherItemID], d.[DLID]
+                FROM items i
+                CROSS APPLY (VALUES (i.[DLLevel4]), (i.[DLLevel5]), (i.[DLLevel6])) lvl([Code])
+                INNER JOIN customer_dl d ON d.[DLCode] = lvl.[Code]
+            )
+            SELECT x.[DLID], sl.[SLID], sl.[Code] AS [SLCode], sl.[Title] AS [SLTitle],
+                   COALESCE(SUM(COALESCE(i.[Debit], 0)), 0) AS [DebitAmount],
+                   COALESCE(SUM(COALESCE(i.[Credit], 0)), 0) AS [CreditAmount],
+                   COUNT_BIG(*) AS [TransactionCount]
+            FROM item_dl x
+            INNER JOIN items i ON i.[VoucherItemID] = x.[VoucherItemID]
+            INNER JOIN receivable_sl sl ON sl.[SLID] = i.[SLRef]
+            GROUP BY x.[DLID], sl.[SLID], sl.[Code], sl.[Title]
+            """
+        ).bindparams(bindparam("refs", expanding=True), bindparam("codes", expanding=True))
+        with self.engine.connect() as connection:
+            dl_codes = connection.execute(
+                text("SELECT [DLID], TRY_CONVERT(bigint, [Code]) FROM FIN3.[DL] WHERE [DLID] IN :refs").bindparams(bindparam("refs", expanding=True)),
+                {"refs": refs},
+            ).all()
+            existing = {int(r[0]) for r in dl_codes}
+            codes = sorted({int(r[1]) for r in dl_codes if r[1] is not None}) or [-1]
+            rows = connection.execute(query, {"refs": refs, "codes": codes}).mappings().all()
+
+        by_ref: dict[int, list[Any]] = {}
+        for r in rows:
+            by_ref.setdefault(int(r["DLID"]), []).append(r)
+        result: dict[int, dict[str, Any]] = {}
+        for ref in existing:
+            items = by_ref.get(ref, [])
+            debit = round(sum(_money(r["DebitAmount"]) for r in items), 2)
+            credit = round(sum(_money(r["CreditAmount"]) for r in items), 2)
+            balance = round(debit - credit, 2)
+            result[ref] = {
+                "found": True,
+                "counterpart_ref": ref,
+                "account_breakdown": [
+                    {
+                        "account_id": int(r["SLID"]),
+                        "account_name": r["SLTitle"],
+                        "sl_code": str(r["SLCode"] or ""),
+                        "debit_balance_rial": round(_money(r["DebitAmount"]), 2),
+                        "credit_balance_rial": round(_money(r["CreditAmount"]), 2),
+                        "balance_rial": round(_money(r["DebitAmount"]) - _money(r["CreditAmount"]), 2),
+                        "transaction_count": int(r["TransactionCount"] or 0),
+                    }
+                    for r in sorted(items, key=lambda r: str(r["SLCode"]))
+                ],
+                "debit_balance_rial": debit,
+                "credit_balance_rial": credit,
+                "balance_rial": balance,
+                "open_account_receivable_rial": max(balance, 0.0),
+                "customer_credit_rial": max(-balance, 0.0),
+                "balance_status": "debtor" if balance > 0 else "creditor" if balance < 0 else "settled",
+                "calculation_method": "voucher_dl_receivable_sl_fiscal_year",
+            }
+        return result
 
     def customer_latest_invoice(self, counterpart_ref: int) -> dict[str, Any] | None:
         """Return the latest Rahkaran sales invoice for the customer behind a cheque/customer DL.

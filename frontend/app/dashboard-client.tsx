@@ -20,11 +20,11 @@ import "./cash-bank-movements.css";
 import "./ui-polish-v69.css";
 import "./management-v109.css";
 import "./theme-stability-v137.css";
+import "./customer-file.css";
 
 type View =
   | "management"
   | "customers"
-  | "customerCollections"
   | "cheques"
   | "receivedCheques"
   | "issuedCheques"
@@ -178,6 +178,7 @@ type Customer = {
     paid_transfer_count?: number;
     paid_transfer_amount_rial?: number;
     selected_branch?: string;
+    dl_refs?: number[];
     detail?: any;
   };
 };
@@ -1403,7 +1404,6 @@ async function treasuryMutation(path: string, options: RequestInit) {
 const menu: [View, string, string][] = [
   ["management", "✦", "خلاصه مدیریتی"],
   ["customers", "◎", "پرونده مشتری"],
-  ["customerCollections", "▦", "مطالبات جامع مشتریان"],
   ["cheques", "◷", "چک و سررسید"],
   ["cashBank", "⇄", "نقد و حواله"],
   ["companyPayments", "↗", "حواله‌های پرداختی شرکت"],
@@ -1766,7 +1766,6 @@ export default function Page() {
         ) : (
           <Customers customers={customers} agent={pack?.agents?.customer_behavior} open={setSelected} />
         ))}
-        {view === "customerCollections" && <CustomerCollectionsModule />}
         {view === "cheques" && (
           <ChequeHub
             received={received.length ? received : cheques}
@@ -3732,129 +3731,6 @@ function LegacyAgentCard({ agent }: { agent: AgentResult }) {
   );
 }
 
-function CustomerCollectionDetail({ customer, close }: { customer: Customer; close: () => void }) {
-  const isKaramad = (customer as any).data_source === "karamad";
-  const [detail, setDetail] = useState<any>(customer || {});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    setLoading(true); setError("");
-    const req = isKaramad
-      ? request(`/karamad-manual/customer-detail?customer_name=${encodeURIComponent(cname(customer))}`)
-      : request(`/customer-intelligence/${customer.counterpart_ref}`);
-    req
-      .then((d: any) => { if (active) { const payload = isKaramad ? d : (d?.customer || d || {}); setDetail({ ...customer, ...payload }); } })
-      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت وضعیت مطالبات ناموفق بود"); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [customer.counterpart_ref, (customer as any).customer_name, isKaramad]);
-  const cp:any = detail.collection_position || customer.collection_position || {};
-  const ap:any = detail.account_position || customer.account_position || {};
-  const latestInvoice:any = detail.latest_invoice || null;
-  const latestTransfers: any[] = detail.latest_transfers || [];
-  return <section className="customer-collection-detail-simple">
-    <div className="collection-detail-head">
-      <button className="ghost-btn" onClick={close}>← بازگشت به مطالبات</button>
-      <div><h2>{cname(customer)}</h2><p>مانده واقعی حساب مشتری و آخرین فاکتور ثبت‌شده در {isKaramad ? "کارآمد" : "راهکاران"}</p></div>
-    </div>
-    {error && <div className="profile-warning">{error}</div>}
-    <div className="collection-detail-hero collection-debt-focus">
-      <article><small>مانده بدهی فعلی مشتری</small><b>{fullToman(ap.open_account_receivable_rial || cp.open_account_receivable_rial || 0)}</b><span>تومان • گردش {isKaramad ? "۱۴۰۵" : "۱۴۰۵"} تجاری + برگشتی + اشخاص</span></article>
-    </div>
-    <section className="collection-last-invoice">
-      <div><h3>ریز محاسبه مانده بدهی</h3><small>{isKaramad ? "محاسبه رسمی از دفتر کل کارآمد (tblVoucherLines) بر اساس تفصیلی مشتری و معین‌های حسابهای دریافتنی" : "محاسبه رسمی از FIN3.VoucherItem بر اساس تفصیلی مشتری و حساب‌های دریافتنی تجاری، برگشتی و اشخاص"}</small></div>
-      <div className="last-invoice-grid">
-        <span><small>جمع بدهکار</small><b>{fullToman(ap.debit_balance_rial || 0)}</b></span>
-        <span><small>جمع بستانکار / دریافتی</small><b>{fullToman(ap.credit_balance_rial || 0)}</b></span>
-        <span><small>مانده = بدهکار − بستانکار</small><b>{fullToman(ap.balance_rial || 0)}</b></span>
-      </div>
-      {(ap.account_breakdown || []).length > 0 && <div className="collection-table-wrap"><table className="collection-table"><thead><tr><th>حساب</th><th>بدهکار</th><th>بستانکار</th><th>مانده</th></tr></thead><tbody>{ap.account_breakdown.map((a:any) => <tr key={a.account_id}><td>{a.account_name || a.account_id}</td><td>{fullToman(a.debit_balance_rial || 0)}</td><td>{fullToman(a.credit_balance_rial || 0)}</td><td>{fullToman(a.balance_rial || 0)}</td></tr>)}</tbody></table></div>}
-      {isKaramad && (detail.monthly_summary || []).length > 0 && <div className="collection-table-wrap"><h4>خلاصه ماهانه</h4><table className="collection-table"><thead><tr><th>ماه</th><th>بدهکار</th><th>بستانکار</th><th>مانده پایان ماه</th><th>تعداد تراکنش</th></tr></thead><tbody>{detail.monthly_summary.map((m:any) => <tr key={m.jalali_month}><td>{m.jalali_month}</td><td>{fullToman(m.debit_rial||0)}</td><td>{fullToman(m.credit_rial||0)}</td><td>{fullToman(m.closing_balance_rial||0)}</td><td>{fa(m.transaction_count||0)}</td></tr>)}</tbody></table></div>}
-      {isKaramad && (detail.ledger_entries || []).length > 0 && <div className="collection-table-wrap"><h4>ریز گردش حساب</h4><table className="collection-table"><thead><tr><th>تاریخ</th><th>شعبه</th><th>معین</th><th>بدهکار</th><th>بستانکار</th><th>مانده تجمعی</th><th>شرح</th></tr></thead><tbody>{detail.ledger_entries.map((e:any, i:number) => <tr key={e.voucher_ref || i}><td>{e.date_jalali || e.date || "—"}</td><td>{e.branch_name || "—"}</td><td>{e.sl_name || "—"}</td><td>{fullToman(e.debit_rial || 0)}</td><td>{fullToman(e.credit_rial || 0)}</td><td>{fullToman(e.running_balance_rial || 0)}</td><td className="b2b-desc">{e.description || "—"}</td></tr>)}</tbody></table></div>}
-    </section>
-    {isKaramad ? <section className="collection-last-invoice">
-      <div><h3>دو آخرین حواله مشتری</h3><small>آخرین حواله‌های دریافتی/پرداختی ثبت‌شده در کارآمد (tblDraftD/tblDraftP)</small></div>
-      {loading ? <div className="profile-warning">در حال دریافت حواله‌ها...</div> : latestTransfers.length ? <div className="collection-table-wrap"><table className="collection-table"><thead><tr><th>تاریخ</th><th>نوع</th><th>شماره</th><th>مبلغ</th><th>بانک/شعبه</th></tr></thead><tbody>{latestTransfers.map((t:any, i:number) => <tr key={t.transfer_id || i}><td>{t.transfer_date_jalali || t.registration_date_jalali || "—"}</td><td>{t.direction === "inflow" ? "دریافتی" : "پرداختی"}</td><td>{t.transfer_number || "—"}</td><td>{fullToman(Number(t.amount_rial||0))}</td><td>{t.bank || t.branch || "—"}</td></tr>)}</tbody></table></div> : <div className="invoice-source-pending">برای این مشتری حواله‌ای پیدا نشد.</div>}
-    </section> : <section className="collection-last-invoice">
-      <div><h3>آخرین فاکتور خرید مشتری</h3><small>فقط آخرین فاکتور ثبت‌شده برای این مشتری در SLS3.Invoice</small></div>
-      {loading ? <div className="profile-warning">در حال دریافت آخرین فاکتور...</div> : latestInvoice ? <div className="last-invoice-grid">
-        <span><small>شماره فاکتور</small><b>{latestInvoice.number || "—"}</b></span>
-        <span><small>تاریخ</small><b>{latestInvoice.date_jalali || latestInvoice.date?.slice(0, 10) || "—"}</b></span>
-        <span><small>مبلغ خالص</small><b>{fullToman(latestInvoice.amount_rial || 0)}</b></span>
-      </div> : <div className="invoice-source-pending">برای این مشتری فاکتور فروش پیدا نشد.</div>}
-    </section>}
-  </section>;
-}
-
-function CustomerCollectionsModule() {
-  const [data, setData] = useState<any>({ summary: {}, customers: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "debtor" | "creditor" | "uncovered" | "cheque">("all");
-  const [selected, setSelected] = useState<Customer | null>(null);
-  const [source, setSource] = useState<"rahkaran" | "karamad">("rahkaran");
-  const [branch, setBranch] = useState("");
-  const loadPortfolio = () => {
-    setLoading(true); setError(""); setData((prev: any) => ({ ...prev, customers: [] }));
-    const branchQ = branch ? `&branch=${encodeURIComponent(branch)}` : "";
-    request(`/customer-collection-portfolio?limit=500&source=${source}${branchQ}`)
-      .then((d: any) => setData({ ...d, customers: (d.customers || []).map((c: any) => ({ ...c, data_source: source, customer_name: c.customer_name || cname(c) })) }))
-      .catch((e) => { setError(e instanceof Error ? e.message : "دریافت پرتفوی مطالبات ناموفق بود"); setData({ summary: {}, customers: [] }); })
-      .finally(() => setLoading(false));
-  };
-  useEffect(() => { loadPortfolio(); }, [source, branch]);
-  if (selected) return <CustomerCollectionDetail customer={selected} close={() => setSelected(null)} />;
-  const rows: Customer[] = (data.customers || []).filter((c: Customer) => {
-    // Backend is authoritative; this is a UI safety net so Hybrid never appears
-    // from stale/cached payloads either.
-    const hybridName = cname(c).replace(/[يى]/g, "ی").replace(/ك/g, "ک").toLocaleLowerCase("fa-IR");
-    if (hybridName.includes("هیبرید") || hybridName.includes("hybrid")) return false;
-    const q = search.trim().toLocaleLowerCase("fa-IR");
-    if (q && !cname(c).toLocaleLowerCase("fa-IR").includes(q)) return false;
-    const cp:any = c.collection_position || {};
-    if (filter === "debtor" && Number(cp.open_account_receivable_rial || 0) <= 0) return false;
-    if (filter === "creditor" && Number(cp.customer_credit_rial || 0) <= 0) return false;
-    if (filter === "uncovered" && Number(cp.open_account_receivable_rial || 0) <= 0) return false;
-    if (filter === "cheque" && Number(cp.open_cheque_amount_rial || 0) <= 0) return false;
-    return true;
-  });
-  const sm:any = data.summary || {};
-  return <section className="customer-collections-module">
-    <Heading h="ماژول جامع مطالبات مشتریان" p={source === "karamad" ? "مانده بدهی از دفتر کل کارآمد (tblVoucherLines) سال مالی جاری روی تفصیلی مشتری و معین‌های ۱۳۱۳/۱۳۱۹/۱۳۲۰؛ فقط طرف‌حساب‌های کلاس «مشتریان»." : "مانده بدهی از گردش سند حسابداری سال مالی روی تفصیلی مشتری و حساب‌های دریافتنی تجاری، برگشتی و اشخاص؛ مشتریان هیبرید حذف شده‌اند."} />
-    {error && <div className="profile-warning">{error}</div>}
-    <div className="modal-metrics collection-module-kpis">
-      <K t="کل مانده بدهی مشتریان" v={fullToman(sm.open_account_receivable_rial || 0)} n="تومان • تجاری + برگشتی + اشخاص" c="red" />
-      <K t="بستانکاری مشتریان" v={fullToman(sm.customer_credit_rial || 0)} n="تومان • جهت کنترل حساب" c="teal" />
-      <K t="تعداد مشتری" v={fa(sm.customer_count || 0)} n="بدون مشتریان هیبرید" c="blue" />
-    </div>
-    <div className="collection-module-toolbar">
-      <select value={source} onChange={e=>{setSource(e.target.value as any); setBranch("");}} aria-label="منبع داده" title="منبع داده">
-        <option value="rahkaran">راهکاران</option>
-        <option value="karamad">کارآمد</option>
-      </select>
-      <select value={branch} onChange={e=>setBranch(e.target.value)} aria-label="شعبه" title="شعبه">
-        <option value="">همه شعب</option>
-        {(data.available_branches || []).map((b:string) => <option key={b} value={b}>{b}</option>)}
-      </select>
-      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="جست‌وجوی نام مشتری..." />
-      <div className="collection-module-filters">
-        {[["all","همه"],["debtor","مانده بدهکار"],["uncovered","بدون پوشش چک"],["cheque","دارای چک باز"],["creditor","بستانکار"]].map(([k,l])=><button key={k} className={filter===k?"active":""} onClick={()=>setFilter(k as any)}>{l}</button>)}
-      </div>
-    </div>
-    {loading ? <div className="profile-warning">در حال محاسبه مانده حساب و پوشش چک مشتریان...</div> : <div className="collection-module-table"><table>
-      <thead><tr><th>مشتری</th><th>مانده بدهی فعلی</th><th>وضعیت حساب</th><th>جزئیات</th></tr></thead>
-      <tbody>{rows.map((c:any)=>{const cp=c.collection_position||{}; const ap=c.account_position||{}; return <tr key={c.counterpart_ref || c.customer_name} onClick={()=>setSelected(c)}>
-        <td><b>{cname(c)}</b><small>{c.data_source === "karamad" ? `کارآمد` : `DL: ${c.counterpart_ref || "—"}`}</small></td>
-        <td><b>{fullToman(cp.open_account_receivable_rial||0)}</b><small>تومان</small></td>
-        <td><span className={`collection-account-state ${ap.balance_status||"unknown"}`}>{ap.balance_status==="debtor"?"بدهکار":ap.balance_status==="creditor"?"بستانکار":ap.balance_status==="settled"?"تسویه":"فاقد حساب"}</span></td>
-        <td><span className="collection-row-open">مشاهده آخرین فاکتور ←</span></td>
-      </tr>})}</tbody>
-    </table></div>}
-  </section>;
-}
-
 function Customers({
   customers,
   agent,
@@ -3869,6 +3745,20 @@ function Customers({
   const [customerSource, setCustomerSource] = useState<"rahkaran" | "karamad" | null>(null);
   const [karamad, setKaramad] = useState<any>({ customers: [], available_branches: [], summary: {} });
   const [karamadError, setKaramadError] = useState("");
+  const [portfolio, setPortfolio] = useState<any>({ summary: {}, customers: [] });
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [debtFilter, setDebtFilter] = useState<"all" | "debtor" | "uncovered" | "cheque" | "creditor">("all");
+  useEffect(() => {
+    if (!customerSource) return;
+    let active = true;
+    setPortfolioLoading(true);
+    const branchQ = customerSource === "karamad" && branch ? `&branch=${encodeURIComponent(branch)}` : "";
+    request(`/customer-collection-portfolio?limit=1000&source=${customerSource}${branchQ}`)
+      .then((d) => { if (active) setPortfolio(d); })
+      .catch(() => { if (active) setPortfolio({ summary: {}, customers: [] }); })
+      .finally(() => { if (active) setPortfolioLoading(false); });
+    return () => { active = false; };
+  }, [customerSource, branch]);
   useEffect(() => {
     let active = true;
     const params = new URLSearchParams();
@@ -3939,6 +3829,26 @@ function Customers({
   const rahkaranCustomers = merged.filter((c) => Boolean(c.counterpart_ref));
   const karamadCustomers = merged.filter((c) => Boolean(c.karamad_activity));
   const sourceRows = customerSource === "rahkaran" ? rahkaranCustomers : customerSource === "karamad" ? karamadCustomers : [];
+  const positions = useMemo(() => {
+    const map = new Map<string, any>();
+    (portfolio?.customers || []).forEach((p: any) => {
+      const key = customerSource === "rahkaran" ? String(p.counterpart_ref) : normalizeName(p.customer_name || cname(p));
+      map.set(key, p);
+    });
+    return map;
+  }, [portfolio, customerSource]);
+  const positionOf = (c: Customer): any => positions.get(customerSource === "rahkaran" ? String(c.counterpart_ref) : normalizeName(cname(c)))?.collection_position || {};
+  const accountStateOf = (c: Customer): string => positions.get(customerSource === "rahkaran" ? String(c.counterpart_ref) : normalizeName(cname(c)))?.account_position?.balance_status || "unknown";
+  const visibleRows = sourceRows.filter((c) => {
+    const cp = positionOf(c);
+    const debt = Number(cp.open_account_receivable_rial || 0), cheque = Number(cp.open_cheque_amount_rial || 0);
+    if (debtFilter === "debtor") return debt > 0;
+    if (debtFilter === "uncovered") return debt > 0 && cheque <= 0;
+    if (debtFilter === "cheque") return cheque > 0;
+    if (debtFilter === "creditor") return Number(cp.customer_credit_rial || 0) > 0;
+    return true;
+  });
+  const debtSummary = portfolio?.summary || {};
 
   if (!customerSource) return (
     <>
@@ -3972,7 +3882,7 @@ function Customers({
   return (
     <>
       <AgentPanel agent={agent} />
-      <button className="cheque-back" onClick={() => { setCustomerSource(null); setBranch(""); setSearch(""); }}>→ بازگشت به انتخاب راهکاران یا کارآمد</button>
+      <button className="cheque-back" onClick={() => { setCustomerSource(null); setBranch(""); setSearch(""); setDebtFilter("all"); }}>→ بازگشت به انتخاب راهکاران یا کارآمد</button>
       <article className="fd-panel unified-customer-directory">
         <Heading
           h={`پرونده مشتریان — ${customerSource === "rahkaran" ? "راهکاران" : "کارآمد"}`}
@@ -3994,8 +3904,16 @@ function Customers({
               {(karamad?.available_branches || []).map((item: string) => <option key={item} value={item}>{item}</option>)}
             </select>
           </div>}
-          <small>{fa(sourceRows.length)} مشتری پیدا شد</small>
+          <small>{fa(visibleRows.length)} مشتری پیدا شد</small>
         </section>
+        <div className="cf-kpis cf-directory-kpis">
+          <article className="cf-accent-red"><small>کل مانده بدهی مشتریان</small><b>{portfolioLoading ? "…" : money(debtSummary.open_account_receivable_rial || 0)}</b><span>تومان</span></article>
+          <article><small>چک باز در دست شرکت</small><b>{portfolioLoading ? "…" : money(debtSummary.open_cheque_amount_rial || 0)}</b><span>تومان</span></article>
+          <article><small>بستانکاری مشتریان</small><b>{portfolioLoading ? "…" : money(debtSummary.customer_credit_rial || 0)}</b><span>تومان</span></article>
+        </div>
+        <div className="collection-module-filters cf-debt-filters">
+          {([["all", "همه"], ["debtor", "مانده بدهکار"], ["uncovered", "بدهکار بدون چک"], ["cheque", "دارای چک باز"], ["creditor", "بستانکار"]] as const).map(([k, l]) => <button key={k} className={debtFilter === k ? "active" : ""} onClick={() => setDebtFilter(k)}>{l}</button>)}
+        </div>
         {customerSource === "karamad" && branch && (
           <div className="karamad-summary">
             <div><span>گردش‌های ثبت‌شده شعبه</span><b>{fa(branchSummary.movement_count || 0)}</b></div>
@@ -4010,6 +3928,7 @@ function Customers({
             <thead>
               <tr>
                 <th>مشتری</th>
+                <th>مانده بدهی</th>
                 <th>ارزش پرونده</th>
                 <th>مانده باز</th>
                 <th>معوق</th>
@@ -4022,12 +3941,13 @@ function Customers({
               </tr>
             </thead>
             <tbody>
-              {sourceRows.map((c) => {
+              {visibleRows.map((c) => {
                 const k: any = c.karamad_activity || {};
                 const chequeCount = Number(c.historical_cheque_count || 0) + Number(k.received_cheque_count || 0) + Number(k.issued_cheque_count || 0);
                 const transferCount = Number(k.received_transfer_count || 0) + Number(k.paid_transfer_count || 0);
                 return <tr key={`${c.counterpart_ref || "no-ref"}-${normalizeName(cname(c))}`} onClick={() => open({ ...c, data_source: customerSource, karamad_activity: customerSource === "karamad" ? c.karamad_activity : undefined })}>
                   <td><b>{cname(c)}</b></td>
+                  <td>{portfolioLoading ? "…" : <><b>{money(positionOf(c).open_account_receivable_rial || 0)}</b> <span className={`collection-account-state ${accountStateOf(c)}`}>{({ debtor: "بدهکار", creditor: "بستانکار", settled: "تسویه" } as any)[accountStateOf(c)] || "—"}</span></>}</td>
                   <td><b>{money(customerPortfolioAmount(c))}</b></td>
                   <td>{c.counterpart_ref ? money(c.open_exposure) : "—"}</td>
                   <td>{c.counterpart_ref ? money(c.overdue_open_amount) : money(k.received_cheque_overdue_amount_rial || 0)}</td>
@@ -4041,7 +3961,7 @@ function Customers({
               })}
             </tbody>
           </table>
-          {!sourceRows.length && <div className="profile-loading">مشتری با این نام یا فیلتر پیدا نشد.</div>}
+          {!visibleRows.length && <div className="profile-loading">مشتری با این نام یا فیلتر پیدا نشد.</div>}
         </div>
       </article>
     </>
@@ -5319,7 +5239,7 @@ function description(v: View) {
   return (
     {
       management: "جمع‌بندی یکپارچه همه Agentهای مالی برای تصمیم مدیر",
-      customers: "رفتار، اعتبار، ریسک و پرونده وصول هر مشتری",
+      customers: "خرید، ویزیتور، مطالبات، چک‌ها و احتمال برگشت هر مشتری",
       cheques: "انتخاب جریان دریافتی یا پرداختی و ورود از خلاصه به جزئیات",
       cashBank:
         "ریز دریافت و پرداخت نقدی و بانکی، حواله‌ها و انتقال‌های داخلی همراه Agent مستقل",
@@ -5772,6 +5692,14 @@ const creditPolicyFa: Record<string, string> = {
   review: "نیازمند بررسی",
 };
 
+function ChequeReturnRisk({ risk }: { risk?: any }) {
+  if (!risk) return <span className="cf-muted">—</span>;
+  if (risk.state !== "open") return <span className={`cf-risk ${risk.state}`}>{risk.label}</span>;
+  return <span className={`cf-risk ${risk.level}`} title={(risk.reasons || []).join("\n")}>
+    <b>{fa(risk.probability_percent)}٪</b> {risk.label.replace("احتمال برگشت ", "")}
+  </span>;
+}
+
 function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
   const kdetail: any = c.karamad_activity?.detail || {};
   const rahkaranChecks: any[] = ((c.all_cheques && c.all_cheques.length ? c.all_cheques : c.open_cheques) || []).map((x: any) => ({
@@ -5806,15 +5734,19 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
     ...(kdetail.paid_transfers || []).map((x: any) => ({ ...x, activity_type: "حواله پرداختی" })),
   ].sort((a, b) => String(b.registration_date_jalali || b.transfer_date_jalali || "").localeCompare(String(a.registration_date_jalali || a.transfer_date_jalali || ""), "fa"));
 
-  const [chequeScope, setChequeScope] = useState<"all" | "collected" | "returned" | "future" | "overdue">("all");
+  const [chequeScope, setChequeScope] = useState<"all" | "collected" | "returned" | "future" | "overdue" | "risk">("all");
   const [activitySearch, setActivitySearch] = useState("");
   const isReturnedCheque = (x: any) => /برگشت|واخواست|مسترد/.test(String(x.cheque_status || x.state_label || x.activity_type || ""));
   const chequeDay = (x: any) => typeof x.days_until_due === "number" ? x.days_until_due : daysToDue(x);
   const returnedRows = chequeRows.filter(isReturnedCheque);
-  const collectedRows = chequeRows.filter((x: any) => /وصول/.test(String(x.cheque_status || x.state_label || "")));
-  const futureRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && d !== undefined && d >= 0; });
-  const overdueRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && d !== undefined && d < 0; });
-  const scopeRows = chequeScope === "collected" ? collectedRows : chequeScope === "returned" ? returnedRows : chequeScope === "future" ? futureRows : chequeScope === "overdue" ? overdueRows : chequeRows;
+  // return_risk (backend) knows the real final state; «در جریان وصول» is not collected.
+  const collectedRows = chequeRows.filter((x: any) => x.return_risk ? x.return_risk.state === "collected" : /وصول‌?\s?شده/.test(String(x.cheque_status || x.state_label || "")));
+  const riskRows = chequeRows.filter((x: any) => x.return_risk?.state === "open" && x.return_risk.level !== "low");
+  // V162: a collected cheque is never overdue, whatever its historical due date.
+  const isCollectedCheque = (x: any) => collectedRows.includes(x);
+  const futureRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d >= 0; });
+  const overdueRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d < 0; });
+  const scopeRows = chequeScope === "collected" ? collectedRows : chequeScope === "returned" ? returnedRows : chequeScope === "future" ? futureRows : chequeScope === "overdue" ? overdueRows : chequeScope === "risk" ? riskRows : chequeRows;
   const q = activitySearch.trim().toLocaleLowerCase("fa-IR");
   const filteredChequeRows = !q ? scopeRows : scopeRows.filter((x: any) => [x.cheque_number, x.sayad_number, x.cheque_status, x.state_label, x.bank, x.bank_name, x.branch, x.description, x.return_reason, x.amount_rial].filter(Boolean).some((v) => String(v).toLocaleLowerCase("fa-IR").includes(q)));
   const filteredChequeAmount = filteredChequeRows.reduce((sum: number, x: any) => sum + Number(x.amount_rial || x.amount || 0), 0);
@@ -5847,6 +5779,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
           ["returned", "برگشتی / واخواست", returnedRows],
           ["future", "آینده", futureRows],
           ["overdue", "سررسیدگذشته", overdueRows],
+          ["risk", "احتمال برگشت دارد", riskRows],
         ].map(([id, title, items]: any) => <button key={id} className={chequeScope === id ? "active" : ""} onClick={() => setChequeScope(id)}>
           <small>{title}</small><b>{fa(items.length)} فقره</b><span>{money(items.reduce((sum: number, x: any) => sum + Number(x.amount_rial || x.amount || 0), 0))} تومان</span>
         </button>)}
@@ -5856,7 +5789,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
         <small>{fa(filteredChequeRows.length)} نتیجه</small>
       </section>
       {filteredChequeRows.length ? <div className="profile-cheque-table"><table>
-        <thead><tr><th>نوع</th><th>شماره چک</th><th>صیاد</th><th>مبلغ</th><th>تاریخ ثبت/دریافت</th><th>سررسید</th><th>زمان سررسید</th><th>وضعیت</th><th>بانک / شعبه</th><th>توضیحات</th><th>منبع</th></tr></thead>
+        <thead><tr><th>نوع</th><th>شماره چک</th><th>صیاد</th><th>مبلغ</th><th>تاریخ ثبت/دریافت</th><th>سررسید</th><th>زمان سررسید</th><th>وضعیت</th><th>احتمال برگشت</th><th>بانک / شعبه</th><th>توضیحات</th><th>منبع</th></tr></thead>
         <tbody>{filteredChequeRows.map((x: any, i: number) => <tr key={`unified-cheque-${x.cheque_id || x.transfer_id || i}`} className={typeof x.days_until_due === "number" && x.days_until_due < 0 ? "overdue-row" : typeof x.days_until_due === "number" && x.days_until_due <= 7 ? "due-soon-row" : ""}>
           <td><b>{x.activity_type}</b></td>
           <td><b>{fa(x.cheque_number || x.transfer_number || x.serial_number || "—")}</b></td>
@@ -5866,6 +5799,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
           <td>{x.due_date_jalali || x.effective_date_jalali || x.due_date || "—"}</td>
           <td><span className={`profile-due ${dueClass(x)}`}>{dueLabel(x)}</span></td>
           <td><span className={`cheque-business-status ${x.source_system === "rahkaran" ? "rahkaran" : "karamad"}`}>{x.cheque_status || x.state_label || "ثبت‌شده"}</span>{x.cheque_location ? <small className="customer-row-sub">{x.cheque_location}</small> : null}</td>
+          <td><ChequeReturnRisk risk={x.return_risk} /></td>
           <td>{[x.bank || x.bank_name, x.branch || x.bank_branch_name || x.bank_and_branch].filter(Boolean).join(" / ") || "—"}</td>
           <td>{[x.purpose, x.description, x.return_reason].filter(Boolean).join(" — ") || "—"}</td>
           <td><span className={`source-badge ${x.source_system || "karamad"}`}>{x.source_label || (x.source_system === "rahkaran" ? "راهکاران" : "کارآمد")}</span></td>
@@ -6072,6 +6006,138 @@ function CustomerReliability({ c }: { c: Customer }) {
   );
 }
 
+function customerFilePath(c: Customer): string | null {
+  if (c.data_source === "rahkaran" && c.counterpart_ref) return `/customer-file/rahkaran/${c.counterpart_ref}`;
+  const dlRefs = c.karamad_activity?.dl_refs || c.karamad_activity?.detail?.account_position?.dl_refs || [];
+  if (c.data_source === "karamad" && dlRefs.length) return `/customer-file/karamad?dl_refs=${dlRefs.join(",")}`;
+  return null;
+}
+
+function CustomerFileOverview({ c }: { c: Customer }) {
+  const path = customerFilePath(c);
+  const [file, setFile] = useState<any>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!path) return;
+    let active = true;
+    setFile(null); setError("");
+    request(path)
+      .then((d) => { if (active) setFile(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت فاکتورهای مشتری ناموفق بود"); });
+    return () => { active = false; };
+  }, [path]);
+
+  if (!path) return <div className="profile-warning">شناسه این مشتری برای خواندن فاکتورها پیدا نشد.</div>;
+  if (error) return <div className="profile-warning">{error}</div>;
+  if (!file) return <div className="profile-loading">در حال دریافت فاکتورهای خرید مشتری...</div>;
+
+  const s = file.purchase_stats || {};
+  const cy = file.current_year_label || "سال جاری";
+  const py = file.previous_year_label || "سال قبل";
+  const network = file.sales_network || {};
+  const invoices: any[] = file.last_invoices || [];
+  return (
+    <>
+      <section className="cf-section">
+        <div className="cf-title">
+          <div><h3>خرید مشتری</h3><p>{file.source === "karamad" ? "فاکتورهای فروش کارآمد (tblFactorF)" : "فاکتورهای فروش قطعی راهکاران (SLS3.Invoice)"}</p></div>
+          {s.last_invoice_date_jalali && <small>آخرین فاکتور: {s.last_invoice_date_jalali}</small>}
+        </div>
+        <div className="cf-kpis">
+          <article><small>تعداد کل فاکتور خرید</small><b>{fa(s.invoice_count || 0)}</b><span>از {s.first_invoice_date_jalali || "—"}</span></article>
+          <article><small>کل مبلغ خرید تا امروز</small><b>{money(s.purchase_amount_rial || 0)}</b><span>تومان</span></article>
+          <article><small>تعداد فاکتور خرید {cy}</small><b>{fa(s.current_year_invoice_count || 0)}</b><span>{money(s.current_year_amount_rial || 0)} تومان</span></article>
+          <article><small>تعداد فاکتور خرید {py}</small><b>{fa(s.previous_year_invoice_count || 0)}</b><span>{money(s.previous_year_amount_rial || 0)} تومان</span></article>
+        </div>
+        {Number(s.draft_invoice_count || 0) > 0 && <small className="cf-note">{fa(s.draft_invoice_count)} فاکتور پیش‌نویس/غیرقطعی راهکاران در این آمار شمرده نشده است.</small>}
+      </section>
+
+      <section className="cf-section">
+        <div className="cf-title">
+          <div><h3>فروش ویزیتور</h3><p>هیبرید ← سرپرست ← ویزیتوری که به این مشتری فروخته است</p></div>
+        </div>
+        {network.visitors?.length ? <div className="cf-table"><table>
+          <thead><tr><th>ویزیتور</th><th>شعبه</th><th>سرپرست</th><th>هیبرید من</th><th>فروش ویزیتور {cy}</th><th>فروش ویزیتور {py}</th><th>خرید این مشتری از او {cy}</th><th>خرید این مشتری از او {py}</th><th>آخرین فاکتور</th></tr></thead>
+          <tbody>{network.visitors.map((v: any) => <tr key={v.visitor_id}>
+            <td><b>{v.visitor_name || "—"}</b>{!v.active && <small className="cf-muted">غیرفعال</small>}</td>
+            <td>{v.branch || "—"}</td>
+            <td>{v.supervisor || "—"}</td>
+            <td className="cf-wrap">{(v.hybrids || []).join("، ") || "—"}</td>
+            <td><b>{money(v.visitor_sales_current_year_rial || 0)}</b><small>{fa(v.visitor_invoice_count_current_year || 0)} فاکتور</small></td>
+            <td><b>{money(v.visitor_sales_previous_year_rial || 0)}</b><small>{fa(v.visitor_invoice_count_previous_year || 0)} فاکتور</small></td>
+            <td>{money(v.customer_sales_current_year_rial || 0)}</td>
+            <td>{money(v.customer_sales_previous_year_rial || 0)}</td>
+            <td>{v.last_invoice_date_jalali || "—"}</td>
+          </tr>)}</tbody>
+        </table></div> : <div className="invoice-source-pending">{network.note || "برای این مشتری ویزیتوری ثبت نشده است."}</div>}
+      </section>
+
+      <section className="cf-section">
+        <div className="cf-title">
+          <div><h3>۵ فاکتور آخر {cy}</h3><p>{file.remaining_note}</p></div>
+        </div>
+        {invoices.length ? <div className="cf-table"><table>
+          <thead><tr><th>شماره فاکتور</th><th>تاریخ</th><th>مبلغ فروش</th><th>مانده بدهی</th><th>جریان وصول</th></tr></thead>
+          <tbody>{invoices.map((inv) => {
+            const pct = Math.max(0, Math.min(100, Number(inv.collected_percent ?? 0)));
+            return <tr key={inv.invoice_id}>
+              <td><b>{/^\d+$/.test(inv.number || "") ? Number(inv.number).toLocaleString("fa-IR", { useGrouping: false }) : inv.number || "—"}</b></td>
+              <td>{inv.date_jalali || "—"}</td>
+              <td><b>{money(inv.amount_rial || 0)}</b><small>تومان</small></td>
+              <td className={Number(inv.remaining_rial || 0) > 0 ? "cf-debt" : "cf-settled"}>{inv.remaining_rial == null ? "نامشخص" : Number(inv.remaining_rial) > 0 ? `${money(inv.remaining_rial)} تومان` : "تسویه شده"}</td>
+              <td className="cf-flow">
+                {inv.collected_percent == null ? "—" : <>
+                  <div className="cf-bar"><i style={{ width: `${pct}%` }} /></div>
+                  <small>{fa(pct)}٪ وصول شده · {money(inv.collected_rial || 0)} تومان</small>
+                  {(inv.collection_breakdown || []).length > 0 && <div className="cf-chips">{inv.collection_breakdown.map((b: any) => <span key={b.method}>{b.method}: {money(b.amount_rial)}</span>)}</div>}
+                </>}
+              </td>
+            </tr>;
+          })}</tbody>
+        </table></div> : <div className="invoice-source-pending">این مشتری در {cy} فاکتور خرید ندارد.</div>}
+      </section>
+    </>
+  );
+}
+
+function CustomerReceivables({ detail }: { detail: Customer }) {
+  const isKaramad = detail.data_source === "karamad";
+  const kd: any = detail.karamad_activity?.detail || {};
+  const ap: any = (isKaramad ? kd.account_position : detail.account_position) || {};
+  const cp: any = (isKaramad ? kd.collection_position : detail.collection_position) || {};
+  if (!ap.found && !cp.total_collection_exposure_rial) return null;
+  const breakdown: any[] = ap.account_breakdown || [];
+  const monthly: any[] = isKaramad ? kd.monthly_summary || [] : [];
+  const ledger: any[] = isKaramad ? kd.ledger_entries || [] : [];
+  return (
+    <section className="cf-section">
+      <div className="cf-title">
+        <div><h3>مطالبات مشتری</h3><p>{isKaramad ? "مانده از دفتر کل کارآمد (tblVoucherLines) سال مالی جاری روی تفصیلی مشتری" : "مانده از گردش سند سال مالی روی حساب‌های دریافتنی تجاری، برگشتی و اشخاص"}</p></div>
+        <span className={`collection-account-state ${ap.balance_status || "unknown"}`}>{ap.balance_status === "debtor" ? "بدهکار" : ap.balance_status === "creditor" ? "بستانکار" : ap.balance_status === "settled" ? "تسویه" : "فاقد حساب"}</span>
+      </div>
+      <div className="cf-kpis">
+        <article className="cf-accent-red"><small>مانده بدهی فعلی</small><b>{money(cp.open_account_receivable_rial || 0)}</b><span>تومان • بدون چک</span></article>
+        <article><small>چک باز در دست شرکت</small><b>{money(cp.open_cheque_amount_rial || 0)}</b><span>تومان</span></article>
+        <article><small>کل مطالبات درگیر وصول</small><b>{money(cp.total_collection_exposure_rial || 0)}</b><span>مانده + چک باز</span></article>
+        <article><small>پوشش با چک</small><b>{fa(cp.cheque_coverage_percent || 0)}٪</b><span>{fa(cp.uncovered_percent || 0)}٪ بدون چک</span></article>
+        {Number(cp.customer_credit_rial || 0) > 0 && <article><small>بستانکاری مشتری</small><b>{money(cp.customer_credit_rial)}</b><span>تومان</span></article>}
+      </div>
+      {breakdown.length > 0 && <div className="cf-table"><table>
+        <thead><tr><th>حساب</th><th>بدهکار</th><th>بستانکار</th><th>مانده</th></tr></thead>
+        <tbody>{breakdown.map((a: any, i: number) => <tr key={`${a.account_id}-${i}`}><td>{a.account_name || a.sl_title || a.account_id}</td><td>{fullToman(a.debit_balance_rial || 0)}</td><td>{fullToman(a.credit_balance_rial || 0)}</td><td><b>{fullToman(a.balance_rial || 0)}</b></td></tr>)}</tbody>
+      </table></div>}
+      {monthly.length > 0 && <details className="cf-details"><summary>خلاصه ماهانه حساب ({fa(monthly.length)} ماه)</summary><div className="cf-table"><table>
+        <thead><tr><th>ماه</th><th>بدهکار</th><th>بستانکار</th><th>مانده پایان ماه</th><th>تعداد تراکنش</th></tr></thead>
+        <tbody>{monthly.map((m: any) => <tr key={m.jalali_month}><td>{m.jalali_month}</td><td>{fullToman(m.debit_rial || 0)}</td><td>{fullToman(m.credit_rial || 0)}</td><td>{fullToman(m.closing_balance_rial || 0)}</td><td>{fa(m.transaction_count || 0)}</td></tr>)}</tbody>
+      </table></div></details>}
+      {ledger.length > 0 && <details className="cf-details"><summary>ریز گردش حساب ({fa(ledger.length)} ردیف)</summary><div className="cf-table"><table>
+        <thead><tr><th>تاریخ</th><th>شعبه</th><th>معین</th><th>بدهکار</th><th>بستانکار</th><th>مانده تجمعی</th><th>شرح</th></tr></thead>
+        <tbody>{ledger.map((e: any, i: number) => <tr key={e.voucher_ref || i}><td>{e.date_jalali || e.date || "—"}</td><td>{e.branch_name || "—"}</td><td>{e.sl_name || "—"}</td><td>{fullToman(e.debit_rial || 0)}</td><td>{fullToman(e.credit_rial || 0)}</td><td>{fullToman(e.running_balance_rial || 0)}</td><td className="cf-wrap">{e.description || "—"}</td></tr>)}</tbody>
+      </table></div></details>}
+    </section>
+  );
+}
+
 function CustomerProfile({
   c,
   close,
@@ -6162,7 +6228,7 @@ function CustomerProfile({
           <div>
             {detail.counterpart_ref ? <Risk x={risk(detail)} /> : <span className="fd-badge safe">دارای سابقه</span>}
             <h2>{cname(detail)}</h2>
-            <p>ریز دقیق چک‌ها، برگشتی‌ها، سررسیدهای آینده و حواله‌های منبع انتخاب‌شده</p>
+            <p>خرید، ویزیتور، ۵ فاکتور آخر، مطالبات، چک‌ها و احتمال برگشت — از منبع انتخاب‌شده</p>
           </div>
           <span className="profile-source">{detail.data_source === "karamad" ? "کارآمد" : "راهکاران"}</span>
         </div>
@@ -6170,6 +6236,12 @@ function CustomerProfile({
         {predictionWarning && (
           <div className="profile-prediction-warning">{predictionWarning}</div>
         )}
+        <CustomerFileOverview c={detail} />
+        <CustomerReceivables detail={detail} />
+        <div className="cf-title cf-cheques-title">
+          <div><h3>چک‌های مشتری</h3><p>کل سوابق چک، وصول، برگشتی و احتمال برگشت چک‌های باز</p></div>
+          {loadingDetail && <small>در حال دریافت ریز چک‌ها...</small>}
+        </div>
         <div className="modal-metrics profile-metrics">
           <K
             t="کل چک‌های دریافت‌شده"
@@ -6218,20 +6290,7 @@ function CustomerProfile({
             <span>هنوز باز: {money(open)} تومان</span>
           </footer>
         </section>
-        {detail.data_source === "rahkaran" && detail.collection_position ? <section className="customer-collection-position">
-          <Heading h="وضعیت مطالبات و پوشش وصول" p="مانده حساب باز و چک‌های باز جداگانه محاسبه می‌شوند؛ چک تحویل‌شده قبلاً از حساب دریافتنی اشخاص خارج شده است." />
-          <div className="modal-metrics collection-position-kpis">
-            <K t="مانده حساب بدون چک" v={fullToman(detail.collection_position.open_account_receivable_rial || 0)} n="تومان • حساب دریافتنی باز" c="amber" />
-            <K t="چک باز در دست شرکت" v={fullToman(detail.collection_position.open_cheque_amount_rial || 0)} n={`${fa(detail.open_cheques?.length || 0)} فقره • تومان`} c="blue" />
-            <K t="کل مطالبات درگیر وصول" v={fullToman(detail.collection_position.total_collection_exposure_rial || 0)} n="مانده باز + چک باز • تومان" c="red" />
-            <K t="پوشش با چک" v={`${fa(detail.collection_position.cheque_coverage_percent || 0)}٪`} n={`${fa(detail.collection_position.uncovered_percent || 0)}٪ بدون چک`} c="teal" />
-            {Number(detail.collection_position.customer_credit_rial || 0) > 0 ? <K t="بستانکاری مشتری" v={fullToman(detail.collection_position.customer_credit_rial || 0)} n="تومان • مانده حساب منفی" c="teal" /> : null}
-          </div>
-          <div className="collection-position-note">
-            <b>{detail.account_position?.account_name || "حساب دریافتنی مشتری"}</b>
-            <span>مانده رسمی راهکاران: {fullToman(Math.abs(Number(detail.account_position?.balance_rial || 0)))} تومان • {detail.account_position?.balance_status === "debtor" ? "بدهکار" : detail.account_position?.balance_status === "creditor" ? "بستانکار" : "تسویه"}</span>
-          </div>
-        </section> : null}
+        <UnifiedCustomerActivityTables c={detail} />
         {detail.counterpart_ref ? <CustomerReliability c={detail} /> : null}
         {detail.data_source === "rahkaran" && detail.b2b_remittances ? <section className="customer-b2b-detail">
           <Heading h="حواله‌ها و واریزهای B2B این مشتری" p="این داده‌ها علاوه بر نمایش، در ارزیابی رفتار مالی مشتری نیز لحاظ شده‌اند." />
@@ -6245,7 +6304,6 @@ function CustomerProfile({
           {(detail.b2b_remittances.rows || []).map((x:any)=><tr key={x.receipt_deposit_id}><td>{x.deposit_date_jalali || String(x.deposit_date||"").slice(0,10)}</td><td>{x.receipt_number || "—"}</td><td>{x.deposit_number || "—"}</td><td>{fullToman(Number(x.amount_rial||0))}</td><td>{x.bank_branch_name || `حساب ${x.bank_account_ref || "—"}`}</td><td><span className="b2b-category">{x.category}</span></td><td className="b2b-desc">{x.description || "—"}</td></tr>)}
           </tbody></table></div>
         </section> : null}
-        <UnifiedCustomerActivityTables c={detail} />
         {detail.counterpart_ref ? <CustomerSqlAudit c={detail as CustomerAudit} /> : null}
         <div className="profile-bottom">
           <div>

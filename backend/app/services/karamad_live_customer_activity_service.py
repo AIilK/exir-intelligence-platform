@@ -21,6 +21,7 @@ finance_agent_data_hub consumers work unchanged.
 
 from typing import Any
 
+from app.services.customer_cheque_return_risk import attach_return_risk
 from app.services.karamad_live_cash_draft_service import KaramadLiveCashDraftService
 from app.services.karamad_live_received_cheque_service import KaramadLiveReceivedChequeService
 
@@ -276,6 +277,39 @@ class KaramadLiveCustomerActivityService:
             "customers": rows,
         }
 
+    def _cheque_history(self, dl_refs: list[int]) -> dict[str, Any] | None:
+        """Full received-cheque history for the bounce base rate.
+
+        The live cheque feed only holds open statuses, so collected cheques are
+        invisible there. dbo.tblChequeDStatus: 4 = وصول شده (collected);
+        6/7/8/10 = برگشتی (8 = returned, later collected — still a bounce).
+        """
+        if not dl_refs:
+            return None
+        from sqlalchemy import bindparam, text
+        from app.database.karamad_sqlserver import get_karamad_sqlserver_engine
+
+        query = text(
+            """
+            SELECT
+                SUM(CASE WHEN d.[StatusRef] = 4 THEN 1 ELSE 0 END) AS collected_count,
+                SUM(CASE WHEN d.[StatusRef] IN (6, 7, 8, 10) THEN 1 ELSE 0 END) AS returned_count,
+                AVG(CASE WHEN d.[StatusRef] IN (4, 6, 7, 8, 10) THEN d.[Price] END) AS average_amount_rial
+            FROM dbo.[tblChequeD] d
+            WHERE d.[DLRef] IN :dl_refs
+            """
+        ).bindparams(bindparam("dl_refs", expanding=True))
+        try:
+            with get_karamad_sqlserver_engine().connect() as connection:
+                row = connection.execute(query, {"dl_refs": dl_refs}).mappings().one()
+        except Exception:
+            return None
+        return {
+            "collected_count": int(row["collected_count"] or 0),
+            "returned_count": int(row["returned_count"] or 0),
+            "average_amount_rial": float(row["average_amount_rial"] or 0),
+        }
+
     def customer_detail(self, customer_name: str, branch: str | None = None) -> dict[str, Any]:
         wanted = _text(customer_name).casefold()
         rows = self._all_rows(branch=branch)
@@ -392,6 +426,7 @@ class KaramadLiveCustomerActivityService:
                 "paid_transfer_amount_rial": total(paid_transfers),
             },
             "received_cheques": received_cheques,
+            "cheque_return_risk": attach_return_risk(received_cheques, self._cheque_history(dl_refs)),
             "returned_received_cheques": returned_received,
             "future_received_cheques": future_received,
             "issued_cheques": issued_cheques,

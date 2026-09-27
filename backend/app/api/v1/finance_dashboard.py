@@ -458,6 +458,24 @@ def customer_collection_portfolio(
         raise HTTPException(status_code=500, detail=f"بارگذاری ماژول جامع مطالبات مشتریان با خطا مواجه شد: {exc}") from exc
 
 
+@router.get("/customer-file/rahkaran/{counterpart_ref}", summary="پرونده مشتری راهکاران: فاکتورهای خرید و ۵ فاکتور آخر")
+def customer_file_rahkaran(counterpart_ref: int):
+    from app.services.customer_file_service import CustomerFileService
+    try:
+        return CustomerFileService().rahkaran(counterpart_ref)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت فاکتورهای مشتری از راهکاران با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/customer-file/karamad", summary="پرونده مشتری کارآمد: فاکتورها، ۵ فاکتور آخر و ویزیتور/سرپرست/هیبرید")
+def customer_file_karamad(dl_refs: str = Query(..., min_length=1, max_length=2000, pattern=r"^\d+(,\d+)*$")):
+    from app.services.customer_file_service import CustomerFileService
+    try:
+        return CustomerFileService().karamad([int(x) for x in dl_refs.split(",")])
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت فاکتورهای مشتری از کارآمد با خطا مواجه شد: {exc}") from exc
+
+
 @router.get("/customer-intelligence/{counterpart_ref}", summary="تحلیل انسانی رفتار یک مشتری")
 def customer_intelligence_detail(
     counterpart_ref: int,

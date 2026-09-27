@@ -1,0 +1,50 @@
+/* Customer file: purchases, visitor sales, last invoices, receivables, cheque return risk */
+
+/* customer-reliability.css forces .customer-profile-expanded to 96vw (meant for the modal),
+   which overrode the embedded page's width:100% and pushed it past the content area. */
+.customer-profile-expanded.customer-profile-page{width:100%!important;min-width:0}
+.cf-section{display:grid;gap:14px;margin:18px 0;padding:18px 20px;border:1px solid var(--line,#24344a);border-radius:18px;background:rgba(9,20,34,.72);min-width:0}
+.cf-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cf-title h3{margin:0 0 4px;font-size:18px}
+.cf-title p{margin:0;font-size:12px;opacity:.68;max-width:760px;line-height:1.7}
+.cf-title small{opacity:.7;font-size:12px}
+.cf-cheques-title{margin:24px 0 4px}
+
+.cf-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.cf-kpis article{display:grid;gap:6px;padding:16px;border:1px solid rgba(94,126,151,.2);border-radius:14px;background:rgba(255,255,255,.035);min-width:0}
+.cf-kpis small{opacity:.7;font-size:12px}
+.cf-kpis b{font-size:22px;line-height:1.3;overflow-wrap:anywhere}
+.cf-kpis span{opacity:.62;font-size:12px}
+.cf-kpis .cf-accent-red{border-color:rgba(223,98,105,.45);background:rgba(223,98,105,.08)}
+.cf-directory-kpis{margin:12px 0}
+.cf-debt-filters{margin:0 0 12px}
+.cf-note{opacity:.62;font-size:12px}
+.cf-muted{opacity:.55;font-size:11px;display:block}
+
+.cf-table{min-width:0;overflow-x:auto;border:1px solid rgba(94,126,151,.18);border-radius:14px}
+.cf-table table{width:100%;border-collapse:collapse;min-width:760px}
+.cf-table th,.cf-table td{padding:11px 12px;text-align:right;border-bottom:1px solid rgba(94,126,151,.14);white-space:nowrap;vertical-align:top}
+.cf-table th{font-size:12px;opacity:.8;background:rgba(11,25,39,.9)}
+.cf-table td small{display:block;opacity:.6;font-size:11px;margin-top:3px}
+.cf-table .cf-wrap{white-space:normal;min-width:180px;max-width:320px;line-height:1.7}
+.cf-debt{color:#f0a35b;font-weight:600}
+.cf-settled{color:#35c3a0}
+
+.cf-flow{min-width:220px}
+.cf-bar{height:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+.cf-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#1ea88c,#3fd4b0)}
+.cf-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.cf-chips span{font-size:11px;padding:3px 8px;border-radius:999px;background:rgba(63,212,176,.1);border:1px solid rgba(63,212,176,.22)}
+
+.cf-details summary{cursor:pointer;padding:6px 2px;opacity:.85}
+.cf-details[open] summary{margin-bottom:8px}
+
+.cf-risk{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;font-size:12px;background:rgba(110,130,150,.14);white-space:nowrap}
+.cf-risk.high{background:rgba(223,98,105,.18);color:#ff9aa0}
+.cf-risk.medium{background:rgba(238,166,59,.18);color:#f3be6e}
+.cf-risk.low{background:rgba(38,156,136,.16);color:#6fe0c4}
+.cf-risk.returned{background:rgba(223,98,105,.12)}
+.cf-risk.collected{background:rgba(38,156,136,.1);opacity:.8}
+.cf-risk.unresolved{opacity:.7}
+
+@media(max-width:720px){.cf-section{padding:14px}.cf-kpis{grid-template-columns:1fr 1fr}.cf-kpis b{font-size:18px}}

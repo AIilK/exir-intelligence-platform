@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.customer_cheque_return_risk import attach_return_risk
 from app.services.finance_prediction_service import FinancePredictionService
 from app.services.treasury_service import get_customer_b2b_behavior, get_customer_b2b_remittances
 
@@ -105,6 +106,15 @@ class CustomerIntelligenceService:
     def collection_portfolio(self, limit: int = 300) -> dict[str, Any]:
         """Managerial customer-collection portfolio with account + cheque coverage in one dataset."""
         dashboard = self.dashboard(limit=limit)
+        # One bulk query instead of one ~0.5s query per customer (was ~2 minutes for 300).
+        try:
+            positions = self.prediction.bulk_customer_account_positions(
+                [int(x["counterpart_ref"]) for x in dashboard.get("customers", []) if x.get("counterpart_ref") is not None]
+            )
+        except Exception as exc:
+            positions, bulk_error = {}, str(exc)
+        else:
+            bulk_error = None
         rows: list[dict[str, Any]] = []
         for item in dashboard.get("customers", []):
             # Defensive guard: dashboard already excludes Hybrid customers, but keep
@@ -114,10 +124,7 @@ class CustomerIntelligenceService:
             ref = item.get("counterpart_ref")
             if ref is None:
                 continue
-            try:
-                account = self.prediction.customer_account_position(int(ref))
-            except Exception as exc:
-                account = {"found": False, "error": str(exc)}
+            account = positions.get(int(ref)) or {"found": False, **({"error": bulk_error} if bulk_error else {})}
             balance = float(account.get("balance_rial", 0) or 0) if account.get("found") else 0.0
             open_account = max(balance, 0.0)
             customer_credit = max(-balance, 0.0)
@@ -160,6 +167,7 @@ class CustomerIntelligenceService:
         customer["b2b_remittances"] = b2b
         customer["latest_invoice"] = self.prediction.customer_latest_invoice(counterpart_ref)
         customer["all_cheques"] = self.prediction.customer_all_cheques(counterpart_ref)
+        customer["cheque_return_risk"] = attach_return_risk(customer["all_cheques"])
         customer["open_cheques"] = self.prediction.customer_open_cheques(counterpart_ref)
         customer["returned_cheques"] = self.prediction.customer_returned_cheques(counterpart_ref)
         account = self.prediction.customer_account_position(counterpart_ref)
