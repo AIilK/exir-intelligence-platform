@@ -476,6 +476,39 @@ def customer_file_karamad(dl_refs: str = Query(..., min_length=1, max_length=200
         raise HTTPException(status_code=500, detail=f"دریافت فاکتورهای مشتری از کارآمد با خطا مواجه شد: {exc}") from exc
 
 
+@router.get("/sales-network", summary="شبکه فروش کارآمد: هیبرید من‌ها به تفکیک شعبه")
+def sales_network_overview():
+    from app.services.karamad_sales_network_service import KaramadSalesNetworkService
+    try:
+        return KaramadSalesNetworkService().overview()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت شبکه فروش کارآمد با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/sales-network/branches/{branch_id}", summary="پرونده هیبرید (شعبه): فروش، ویزیتورها، مطالبات و چک‌ها")
+def sales_network_branch(branch_id: int):
+    from app.services.karamad_sales_network_service import KaramadSalesNetworkService
+    try:
+        result = KaramadSalesNetworkService().branch_file(branch_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت پرونده شعبه با خطا مواجه شد: {exc}") from exc
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="شعبه پیدا نشد.")
+    return result
+
+
+@router.get("/sales-network/visitors/{visitor_id}", summary="پرونده ویزیتور: فروش، مطالبات و چک‌ها")
+def sales_network_visitor(visitor_id: int):
+    from app.services.karamad_sales_network_service import KaramadSalesNetworkService
+    try:
+        result = KaramadSalesNetworkService().visitor_file(visitor_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت پرونده ویزیتور با خطا مواجه شد: {exc}") from exc
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail="ویزیتور پیدا نشد.")
+    return result
+
+
 @router.get("/customer-intelligence/{counterpart_ref}", summary="تحلیل انسانی رفتار یک مشتری")
 def customer_intelligence_detail(
     counterpart_ref: int,

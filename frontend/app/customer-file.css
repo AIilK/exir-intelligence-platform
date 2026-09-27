@@ -48,3 +48,6 @@
 .cf-risk.unresolved{opacity:.7}
 
 @media(max-width:720px){.cf-section{padding:14px}.cf-kpis{grid-template-columns:1fr 1fr}.cf-kpis b{font-size:18px}}
+
+.cf-clickable tbody tr{cursor:pointer;transition:background .15s ease}
+.cf-clickable tbody tr:hover{background:rgba(31,91,111,.2)}

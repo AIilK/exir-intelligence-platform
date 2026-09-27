@@ -76,6 +76,53 @@ def _stats(rows: list[dict[str, Any]], current_fy: Any, previous_fy: Any) -> dic
     }
 
 
+def karamad_invoice_settlements(connection, last: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remaining debt and collection breakdown per Karamad invoice (keeps extra keys such as visitor_name)."""
+    if not last:
+        return []
+    ids = [r["invoice_id"] for r in last]
+    payoff_columns = ", ".join(f"p.[{c}]" for c in KARAMAD_PAYOFF_LABELS)
+    settlement = connection.execute(text(
+        f"""
+        SELECT r.[ID], r.[Paid], r.[UnPaid], {payoff_columns}
+        FROM dbo.[vwFactorFRemain] r
+        LEFT JOIN dbo.[vwFactorFPayoff] p ON p.[ID] = r.[ID]
+        WHERE r.[ID] IN :ids
+        """
+    ).bindparams(bindparam("ids", expanding=True)), {"ids": ids}).mappings().all()
+    by_id = {int(s["ID"]): s for s in settlement}
+
+    result = []
+    for invoice in last:
+        s = by_id.get(invoice["invoice_id"], {})
+        breakdown: dict[str, float] = {}
+        for column, label in KARAMAD_PAYOFF_LABELS.items():
+            value = _num(s.get(column))
+            if value > 0:
+                breakdown[label] = _num(breakdown.get(label, 0) + value)
+        amount = invoice["amount_rial"]
+        remaining = max(_num(s.get("UnPaid")), 0.0) if s else None
+        collected = None if remaining is None else _num(max(amount - remaining, 0.0))
+        # vwFactorFPayoff reports each instrument's full amount even when one cheque
+        # settled several invoices; show each method's share of this invoice instead.
+        instrument_total = sum(breakdown.values())
+        if collected is not None and instrument_total > collected > 0:
+            breakdown = {k: _num(v * collected / instrument_total) for k, v in breakdown.items()}
+        result.append({
+            **{k: invoice[k] for k in ("visitor_name",) if k in invoice},
+            "invoice_id": invoice["invoice_id"],
+            "number": invoice["number"],
+            "date": _date_iso(invoice["date"]),
+            "date_jalali": format_jalali_date(invoice["date"]),
+            "amount_rial": amount,
+            "remaining_rial": remaining,
+            "collected_rial": collected,
+            "collected_percent": None if collected is None or not amount else round(min(collected / amount, 1) * 100, 1),
+            "collection_breakdown": [{"method": k, "amount_rial": v} for k, v in breakdown.items()],
+        })
+    return result
+
+
 class CustomerFileService:
     def __init__(self, rahkaran_engine=None, karamad_engine=None):
         self._rahkaran_engine = rahkaran_engine
@@ -231,7 +278,7 @@ class CustomerFileService:
                 for r in invoices
             ]
             last = [r for r in rows if r["fiscal_year"] == current_id and r["amount_rial"] >= MIN_LAST_INVOICE_AMOUNT_RIAL][:LAST_INVOICE_COUNT]
-            last_invoices = self._karamad_last_invoices(connection, last)
+            last_invoices = karamad_invoice_settlements(connection, last)
             network = self._karamad_sales_network(connection, rows, current_id, previous_id)
 
         return {
@@ -247,50 +294,6 @@ class CustomerFileService:
             "remaining_note": "مانده و ریز وصول هر فاکتور مستقیم از تسویه فاکتور در کارآمد (vwFactorFRemain / vwFactorFPayoff) خوانده شده است؛ اگر یک چک چند فاکتور را تسویه کرده باشد، سهم همین فاکتور نمایش داده می‌شود.",
             "sales_network": network,
         }
-
-    def _karamad_last_invoices(self, connection, last: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not last:
-            return []
-        ids = [r["invoice_id"] for r in last]
-        payoff_columns = ", ".join(f"p.[{c}]" for c in KARAMAD_PAYOFF_LABELS)
-        settlement = connection.execute(text(
-            f"""
-            SELECT r.[ID], r.[Paid], r.[UnPaid], {payoff_columns}
-            FROM dbo.[vwFactorFRemain] r
-            LEFT JOIN dbo.[vwFactorFPayoff] p ON p.[ID] = r.[ID]
-            WHERE r.[ID] IN :ids
-            """
-        ).bindparams(bindparam("ids", expanding=True)), {"ids": ids}).mappings().all()
-        by_id = {int(s["ID"]): s for s in settlement}
-
-        result = []
-        for invoice in last:
-            s = by_id.get(invoice["invoice_id"], {})
-            breakdown: dict[str, float] = {}
-            for column, label in KARAMAD_PAYOFF_LABELS.items():
-                value = _num(s.get(column))
-                if value > 0:
-                    breakdown[label] = _num(breakdown.get(label, 0) + value)
-            amount = invoice["amount_rial"]
-            remaining = max(_num(s.get("UnPaid")), 0.0) if s else None
-            collected = None if remaining is None else _num(max(amount - remaining, 0.0))
-            # vwFactorFPayoff reports each instrument's full amount even when one cheque
-            # settled several invoices; show each method's share of this invoice instead.
-            instrument_total = sum(breakdown.values())
-            if collected is not None and instrument_total > collected > 0:
-                breakdown = {k: _num(v * collected / instrument_total) for k, v in breakdown.items()}
-            result.append({
-                "invoice_id": invoice["invoice_id"],
-                "number": invoice["number"],
-                "date": _date_iso(invoice["date"]),
-                "date_jalali": format_jalali_date(invoice["date"]),
-                "amount_rial": amount,
-                "remaining_rial": remaining,
-                "collected_rial": collected,
-                "collected_percent": None if collected is None or not amount else round(min(collected / amount, 1) * 100, 1),
-                "collection_breakdown": [{"method": k, "amount_rial": v} for k, v in breakdown.items()],
-            })
-        return result
 
     def _karamad_sales_network(self, connection, rows: list[dict[str, Any]], current_id: Any, previous_id: Any) -> dict[str, Any]:
         visitor_ids = sorted({int(r["visitor_ref"]) for r in rows if r["visitor_ref"] is not None})

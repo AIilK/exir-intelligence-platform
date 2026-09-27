@@ -3731,6 +3731,161 @@ function LegacyAgentCard({ agent }: { agent: AgentResult }) {
   );
 }
 
+// Karamad sales network: هیبرید من (per branch) → ویزیتور. Customer names are never shown.
+function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBack: () => void }) {
+  const [branchId, setBranchId] = useState<number | null>(null);
+  const [visitorId, setVisitorId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  if (visitorId != null) return <NetworkFile kind="visitor" id={visitorId} onBack={() => setVisitorId(null)} backLabel={branchId != null ? "→ بازگشت به پرونده هیبرید" : "→ بازگشت به هیبرید من‌ها"} />;
+  if (branchId != null) return <NetworkFile kind="branch" id={branchId} onBack={() => setBranchId(null)} onOpenVisitor={setVisitorId} backLabel="→ بازگشت به هیبرید من‌ها" />;
+
+  const cy = data?.current_year_label || "سال جاری", py = data?.previous_year_label || "سال قبل";
+  const q = search.trim().toLocaleLowerCase("fa-IR");
+  const rows: any[] = (data?.branches || []).filter((b: any) => !q || [b.branch_name, ...(b.hybrids || [])].join(" ").toLocaleLowerCase("fa-IR").includes(q));
+  const sm = data?.summary || {};
+  return <>
+    <button className="cheque-back" onClick={onBack}>→ بازگشت به انتخاب راهکاران یا کارآمد</button>
+    <article className="fd-panel unified-customer-directory">
+      <Heading h="هیبرید من‌ها و ویزیتورها — کارآمد" p="هر ردیف یک شعبه و هیبرید من‌های آن است؛ برای دیدن ویزیتورها، فروش، مطالبات و چک‌ها روی ردیف کلیک کنید." />
+      {error && <div className="profile-warning">{error}</div>}
+      {!data && !error ? <div className="profile-loading">در حال دریافت شبکه فروش کارآمد...</div> : <>
+        <div className="cf-kpis cf-directory-kpis">
+          <article><small>هیبرید من</small><b>{fa(sm.hybrid_count || 0)}</b><span>در {fa(sm.branch_count || 0)} شعبه</span></article>
+          <article><small>ویزیتور فعال</small><b>{fa(sm.active_visitor_count || 0)}</b><span>نفر</span></article>
+          <article><small>فروش {cy}</small><b>{money(sm.current_year_sales_rial || 0)}</b><span>تومان</span></article>
+          <article><small>فروش {py}</small><b>{money(sm.previous_year_sales_rial || 0)}</b><span>تومان</span></article>
+          <article className="cf-accent-red"><small>مطالبات مشتریان شعب</small><b>{money(sm.open_account_receivable_rial || 0)}</b><span>تومان • مانده دفتر کل</span></article>
+        </div>
+        <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar">
+          <div><b>جستجوی هیبرید من یا شعبه</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="مثلاً رییسی یا اصفهان..." /></div>
+          <small>{fa(rows.length)} شعبه</small>
+        </section>
+        <div className="cf-table cf-clickable"><table>
+          <thead><tr><th>هیبرید من</th><th>شعبه</th><th>ویزیتور فعال</th><th>فروش {cy}</th><th>فروش {py}</th><th>مطالبات</th><th>چک باز</th></tr></thead>
+          <tbody>{rows.map((b) => <tr key={b.branch_id} onClick={() => setBranchId(b.branch_id)}>
+            <td className="cf-wrap"><b>{(b.hybrids || []).join("، ") || "—"}</b></td>
+            <td>{b.branch_name}</td>
+            <td>{fa(b.active_visitor_count || 0)}<small>{fa(b.active_supervisor_count || 0)} سرپرست</small></td>
+            <td><b>{money(b.current_year_sales_rial || 0)}</b><small>{fa(b.current_year_invoice_count || 0)} فاکتور</small></td>
+            <td><b>{money(b.previous_year_sales_rial || 0)}</b><small>{fa(b.previous_year_invoice_count || 0)} فاکتور</small></td>
+            <td className="cf-debt">{money(b.debt?.open_account_receivable_rial || 0)}<small>{fa(b.debt?.debtor_customer_count || 0)} مشتری بدهکار</small></td>
+            <td>{money(b.open_cheque_amount_rial || 0)}<small>{fa(b.open_cheque_count || 0)} فقره</small></td>
+          </tr>)}</tbody>
+        </table></div>
+        <small className="cf-note">{data?.debt_note}</small>
+      </>}
+    </article>
+  </>;
+}
+
+function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "branch" | "visitor"; id: number; onBack: () => void; onOpenVisitor?: (id: number) => void; backLabel: string }) {
+  const [file, setFile] = useState<any>(null);
+  const [error, setError] = useState("");
+  const [riskFilter, setRiskFilter] = useState<"open" | "high" | "medium" | "low" | "returned">("open");
+  useEffect(() => {
+    let active = true;
+    setFile(null); setError("");
+    request(`/sales-network/${kind === "branch" ? "branches" : "visitors"}/${id}`)
+      .then((d) => { if (active) setFile(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت پرونده ناموفق بود"); });
+    return () => { active = false; };
+  }, [kind, id]);
+
+  const back = <button className="cheque-back" onClick={onBack}>{backLabel}</button>;
+  if (error) return <>{back}<div className="profile-warning">{error}</div></>;
+  if (!file) return <>{back}<div className="profile-loading">در حال دریافت پرونده {kind === "branch" ? "هیبرید" : "ویزیتور"}...</div></>;
+
+  const cy = file.current_year_label || "سال جاری", py = file.previous_year_label || "سال قبل";
+  const s = file.sales_stats || {}, d = file.debt || {}, ch = file.cheques || { rows: [], summary: {} };
+  const chequeRows = (ch.rows || []).filter((x: any) => {
+    const r = x.return_risk || {};
+    return riskFilter === "open" ? r.state === "open" : riskFilter === "returned" ? r.state === "returned" : r.level === riskFilter;
+  });
+  const title = kind === "branch" ? (file.hybrids || []).join("، ") || file.branch_name : file.visitor_name;
+  return <>
+    {back}
+    <article className="customer-profile-expanded customer-profile-page">
+      <div className="profile-title">
+        <div>
+          <span className="fd-badge safe">{kind === "branch" ? "هیبرید من" : file.active ? "ویزیتور فعال" : "ویزیتور غیرفعال"}</span>
+          <h2>{title}</h2>
+          <p>{kind === "branch"
+            ? `شعبه ${file.branch_name} • سرپرست: ${(file.supervisors || []).join("، ") || "—"}`
+            : `شعبه ${file.branch_name || "—"} • سرپرست: ${file.supervisor || "—"} • هیبرید من: ${(file.hybrids || []).join("، ") || "—"}`}</p>
+        </div>
+        <span className="profile-source">کارآمد</span>
+      </div>
+
+      <section className="cf-section">
+        <div className="cf-title">
+          <div><h3>فروش</h3><p>{kind === "branch" ? "همه فاکتورهای فروش این شعبه" : "فاکتورهای فروشی که این ویزیتور زده است"}</p></div>
+          {s.last_invoice_date_jalali && <small>آخرین فاکتور: {s.last_invoice_date_jalali}</small>}
+        </div>
+        <div className="cf-kpis">
+          <article><small>تعداد کل فاکتور فروش</small><b>{fa(s.invoice_count || 0)}</b><span>از {s.first_invoice_date_jalali || "—"}</span></article>
+          <article><small>کل مبلغ فروش تا امروز</small><b>{money(s.sales_amount_rial || 0)}</b><span>تومان</span></article>
+          <article><small>فروش {cy}</small><b>{money(s.current_year_sales_rial || 0)}</b><span>{fa(s.current_year_invoice_count || 0)} فاکتور</span></article>
+          <article><small>فروش {py}</small><b>{money(s.previous_year_sales_rial || 0)}</b><span>{fa(s.previous_year_invoice_count || 0)} فاکتور</span></article>
+        </div>
+      </section>
+
+      {kind === "branch" && <section className="cf-section">
+        <div className="cf-title"><div><h3>ویزیتورها</h3><p>ویزیتورهای فعال و ویزیتورهایی که در {cy} یا {py} فروش داشته‌اند؛ برای پرونده ویزیتور کلیک کنید.</p></div></div>
+        {(file.visitors || []).length ? <div className="cf-table cf-clickable"><table>
+          <thead><tr><th>ویزیتور</th><th>سرپرست</th><th>فروش {cy}</th><th>فروش {py}</th><th>مطالبات مشتریانش</th><th>آخرین فاکتور</th></tr></thead>
+          <tbody>{file.visitors.map((v: any) => <tr key={v.visitor_id} onClick={() => onOpenVisitor?.(v.visitor_id)}>
+            <td><b>{v.visitor_name}</b>{!v.active && <small className="cf-muted">غیرفعال</small>}</td>
+            <td>{v.supervisor || "—"}</td>
+            <td><b>{money(v.current_year_sales_rial || 0)}</b><small>{fa(v.current_year_invoice_count || 0)} فاکتور</small></td>
+            <td><b>{money(v.previous_year_sales_rial || 0)}</b><small>{fa(v.previous_year_invoice_count || 0)} فاکتور</small></td>
+            <td className="cf-debt">{money(v.debt?.open_account_receivable_rial || 0)}<small>{fa(v.debt?.debtor_customer_count || 0)} مشتری بدهکار</small></td>
+            <td>{v.last_invoice_date_jalali || "—"}</td>
+          </tr>)}</tbody>
+        </table></div> : <div className="invoice-source-pending">ویزیتوری برای این شعبه ثبت نشده است.</div>}
+      </section>}
+
+      <section className="cf-section">
+        <div className="cf-title"><div><h3>۵ فاکتور آخر {cy}</h3><p>مانده و ریز وصول هر فاکتور از تسویه فاکتور در کارآمد؛ اگر یک چک چند فاکتور را تسویه کرده باشد، سهم همین فاکتور نمایش داده می‌شود.</p></div></div>
+        {(file.last_invoices || []).length ? <LastInvoicesTable invoices={file.last_invoices} showVisitor={kind === "branch"} /> : <div className="invoice-source-pending">در {cy} فاکتوری ثبت نشده است.</div>}
+      </section>
+
+      <section className="cf-section">
+        <div className="cf-title"><div><h3>مطالبات</h3><p>{kind === "branch" ? "مانده دفتر کل مشتریانی که شعبه اصلی‌شان همین شعبه است." : "مانده دفتر کل مشتریانی که آخرین فاکتورشان را همین ویزیتور زده است (هر مشتری فقط یک‌بار شمرده می‌شود)."}</p></div></div>
+        <div className="cf-kpis">
+          <article className="cf-accent-red"><small>مانده بدهی مشتریان</small><b>{money(d.open_account_receivable_rial || 0)}</b><span>{fa(d.debtor_customer_count || 0)} مشتری بدهکار از {fa(d.customer_count || 0)}</span></article>
+          <article><small>بستانکاری مشتریان</small><b>{money(d.customer_credit_rial || 0)}</b><span>تومان</span></article>
+          <article><small>مانده تسویه‌نشده فاکتورهای {cy}</small><b>{money(d.current_year_unpaid_invoice_rial || 0)}</b><span>{fa(d.current_year_unpaid_invoice_count || 0)} فاکتور</span></article>
+          <article><small>چک باز در دست شرکت</small><b>{money(ch.summary?.open?.amount_rial || 0)}</b><span>{fa(ch.summary?.open?.count || 0)} فقره</span></article>
+        </div>
+      </section>
+
+      <section className="cf-section">
+        <div className="cf-title"><div><h3>چک‌های باز و احتمال برگشت</h3><p>احتمال برگشت هر چک از سابقه چک‌های همان مشتری (وصول و برگشت) به‌علاوه مبلغ، مدت و سررسید چک محاسبه شده است؛ برای دلایل، نشانگر را روی درصد نگه دارید.</p></div></div>
+        <section className="customer-cheque-scope-cards">
+          {([["open", "همه چک‌های باز"], ["high", "احتمال برگشت بالا"], ["medium", "احتمال برگشت متوسط"], ["low", "احتمال برگشت کم"], ["returned", "برگشتی"]] as const).map(([k, l]) => <button key={k} className={riskFilter === k ? "active" : ""} onClick={() => setRiskFilter(k)}>
+            <small>{l}</small><b>{fa(ch.summary?.[k]?.count || 0)} فقره</b><span>{money(ch.summary?.[k]?.amount_rial || 0)} تومان</span>
+          </button>)}
+        </section>
+        {chequeRows.length ? <div className="cf-table"><table>
+          <thead><tr><th>شماره چک</th><th>صیاد</th><th>مبلغ</th><th>تاریخ دریافت</th><th>سررسید</th><th>زمان سررسید</th><th>وضعیت</th><th>احتمال برگشت</th><th>بانک</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
+          <tbody>{chequeRows.map((x: any) => <tr key={x.cheque_id}>
+            <td><b>{x.cheque_number || "—"}</b></td>
+            <td>{x.sayad_number || "—"}</td>
+            <td><b>{money(x.amount_rial || 0)}</b><small>تومان</small></td>
+            <td>{x.registration_date_jalali || "—"}</td>
+            <td>{x.due_date_jalali || "—"}</td>
+            <td>{typeof x.days_until_due !== "number" ? "—" : x.days_until_due < 0 ? `${fa(-x.days_until_due)} روز گذشته` : x.days_until_due === 0 ? "امروز" : `${fa(x.days_until_due)} روز مانده`}</td>
+            <td>{x.cheque_status || "—"}</td>
+            <td><ChequeReturnRisk risk={x.return_risk} /></td>
+            <td>{x.bank || "—"}</td>
+            {kind === "branch" && <td>{x.visitor_name || "—"}</td>}
+          </tr>)}</tbody>
+        </table></div> : <div className="invoice-source-pending">چکی در این دسته وجود ندارد.</div>}
+      </section>
+    </article>
+  </>;
+}
+
 function Customers({
   customers,
   agent,
@@ -3748,12 +3903,21 @@ function Customers({
   const [portfolio, setPortfolio] = useState<any>({ summary: {}, customers: [] });
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [debtFilter, setDebtFilter] = useState<"all" | "debtor" | "uncovered" | "cheque" | "creditor">("all");
+  const [network, setNetwork] = useState<any>(null);
+  const [networkError, setNetworkError] = useState("");
   useEffect(() => {
-    if (!customerSource) return;
+    let active = true;
+    request("/sales-network")
+      .then((d) => { if (active) setNetwork(d); })
+      .catch((e) => { if (active) setNetworkError(e instanceof Error ? e.message : "دریافت شبکه فروش کارآمد ناموفق بود"); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    // Karamad has its own view (هیبرید من / ویزیتور); the debt portfolio is only for Rahkaran customers.
+    if (customerSource !== "rahkaran") return;
     let active = true;
     setPortfolioLoading(true);
-    const branchQ = customerSource === "karamad" && branch ? `&branch=${encodeURIComponent(branch)}` : "";
-    request(`/customer-collection-portfolio?limit=1000&source=${customerSource}${branchQ}`)
+    request(`/customer-collection-portfolio?limit=1000&source=rahkaran`)
       .then((d) => { if (active) setPortfolio(d); })
       .catch(() => { if (active) setPortfolio({ summary: {}, customers: [] }); })
       .finally(() => { if (active) setPortfolioLoading(false); });
@@ -3825,10 +3989,9 @@ function Customers({
     });
   }, [customers, karamad, branch, search]);
 
-  const branchSummary = karamad?.summary || {};
   const rahkaranCustomers = merged.filter((c) => Boolean(c.counterpart_ref));
-  const karamadCustomers = merged.filter((c) => Boolean(c.karamad_activity));
-  const sourceRows = customerSource === "rahkaran" ? rahkaranCustomers : customerSource === "karamad" ? karamadCustomers : [];
+  // Karamad is shown as the sales network (هیبرید من / ویزیتور), never as a customer list.
+  const sourceRows = customerSource === "rahkaran" ? rahkaranCustomers : [];
   const positions = useMemo(() => {
     const map = new Map<string, any>();
     (portfolio?.customers || []).forEach((p: any) => {
@@ -3870,12 +4033,19 @@ function Customers({
           <b>مشاهده مشتریان راهکاران ←</b>
         </button>
         <button type="button" className="cheque-source-card karamad" onClick={() => { setCustomerSource("karamad"); setBranch(""); setSearch(""); }}>
-          <span>پرونده‌های مشتری</span><h2>کارآمد</h2>
-          <strong>{fa(karamadCustomers.length)}</strong><small>مشتری</small>
-          <p>مشتریان شناسایی‌شده از کارآمد؛ آماده برای نمایش ریز چک‌ها، حواله‌ها، شعبه و وضعیت‌ها.</p>
-          <b>مشاهده مشتریان کارآمد ←</b>
+          <span>شبکه فروش</span><h2>کارآمد</h2>
+          <strong>{network ? fa(network.summary?.hybrid_count || 0) : "…"}</strong><small>هیبرید من · {network ? fa(network.summary?.active_visitor_count || 0) : "…"} ویزیتور فعال</small>
+          <p>هیبرید من‌ها و ویزیتورهای کارآمد؛ فروش، مطالبات و چک‌های هر شعبه و هر ویزیتور.</p>
+          <b>مشاهده هیبرید من‌ها و ویزیتورها ←</b>
         </button>
       </section>
+    </>
+  );
+
+  if (customerSource === "karamad") return (
+    <>
+      <AgentPanel agent={agent} />
+      <SalesNetwork data={network} error={networkError} onBack={() => setCustomerSource(null)} />
     </>
   );
 
@@ -3885,8 +4055,8 @@ function Customers({
       <button className="cheque-back" onClick={() => { setCustomerSource(null); setBranch(""); setSearch(""); setDebtFilter("all"); }}>→ بازگشت به انتخاب راهکاران یا کارآمد</button>
       <article className="fd-panel unified-customer-directory">
         <Heading
-          h={`پرونده مشتریان — ${customerSource === "rahkaran" ? "راهکاران" : "کارآمد"}`}
-          p={customerSource === "rahkaran" ? "فهرست مشتریان راهکاران؛ برای ورود به ریز پرونده روی مشتری کلیک کنید." : "فهرست مشتریان کارآمد؛ برای ورود به ریز چک‌ها، حواله‌ها و شعبه روی مشتری کلیک کنید."}
+          h="پرونده مشتریان — راهکاران"
+          p="فهرست مشتریان راهکاران؛ برای ورود به ریز پرونده روی مشتری کلیک کنید."
         />
         <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar">
           <div>
@@ -3897,13 +4067,6 @@ function Customers({
               placeholder="مثلاً نام شرکت یا مشتری را بنویسید..."
             />
           </div>
-          {customerSource === "karamad" && <div>
-            <b>شهر / شعبه کارآمد</b>
-            <select value={branch} onChange={(e) => setBranch(e.target.value)}>
-              <option value="">همه شعب</option>
-              {(karamad?.available_branches || []).map((item: string) => <option key={item} value={item}>{item}</option>)}
-            </select>
-          </div>}
           <small>{fa(visibleRows.length)} مشتری پیدا شد</small>
         </section>
         <div className="cf-kpis cf-directory-kpis">
@@ -3914,14 +4077,6 @@ function Customers({
         <div className="collection-module-filters cf-debt-filters">
           {([["all", "همه"], ["debtor", "مانده بدهکار"], ["uncovered", "بدهکار بدون چک"], ["cheque", "دارای چک باز"], ["creditor", "بستانکار"]] as const).map(([k, l]) => <button key={k} className={debtFilter === k ? "active" : ""} onClick={() => setDebtFilter(k)}>{l}</button>)}
         </div>
-        {customerSource === "karamad" && branch && (
-          <div className="karamad-summary">
-            <div><span>گردش‌های ثبت‌شده شعبه</span><b>{fa(branchSummary.movement_count || 0)}</b></div>
-            <div><span>دریافت</span><b>{money(branchSummary.inflow_rial || 0)} تومان</b></div>
-            <div><span>پرداخت</span><b>{money(branchSummary.outflow_rial || 0)} تومان</b></div>
-            <div><span>چک دریافتی</span><b>{fa(branchSummary.received_cheque_count || 0)} فقره · {money(branchSummary.received_cheque_amount_rial || 0)} تومان</b></div>
-          </div>
-        )}
         {karamadError && <div className="profile-warning">{karamadError}</div>}
         <div className="fd-table">
           <table>
@@ -3945,7 +4100,7 @@ function Customers({
                 const k: any = c.karamad_activity || {};
                 const chequeCount = Number(c.historical_cheque_count || 0) + Number(k.received_cheque_count || 0) + Number(k.issued_cheque_count || 0);
                 const transferCount = Number(k.received_transfer_count || 0) + Number(k.paid_transfer_count || 0);
-                return <tr key={`${c.counterpart_ref || "no-ref"}-${normalizeName(cname(c))}`} onClick={() => open({ ...c, data_source: customerSource, karamad_activity: customerSource === "karamad" ? c.karamad_activity : undefined })}>
+                return <tr key={`${c.counterpart_ref || "no-ref"}-${normalizeName(cname(c))}`} onClick={() => open({ ...c, data_source: "rahkaran", karamad_activity: undefined })}>
                   <td><b>{cname(c)}</b></td>
                   <td>{portfolioLoading ? "…" : <><b>{money(positionOf(c).open_account_receivable_rial || 0)}</b> <span className={`collection-account-state ${accountStateOf(c)}`}>{({ debtor: "بدهکار", creditor: "بستانکار", settled: "تسویه" } as any)[accountStateOf(c)] || "—"}</span></>}</td>
                   <td><b>{money(customerPortfolioAmount(c))}</b></td>
@@ -6013,6 +6168,29 @@ function customerFilePath(c: Customer): string | null {
   return null;
 }
 
+function LastInvoicesTable({ invoices, showVisitor = false }: { invoices: any[]; showVisitor?: boolean }) {
+  return <div className="cf-table"><table>
+    <thead><tr><th>شماره فاکتور</th><th>تاریخ</th>{showVisitor && <th>ویزیتور</th>}<th>مبلغ فروش</th><th>مانده بدهی</th><th>جریان وصول</th></tr></thead>
+    <tbody>{invoices.map((inv) => {
+      const pct = Math.max(0, Math.min(100, Number(inv.collected_percent ?? 0)));
+      return <tr key={inv.invoice_id}>
+        <td><b>{/^\d+$/.test(inv.number || "") ? Number(inv.number).toLocaleString("fa-IR", { useGrouping: false }) : inv.number || "—"}</b></td>
+        <td>{inv.date_jalali || "—"}</td>
+        {showVisitor && <td>{inv.visitor_name || "—"}</td>}
+        <td><b>{money(inv.amount_rial || 0)}</b><small>تومان</small></td>
+        <td className={Number(inv.remaining_rial || 0) > 0 ? "cf-debt" : "cf-settled"}>{inv.remaining_rial == null ? "نامشخص" : Number(inv.remaining_rial) > 0 ? `${money(inv.remaining_rial)} تومان` : "تسویه شده"}</td>
+        <td className="cf-flow">
+          {inv.collected_percent == null ? "—" : <>
+            <div className="cf-bar"><i style={{ width: `${pct}%` }} /></div>
+            <small>{fa(pct)}٪ وصول شده · {money(inv.collected_rial || 0)} تومان</small>
+            {(inv.collection_breakdown || []).length > 0 && <div className="cf-chips">{inv.collection_breakdown.map((b: any) => <span key={b.method}>{b.method}: {money(b.amount_rial)}</span>)}</div>}
+          </>}
+        </td>
+      </tr>;
+    })}</tbody>
+  </table></div>;
+}
+
 function CustomerFileOverview({ c }: { c: Customer }) {
   const path = customerFilePath(c);
   const [file, setFile] = useState<any>(null);
@@ -6076,25 +6254,7 @@ function CustomerFileOverview({ c }: { c: Customer }) {
         <div className="cf-title">
           <div><h3>۵ فاکتور آخر {cy}</h3><p>{file.remaining_note}</p></div>
         </div>
-        {invoices.length ? <div className="cf-table"><table>
-          <thead><tr><th>شماره فاکتور</th><th>تاریخ</th><th>مبلغ فروش</th><th>مانده بدهی</th><th>جریان وصول</th></tr></thead>
-          <tbody>{invoices.map((inv) => {
-            const pct = Math.max(0, Math.min(100, Number(inv.collected_percent ?? 0)));
-            return <tr key={inv.invoice_id}>
-              <td><b>{/^\d+$/.test(inv.number || "") ? Number(inv.number).toLocaleString("fa-IR", { useGrouping: false }) : inv.number || "—"}</b></td>
-              <td>{inv.date_jalali || "—"}</td>
-              <td><b>{money(inv.amount_rial || 0)}</b><small>تومان</small></td>
-              <td className={Number(inv.remaining_rial || 0) > 0 ? "cf-debt" : "cf-settled"}>{inv.remaining_rial == null ? "نامشخص" : Number(inv.remaining_rial) > 0 ? `${money(inv.remaining_rial)} تومان` : "تسویه شده"}</td>
-              <td className="cf-flow">
-                {inv.collected_percent == null ? "—" : <>
-                  <div className="cf-bar"><i style={{ width: `${pct}%` }} /></div>
-                  <small>{fa(pct)}٪ وصول شده · {money(inv.collected_rial || 0)} تومان</small>
-                  {(inv.collection_breakdown || []).length > 0 && <div className="cf-chips">{inv.collection_breakdown.map((b: any) => <span key={b.method}>{b.method}: {money(b.amount_rial)}</span>)}</div>}
-                </>}
-              </td>
-            </tr>;
-          })}</tbody>
-        </table></div> : <div className="invoice-source-pending">این مشتری در {cy} فاکتور خرید ندارد.</div>}
+        {invoices.length ? <LastInvoicesTable invoices={invoices} /> : <div className="invoice-source-pending">این مشتری در {cy} فاکتور خرید ندارد.</div>}
       </section>
     </>
   );
