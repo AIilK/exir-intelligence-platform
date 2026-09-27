@@ -14,6 +14,8 @@ from app.api.v1.finance_operations import router as finance_operations_router
 async def lifespan(app: FastAPI):
     from app.automation.daily_finance_job import start_customer_scheduler, stop_customer_scheduler
     start_customer_scheduler()
+    from app.services.karamad_sales_network_service import warm_up
+    warm_up()
     yield
     stop_customer_scheduler()
 
