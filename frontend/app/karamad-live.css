@@ -1,0 +1,7 @@
+.karamad-live-banner{display:flex;align-items:center;gap:22px;justify-content:flex-start;margin-bottom:14px;border:1px solid rgba(38,190,167,.24);background:linear-gradient(90deg,rgba(38,190,167,.10),rgba(255,255,255,.02));}
+.karamad-live-banner div{display:flex;flex-direction:column;gap:5px;flex:1}.karamad-live-banner b{font-size:16px}.karamad-live-banner span,.karamad-live-banner small{opacity:.72}.karamad-live-banner strong{font-size:20px}.karamad-live-banner small{font-size:14px}
+
+/* V158 — Karamad received cheque multi-status selector */
+.karamad-status-filter button { display:inline-flex; align-items:center; gap:6px; }
+.karamad-status-filter button span { font-size:15px; line-height:1; }
+.karamad-status-filter .cheque-filter-selection { flex-basis:100%; opacity:.75; margin-top:4px; }

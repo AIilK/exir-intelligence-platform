@@ -11,7 +11,15 @@ from sqlalchemy.engine import Engine
 from app.core.config import settings
 from app.database.sqlserver import get_sqlserver_engine
 from app.services.treasury_service import _as_number, _as_jalali_date
+from app.services.received_cheque_current_status import (
+    current_received_holding_label,
+    current_received_state_expr,
+    current_received_status_apply,
+    received_cheque_open_predicate,
+    received_cheque_is_approved_open_holding,
+)
 from app.services.customer_cheque_behavior_engine import CustomerChequeBehaviorEngine
+from app.services.payment_commitment_service import PaymentCommitmentService
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -100,10 +108,294 @@ class FinancePredictionService:
             "message": "برای این طرف حساب در بازه انتخاب‌شده سابقه چک قابل تحلیل پیدا نشد.",
         }
 
-    def customer_open_cheques(self, counterpart_ref: int) -> list[dict[str, Any]]:
-        """Return the customer's currently open received cheques with due timing."""
+    def customer_returned_cheques(self, counterpart_ref: int) -> list[dict[str, Any]]:
+        """Return exact Rahkaran received cheques whose master status is returned/protested (State=4)."""
         query = text(
             """
+            SELECT
+                master_note.[ReceivableNoteID] AS [ChequeID],
+                master_note.[SerialNumber], master_note.[SayadNumber],
+                note.[Amount], receipt.[Number] AS [ReceiptNumber], receipt.[Date] AS [ReceiptDate],
+                master_note.[DueDate], master_note.[State] AS [State],
+                COALESCE(master_note.[Description], note.[Description], receipt.[Description]) AS [Description],
+                counterpart.[Code] AS [CounterPartCode], counterpart.[Title] AS [CounterPartName]
+            FROM RPA3.[ReceiptReceivableNote] AS note
+            INNER JOIN RPA3.[Receipt] AS receipt ON receipt.[ReceiptID] = note.[ReceiptRef]
+            INNER JOIN RPA3.[ReceivableNote] AS master_note ON master_note.[ReceivableNoteID] = note.[ReceivableNoteRef]
+            LEFT JOIN FIN3.[DL] AS counterpart ON counterpart.[DLID] = note.[CounterPartRef]
+            WHERE receipt.[ApproveState] = 3 AND receipt.[ItemType] = 1
+              AND master_note.[NoteType] = 1 AND master_note.[NormalORGuarantee] = 1
+              AND master_note.[State] = 4
+              AND note.[CounterPartRef] = :counterpart_ref
+              AND ISNULL(master_note.[Description], N'') NOT LIKE N'%ضمانت%'
+              AND ISNULL(master_note.[Description], N'') NOT LIKE N'%تضمین%'
+              AND ISNULL(master_note.[Description], N'') NOT LIKE N'%حسن انجام%'
+            ORDER BY master_note.[DueDate] DESC, master_note.[ReceivableNoteID] DESC
+            """
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query, {"counterpart_ref": int(counterpart_ref)}).mappings().all()
+        result=[]
+        for row in rows:
+            due=row.get("DueDate")
+            result.append({
+                "cheque_id": int(row["ChequeID"]),
+                "serial_number": str(row["SerialNumber"]) if row.get("SerialNumber") else None,
+                "sayad_number": str(row["SayadNumber"]) if row.get("SayadNumber") else None,
+                "amount": round(_money(row.get("Amount")), 2),
+                "receipt_number": str(row["ReceiptNumber"]) if row.get("ReceiptNumber") is not None else None,
+                "receipt_date": row["ReceiptDate"].isoformat() if row.get("ReceiptDate") else None,
+                "receipt_date_jalali": _as_jalali_date(row.get("ReceiptDate")),
+                "due_date": due.isoformat() if due else None,
+                "due_date_jalali": _as_jalali_date(due),
+                "days_to_due": (due.date() - date.today()).days if hasattr(due, "date") else ((due - date.today()).days if due else None),
+                "state": 4, "state_label": "برگشتی / واخواست‌شده",
+                "description": row.get("Description"),
+                "source_system": "rahkaran", "source_label": "راهکاران",
+            })
+        return result
+
+    def customer_account_position(self, counterpart_ref: int) -> dict[str, Any]:
+        """Return Rahkaran customer receivable movement using the official voucher dimensions.
+
+        Validated against Rahkaran customer turnover for customer 810074 (Fahimi/Padina):
+        customer debt is not FIN3.Account.Balance.  It is the fiscal-year voucher movement
+        for the customer's DL code across the three receivable SLs:
+          123003 = commercial receivables
+          123004 = returned-cheque receivables
+          123011 = personal receivables
+        Formula: SUM(VoucherItem.Debit) - SUM(VoucherItem.Credit).
+        Internal transfers between these SLs therefore cancel automatically.
+        """
+        query = text(
+            """
+            WITH customer_dl AS (
+                SELECT TOP (1)
+                    dl.[DLID], dl.[Code] AS [DLCode], dl.[Title] AS [DLTitle],
+                    dl.[ReferenceID] AS [PartyID], c.[CustomerID]
+                FROM FIN3.[DL] dl
+                LEFT JOIN SLS3.[Customer] c ON c.[PartyRef] = dl.[ReferenceID]
+                WHERE dl.[DLID] = :counterpart_ref
+            ),
+            active_fy AS (
+                SELECT TOP (1)
+                    lfy.[StartDate], lfy.[EndDate], lfy.[FiscalYearRef]
+                FROM GNR3.[LedgerFiscalYear] lfy
+                WHERE lfy.[LedgerRef] = 1
+                  AND CAST(GETDATE() AS date) >= CAST(lfy.[StartDate] AS date)
+                  AND CAST(GETDATE() AS date) <= CAST(lfy.[EndDate] AS date)
+                ORDER BY lfy.[StartDate] DESC
+            )
+            SELECT
+                d.[DLID], d.[DLCode], d.[DLTitle], d.[PartyID], d.[CustomerID],
+                fy.[StartDate] AS [FiscalYearStart], fy.[EndDate] AS [FiscalYearEnd],
+                fy.[FiscalYearRef],
+                sl.[SLID], sl.[Code] AS [SLCode], sl.[Title] AS [SLTitle],
+                COALESCE(SUM(COALESCE(vi.[Debit], 0)), 0) AS [DebitAmount],
+                COALESCE(SUM(COALESCE(vi.[Credit], 0)), 0) AS [CreditAmount],
+                COALESCE(SUM(COALESCE(vi.[Debit], 0) - COALESCE(vi.[Credit], 0)), 0) AS [NetAmount],
+                COUNT_BIG(vi.[VoucherItemID]) AS [TransactionCount]
+            FROM customer_dl d
+            CROSS JOIN active_fy fy
+            CROSS JOIN FIN3.[SL] sl
+            LEFT JOIN FIN3.[VoucherItem] vi
+              ON vi.[SLRef] = sl.[SLID]
+             AND (
+                    vi.[DLLevel4] = TRY_CONVERT(bigint, d.[DLCode])
+                 OR vi.[DLLevel5] = TRY_CONVERT(bigint, d.[DLCode])
+                 OR vi.[DLLevel6] = TRY_CONVERT(bigint, d.[DLCode])
+             )
+            LEFT JOIN FIN3.[Voucher] v
+              ON v.[VoucherID] = vi.[VoucherRef]
+             AND v.[Date] >= fy.[StartDate]
+             AND v.[Date] < DATEADD(day, 1, fy.[EndDate])
+            WHERE sl.[Code] IN (N'123003', N'123004', N'123011')
+              AND (vi.[VoucherItemID] IS NULL OR v.[VoucherID] IS NOT NULL)
+            GROUP BY
+                d.[DLID], d.[DLCode], d.[DLTitle], d.[PartyID], d.[CustomerID],
+                fy.[StartDate], fy.[EndDate], fy.[FiscalYearRef],
+                sl.[SLID], sl.[Code], sl.[Title]
+            ORDER BY sl.[Code]
+            """
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query, {"counterpart_ref": int(counterpart_ref)}).mappings().all()
+        if not rows:
+            return {"found": False, "counterpart_ref": int(counterpart_ref)}
+
+        debit = round(sum(_money(r.get("DebitAmount")) for r in rows), 2)
+        credit = round(sum(_money(r.get("CreditAmount")) for r in rows), 2)
+        balance = round(debit - credit, 2)
+        first = rows[0]
+        breakdown = []
+        for r in rows:
+            rd = round(_money(r.get("DebitAmount")), 2)
+            rc = round(_money(r.get("CreditAmount")), 2)
+            breakdown.append({
+                "account_id": int(r["SLID"]),
+                "account_name": r.get("SLTitle"),
+                "sl_id": int(r["SLID"]),
+                "sl_code": str(r.get("SLCode") or ""),
+                "sl_title": r.get("SLTitle"),
+                "debit_balance_rial": rd,
+                "credit_balance_rial": rc,
+                "balance_rial": round(rd - rc, 2),
+                "transaction_count": int(r.get("TransactionCount") or 0),
+            })
+
+        fy_start = first.get("FiscalYearStart")
+        fy_end = first.get("FiscalYearEnd")
+        return {
+            "found": True,
+            "counterpart_ref": int(counterpart_ref),
+            "dl_id": int(first["DLID"]),
+            "dl_code": str(first.get("DLCode") or ""),
+            "dl_title": first.get("DLTitle"),
+            "party_id": int(first["PartyID"]) if first.get("PartyID") is not None else None,
+            "customer_id": int(first["CustomerID"]) if first.get("CustomerID") is not None else None,
+            "fiscal_year_ref": int(first["FiscalYearRef"]) if first.get("FiscalYearRef") is not None else None,
+            "fiscal_year_start": fy_start.isoformat() if fy_start else None,
+            "fiscal_year_end": fy_end.isoformat() if fy_end else None,
+            "account_count": len(rows),
+            "account_breakdown": breakdown,
+            "debit_balance_rial": debit,
+            "credit_balance_rial": credit,
+            "balance_rial": balance,
+            "open_account_receivable_rial": max(balance, 0.0),
+            "customer_credit_rial": max(-balance, 0.0),
+            "balance_status": "debtor" if balance > 0 else "creditor" if balance < 0 else "settled",
+            "calculation_method": "voucher_dl_receivable_sl_fiscal_year",
+            "receivable_sl_codes": ["123003", "123004", "123011"],
+        }
+
+    def customer_latest_invoice(self, counterpart_ref: int) -> dict[str, Any] | None:
+        """Return the latest Rahkaran sales invoice for the customer behind a cheque/customer DL.
+
+        The customer bridge is DL.ReferenceID -> SLS3.Customer.PartyRef.  We intentionally
+        expose only factual invoice fields here; payment due date/settlement terms are not
+        inferred because those fields are not populated for the validated Rahkaran flow.
+        """
+        query = text(
+            """
+            SELECT TOP (1)
+                i.[InvoiceID], i.[Number], i.[Date], i.[NetPrice], i.[Status],
+                i.[CustomerRef], i.[PayerAccountRef], i.[Description]
+            FROM FIN3.[DL] dl
+            INNER JOIN SLS3.[Customer] c ON c.[PartyRef] = dl.[ReferenceID]
+            INNER JOIN SLS3.[Invoice] i ON i.[CustomerRef] = c.[CustomerID]
+            WHERE dl.[DLID] = :counterpart_ref
+            ORDER BY i.[Date] DESC, i.[InvoiceID] DESC
+            """
+        )
+        with self.engine.connect() as connection:
+            row = connection.execute(query, {"counterpart_ref": int(counterpart_ref)}).mappings().first()
+        if not row:
+            return None
+        invoice_date = row.get("Date")
+        amount = round(_money(row.get("NetPrice")), 2)
+        return {
+            "invoice_id": int(row["InvoiceID"]),
+            "number": str(row.get("Number") or ""),
+            "date": invoice_date.isoformat() if invoice_date else None,
+            "date_jalali": _as_jalali_date(invoice_date),
+            "amount_rial": amount,
+            "net_price_rial": amount,
+            "status": int(row["Status"]) if row.get("Status") is not None else None,
+            "customer_id": int(row["CustomerRef"]) if row.get("CustomerRef") is not None else None,
+            "payer_account_ref": int(row["PayerAccountRef"]) if row.get("PayerAccountRef") is not None else None,
+            "description": row.get("Description"),
+            "due_date": None,
+            "due_date_source": "not_recorded",
+        }
+
+    def customer_all_cheques(self, counterpart_ref: int) -> list[dict[str, Any]]:
+        """Return the customer's exact Rahkaran received-cheque history, one row per cheque.
+
+        This is intentionally broader than ``customer_open_cheques``.  The customer
+        profile's historical KPI is built from all approved received-cheque source
+        rows, so the detail table must use the same scope; otherwise a customer can
+        show historical cheques while the drill-down is empty after those cheques
+        are collected/closed.
+        """
+        current_status_apply = current_received_status_apply("master_note", "current_status")
+        effective_state = current_received_state_expr("master_note", "current_status")
+        query = text(
+            f"""
+            WITH customer_notes AS (
+                SELECT
+                    master_note.[ReceivableNoteID] AS [ChequeID],
+                    master_note.[SerialNumber], master_note.[SayadNumber],
+                    COALESCE(master_note.[Amount], note.[Amount]) AS [Amount],
+                    receipt.[Number] AS [ReceiptNumber], receipt.[Date] AS [ReceiptDate],
+                    master_note.[DueDate], master_note.[State] AS [MasterState],
+                    {effective_state} AS [State],
+                    current_status.[CurrentStatusDescription],
+                    COALESCE(master_note.[Description], note.[Description], receipt.[Description]) AS [Description],
+                    ROW_NUMBER() OVER (PARTITION BY master_note.[ReceivableNoteID] ORDER BY receipt.[Date] DESC, note.[ReceiptReceivableNoteID] DESC) AS rn
+                FROM RPA3.[ReceiptReceivableNote] AS note
+                INNER JOIN RPA3.[Receipt] AS receipt ON receipt.[ReceiptID] = note.[ReceiptRef]
+                INNER JOIN RPA3.[ReceivableNote] AS master_note ON master_note.[ReceivableNoteID] = note.[ReceivableNoteRef]
+                {current_status_apply}
+                WHERE receipt.[ApproveState] = 3
+                  AND receipt.[ItemType] = 1
+                  AND master_note.[NoteType] = 1
+                  AND master_note.[NormalORGuarantee] = 1
+                  AND note.[CounterPartRef] = :counterpart_ref
+                  AND ISNULL(master_note.[Description], N'') NOT LIKE N'%ضمانت%'
+                  AND ISNULL(master_note.[Description], N'') NOT LIKE N'%تضمین%'
+                  AND ISNULL(master_note.[Description], N'') NOT LIKE N'%حسن انجام%'
+                  AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+                  AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+                  AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+            )
+            SELECT * FROM customer_notes WHERE rn = 1
+            ORDER BY [DueDate] DESC, [ChequeID] DESC
+            """
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(query, {"counterpart_ref": int(counterpart_ref)}).mappings().all()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            due = row.get("DueDate")
+            master_state = int(row.get("MasterState") or 0)
+            effective = int(row.get("State") or master_state or 0)
+            if master_state == 3:
+                label = "وصول‌شده"
+            elif master_state == 4:
+                label = "برگشتی / واخواست‌شده"
+            elif current_received_holding_label(effective, row.get("CurrentStatusDescription")) in {
+                "نزد صندوق", "نزد بانک", "نزد مأمور وصول"
+            }:
+                label = current_received_holding_label(effective, row.get("CurrentStatusDescription"))
+            elif master_state in (1, 2):
+                label = current_received_holding_label(effective, row.get("CurrentStatusDescription")) or "باز / در جریان"
+            else:
+                label = row.get("CurrentStatusDescription") or f"وضعیت {master_state}"
+            result.append({
+                "cheque_id": int(row["ChequeID"]),
+                "serial_number": str(row["SerialNumber"]) if row.get("SerialNumber") else None,
+                "sayad_number": str(row["SayadNumber"]) if row.get("SayadNumber") else None,
+                "amount": round(_money(row.get("Amount")), 2),
+                "receipt_number": str(row["ReceiptNumber"]) if row.get("ReceiptNumber") is not None else None,
+                "receipt_date": row["ReceiptDate"].isoformat() if row.get("ReceiptDate") else None,
+                "receipt_date_jalali": _as_jalali_date(row.get("ReceiptDate")),
+                "due_date": due.isoformat() if due else None,
+                "due_date_jalali": _as_jalali_date(due),
+                "days_to_due": (due.date() - date.today()).days if hasattr(due, "date") else None,
+                "state": effective, "master_state": master_state, "state_label": label,
+                "current_status_description": row.get("CurrentStatusDescription"),
+                "description": row.get("Description"),
+                "source_system": "rahkaran", "source_label": "راهکاران",
+            })
+        return result
+
+    def customer_open_cheques(self, counterpart_ref: int) -> list[dict[str, Any]]:
+        """Return the customer's currently open received cheques with due timing."""
+        current_status_apply = current_received_status_apply("master_note", "current_status")
+        effective_state = current_received_state_expr("master_note", "current_status")
+        open_predicate = received_cheque_open_predicate("master_note", "current_status")
+        query = text(
+            f"""
             SELECT
                 master_note.[ReceivableNoteID] AS [ChequeID],
                 master_note.[SerialNumber],
@@ -111,7 +403,9 @@ class FinancePredictionService:
                 note.[Amount],
                 receipt.[Date] AS [ReceiptDate],
                 master_note.[DueDate],
-                master_note.[State],
+                master_note.[State] AS [MasterState],
+                {effective_state} AS [State],
+                current_status.[CurrentStatusDescription],
                 DATEDIFF(day, CAST(GETDATE() AS date), CAST(master_note.[DueDate] AS date)) AS [DaysToDue],
                 DATEDIFF(day, CAST(receipt.[Date] AS date), CAST(master_note.[DueDate] AS date)) AS [TermDays]
             FROM RPA3.[ReceiptReceivableNote] AS note
@@ -119,6 +413,7 @@ class FinancePredictionService:
                 ON receipt.[ReceiptID] = note.[ReceiptRef]
             INNER JOIN RPA3.[ReceivableNote] AS master_note
                 ON master_note.[ReceivableNoteID] = note.[ReceivableNoteRef]
+            {current_status_apply}
             WHERE receipt.[ApproveState] = 3
               AND receipt.[ItemType] = 1
               AND master_note.[NoteType] = 1
@@ -126,7 +421,7 @@ class FinancePredictionService:
               AND ISNULL(master_note.[Description], N'') NOT LIKE N'%ضمانت%'
               AND ISNULL(master_note.[Description], N'') NOT LIKE N'%تضمین%'
               AND ISNULL(master_note.[Description], N'') NOT LIKE N'%حسن انجام%'
-              AND master_note.[State] IN (1, 2)
+              {open_predicate}
               AND note.[CounterPartRef] = :counterpart_ref
             ORDER BY master_note.[DueDate], master_note.[ReceivableNoteID]
             """
@@ -144,7 +439,12 @@ class FinancePredictionService:
                 "due_date": row["DueDate"].isoformat() if row.get("DueDate") else None,
                 "due_date_jalali": _as_jalali_date(row.get("DueDate")),
                 "state": int(row.get("State") or 0),
-                "state_label": "در جریان وصول" if int(row.get("State") or 0) == 2 else "نزد شرکت",
+                "master_state": int(row.get("MasterState") or 0),
+                "state_label": current_received_holding_label(
+                    int(row.get("State") or 0),
+                    row.get("CurrentStatusDescription"),
+                ),
+                "current_status_description": row.get("CurrentStatusDescription"),
                 "days_to_due": int(row["DaysToDue"]) if row.get("DaysToDue") is not None else None,
                 "days_overdue": abs(int(row["DaysToDue"])) if row.get("DaysToDue") is not None and int(row["DaysToDue"]) < 0 else 0,
                 "term_days": int(row["TermDays"]) if row.get("TermDays") is not None else None,
@@ -174,6 +474,9 @@ class FinancePredictionService:
               AND note.[DueDate] >= CAST(GETDATE() AS date)
               AND note.[DueDate] < DATEADD(day, :forecast_days + 1, CAST(GETDATE() AS date))
         """
+        current_status_apply = current_received_status_apply("note", "current_status")
+        effective_state = current_received_state_expr("note", "current_status")
+        open_predicate = received_cheque_open_predicate("note", "current_status")
         query = text(
             f"""
             WITH note_receipt AS (
@@ -194,7 +497,9 @@ class FinancePredictionService:
                 counterpart.[Title] AS [CounterPartName],
                 note.[Amount],
                 note.[DueDate],
-                note.[State],
+                note.[State] AS [MasterState],
+                {effective_state} AS [State],
+                current_status.[CurrentStatusDescription],
                 note.[SerialNumber],
                 note.[SayadNumber],
                 nr.[ReceiptDate],
@@ -209,12 +514,13 @@ class FinancePredictionService:
                 ON counterpart.[DLID] = note.[CounterPartRef]
             LEFT JOIN note_receipt AS nr
                 ON nr.[ReceivableNoteRef] = note.[ReceivableNoteID]
+            {current_status_apply}
             WHERE note.[NoteType] = 1
               AND note.[NormalORGuarantee] = 1
               AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
               AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
               AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
-              AND note.[State] IN (1, 2)
+              {open_predicate}
               AND note.[CounterPartRef] IS NOT NULL
               {due_scope}
             ORDER BY note.[DueDate], note.[ReceivableNoteID]
@@ -227,6 +533,7 @@ class FinancePredictionService:
                 COUNT_BIG(*) AS [ExcludedCount],
                 COALESCE(SUM(note.[Amount]), 0) AS [ExcludedAmount]
             FROM RPA3.[ReceivableNote] AS note
+            {current_status_apply}
             WHERE note.[NoteType] = 1
               AND (
                     ISNULL(note.[NormalORGuarantee], -1) <> 1
@@ -234,7 +541,7 @@ class FinancePredictionService:
                     OR ISNULL(note.[Description], N'') LIKE N'%تضمین%'
                     OR ISNULL(note.[Description], N'') LIKE N'%حسن انجام%'
                   )
-              AND note.[State] IN (1, 2)
+              {open_predicate}
               AND note.[CounterPartRef] IS NOT NULL
               {due_scope}
             """
@@ -456,31 +763,63 @@ class FinancePredictionService:
               AND ISNULL([Description], N'') NOT LIKE N'%ضمانت%'
               AND ISNULL([Description], N'') NOT LIKE N'%تضمین%'
               AND ISNULL([Description], N'') NOT LIKE N'%حسن انجام%'
+              AND ISNULL([Description], N'') NOT LIKE N'%سهامدار%'
+              AND ISNULL([Description], N'') NOT LIKE N'%سود سهام%'
+              -- Finance business rule: only State=11 remains a future/open
+              -- obligation. State=28 means the cheque moved from long-term
+              -- to daily after bank withdrawal and is already posted.
               AND [State] = 11
-              AND [DueDate] >= CAST(GETDATE() AS date)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM RPA3.[PayableNoteTransaction] AS pnt
+                  WHERE pnt.[PayableNoteRef] = RPA3.[PayableNote].[PayableNoteID]
+                    AND pnt.[State] = 11
+                    AND pnt.[DocumentItemType] IN (24, 26)
+                    AND pnt.[DocumentState] = 3
+                    AND (
+                          ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
+                       OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
+                       OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
+                       OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
+                       OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
+                    )
+              )
+              AND [DueDate] >= DATEADD(day, -20, CAST(GETDATE() AS date))
               AND [DueDate] < DATEADD(day, :forecast_days + 1, CAST(GETDATE() AS date))
             GROUP BY CAST([DueDate] AS date)
             """
         )
+        current_status_apply = current_received_status_apply("note", "current_status")
+        open_predicate = received_cheque_open_predicate("note", "current_status")
         received_query = text(
-            """
-            SELECT CAST([DueDate] AS date) AS due_date, COALESCE(SUM([Amount]),0) AS amount
-            FROM RPA3.[ReceivableNote]
-            WHERE [NoteType] = 1
-              AND [NormalORGuarantee] = 1
-              AND ISNULL([Description], N'') NOT LIKE N'%ضمانت%'
-              AND ISNULL([Description], N'') NOT LIKE N'%تضمین%'
-              AND ISNULL([Description], N'') NOT LIKE N'%حسن انجام%'
-              AND [State] IN (1, 2)
-              AND [DueDate] >= CAST(GETDATE() AS date)
-              AND [DueDate] < DATEADD(day, :forecast_days + 1, CAST(GETDATE() AS date))
-            GROUP BY CAST([DueDate] AS date)
+            f"""
+            SELECT CAST(note.[DueDate] AS date) AS due_date, COALESCE(SUM(note.[Amount]),0) AS amount
+            FROM RPA3.[ReceivableNote] AS note
+            {current_status_apply}
+            WHERE note.[NoteType] = 1
+              AND note.[NormalORGuarantee] = 1
+              AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+              AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+              AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+              {open_predicate}
+              AND note.[DueDate] >= CAST(GETDATE() AS date)
+              AND note.[DueDate] < DATEADD(day, :forecast_days + 1, CAST(GETDATE() AS date))
+            GROUP BY CAST(note.[DueDate] AS date)
             """
         )
         with self.engine.connect() as connection:
             hist = connection.execute(hist_query, {"history_days": self.history_days}).mappings().all()
             issued = connection.execute(issued_query, {"forecast_days": self.forecast_days}).mappings().all()
             received = connection.execute(received_query, {"forecast_days": self.forecast_days}).mappings().all()
+
+        commitment_report = PaymentCommitmentService(engine=self.engine).report(
+            horizon_days=self.forecast_days,
+            limit=50,
+        )
+        scheduled_order_map = {
+            date.fromisoformat(row["due_date"][:10]): _money(row.get("amount_rial"))
+            for row in commitment_report.get("approved_future_daily") or []
+        }
 
         hist_map = {r["document_type"]: _money(r["total_amount"]) for r in hist}
         avg_receipts = hist_map.get("receipt", 0.0) / self.history_days
@@ -497,6 +836,22 @@ class FinancePredictionService:
         gross_received_map: dict[date, float] = defaultdict(float)
         received_details_map: dict[date, list[dict[str, Any]]] = defaultdict(list)
         today = date.today()
+        # KarAmand and Rahkaran are one operational portfolio.  The only
+        # presentation distinction is the source label on each detail row.
+        from app.services.karamad_manual_import_service import KaramadManualImportService
+        karamad_service = KaramadManualImportService()
+        karamad_issued = karamad_service.cheque_rows("issued_cheques")
+        for cheque in karamad_issued:
+            days_to_due = cheque.get("days_until_due")
+            due_iso = cheque.get("due_date")
+            if days_to_due is None or not due_iso or not -20 <= int(days_to_due) <= self.forecast_days:
+                continue
+            due_day = date.fromisoformat(due_iso)
+            issued_map[due_day] = issued_map.get(due_day, 0.0) + _money(cheque.get("amount"))
+        overdue_issued_within_twenty_days = sum(
+            amount for due_date, amount in issued_map.items()
+            if today - timedelta(days=20) <= due_date < today
+        )
         for cheque in received_report.get("cheques") or []:
             days_to_due = cheque.get("days_to_due")
             if days_to_due is None:
@@ -527,6 +882,32 @@ class FinancePredictionService:
                 }
             )
 
+        for cheque in karamad_service.cheque_rows("received_cheques"):
+            if not received_cheque_is_approved_open_holding(cheque):
+                continue
+            days_to_due = cheque.get("days_until_due")
+            due_iso = cheque.get("due_date")
+            if days_to_due is None or not due_iso or not 0 <= int(days_to_due) < self.forecast_days:
+                continue
+            due_day = date.fromisoformat(due_iso)
+            amount = _money(cheque.get("amount"))
+            reliance_percent = 0.75
+            expected_amount = amount * reliance_percent
+            gross_received_map[due_day] += amount
+            received_map[due_day] += expected_amount
+            received_details_map[due_day].append({
+                "cheque_id": cheque.get("cheque_id"),
+                "counterpart_ref": None,
+                "counterpart_name": cheque.get("counterpart_name"),
+                "amount_rial": round(amount, 2),
+                "reliance_percent": 75.0,
+                "risk_adjusted_collectible_amount_rial": round(expected_amount, 2),
+                "risk_level": "base_policy",
+                "due_date_jalali": cheque.get("due_date_jalali"),
+                "source_system": "karamad",
+                "source_label": "کارآمد",
+            })
+
         running_change = 0.0
         timeline: list[dict[str, Any]] = []
         first_shortage_date: str | None = None
@@ -534,13 +915,20 @@ class FinancePredictionService:
         worst_date: str | None = None
         negative_pressure_days = 0
 
-        for offset in range(1, self.forecast_days + 1):
+        # Today is part of the operational cash-flow window.  In particular,
+        # an overdue payment-order installment marked ``still_due`` is assigned
+        # to today by PaymentCommitmentService and must not disappear from the
+        # published timeline.
+        for offset in range(0, self.forecast_days):
             day = today + timedelta(days=offset)
             due_in = received_map.get(day, 0.0)
             gross_due_in = gross_received_map.get(day, 0.0)
             due_out = issued_map.get(day, 0.0)
+            if offset == 0:
+                due_out += overdue_issued_within_twenty_days
+            scheduled_order_out = scheduled_order_map.get(day, 0.0)
             projected_in = avg_receipts + due_in
-            projected_out = avg_payments + due_out
+            projected_out = avg_payments + due_out + scheduled_order_out
             daily_net = projected_in - projected_out
             running_change += daily_net
             projected_cash = None if self.opening_cash is None else self.opening_cash + running_change
@@ -569,6 +957,8 @@ class FinancePredictionService:
                     ),
                     "historical_average_operating_outflow": round(avg_payments, 2),
                     "issued_cheques_due": round(due_out, 2),
+                    "issued_cheques_overdue_within_20_days": round(overdue_issued_within_twenty_days if offset == 0 else 0, 2),
+                    "approved_unexecuted_payment_orders_due": round(scheduled_order_out, 2),
                     "projected_inflow": round(projected_in, 2),
                     "projected_outflow": round(projected_out, 2),
                     "daily_net_change": round(daily_net, 2),
@@ -617,13 +1007,18 @@ class FinancePredictionService:
                     "برای مبلغ بالاتر از میانگین تاریخی مشتری، تأیید مدیر مالی گرفته شود.",
                 ],
             },
+            "payment_commitments": commitment_report.get("summary") or {},
             "timeline": timeline,
-            "method": "approved cash/bank detail averages + customer-specific risk-adjusted received cheques - issued cheques due",
+            "method": "unified Rahkaran + KarAmand portfolio: approved cash/bank detail averages + risk-adjusted received cheques - issued cheques due - approved unexecuted payment orders",
             "limitations": [
                 "اگر opening_cash داده نشود، سیستم فقط فشار/تغییر خالص روزانه را نشان می‌دهد و کسری مطلق اعلام نمی‌کند.",
                 "درصد اتکای هر چک از سابقه تعیین‌تکلیف‌شده همان مشتری و قواعد قابل حسابرسی محاسبه می‌شود.",
                 "اسناد تاریخی معادل مانده واقعی بانک نیستند.",
                 "میانگین عملیاتی فقط از ریز دریافت/پرداخت نقدی و بانکی قطعی ساخته می‌شود؛ چک و انتقال داخلی دوباره شمرده نمی‌شود.",
+                "فقط دستورهای پرداخت State 2 با سررسید آینده و بدون اتصال Type 26 به Payment قطعی وارد سناریوی پایه می‌شوند.",
+                "دستورهای پیش‌نویس و موارد سررسیدگذشته تا تعیین‌تکلیف خزانه‌داری از پیش‌بینی پایه خارج‌اند.",
+                "چک‌های پرداختی کارآمد فقط ثبت‌های موجود در آخرین فایل را پوشش می‌دهند؛ داده آینده فعلاً کامل نیست، بنابراین نبود چک در روزهای آینده به معنی نبود تعهد نیست.",
+                "در فایل فعلی چک‌های پرداختی کارآمد، برگشتی گزارش نشده است.",
             ],
         }
 
@@ -716,6 +1111,12 @@ class FinancePredictionService:
                 COALESCE(SUM(CASE
                     WHEN master_note.[State] IN (1,2) AND note.[DueDate] < CAST(GETDATE() AS date)
                     THEN note.[Amount] ELSE 0 END), 0) AS [OverdueOpenAmount],
+                COALESCE(SUM(CASE
+                    WHEN master_note.[State] IN (1,2) AND note.[DueDate] >= CAST(GETDATE() AS date)
+                    THEN 1 ELSE 0 END), 0) AS [FutureOpenCount],
+                COALESCE(SUM(CASE
+                    WHEN master_note.[State] IN (1,2) AND note.[DueDate] >= CAST(GETDATE() AS date)
+                    THEN note.[Amount] ELSE 0 END), 0) AS [FutureOpenAmount],
                 COALESCE(SUM(CASE
                     WHEN master_note.[State] IN (1,2)
                      AND note.[DueDate] >= CAST(GETDATE() AS date)
@@ -876,6 +1277,8 @@ class FinancePredictionService:
             "returned_cheque_count": returned,
             "returned_cheque_amount": round(_money(row.get("ReturnedAmount")), 2),
             "open_cheque_count": open_count,
+            "future_open_cheque_count": int(row.get("FutureOpenCount") or 0),
+            "future_open_cheque_amount": round(_money(row.get("FutureOpenAmount")), 2),
             "overdue_open_cheque_count": overdue_open_count,
             "other_state_cheque_count": int(row.get("OtherStateCount") or 0),
             "other_state_cheque_amount": round(_money(row.get("OtherStateAmount")), 2),

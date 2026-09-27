@@ -11,6 +11,14 @@ from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 from app.database.sqlserver import get_sqlserver_engine
+from app.services.received_cheque_current_status import (
+    current_received_holding_label,
+    current_received_state_expr,
+    current_received_status_apply,
+    received_cheque_open_expression,
+    received_cheque_open_predicate,
+    received_cheque_is_approved_open_holding,
+)
 
 
 _PERSIAN_SEARCH_TRANSLATION = str.maketrans(
@@ -97,9 +105,13 @@ def _cheque_state_label(cheque_type: str, state: int) -> str:
             10: "delivered_to_counterparty",
         },
         "issued": {
-            11: "issued_active",
+            11: "issued_open_unposted",
             15: "restored_or_cancelled",
-            28: "paid_cleared",
+            # Business rule confirmed by Finance: when the payable cheque is
+            # withdrawn from the bank, Rahkaran moves it out of the long-term
+            # bucket into the daily/cleared state. In this installation that
+            # finalized state is 28 and it means the cheque has been posted.
+            28: "posted_withdrawn",
             -27: "clearing_reversed",
             -12: "issue_reversed",
         },
@@ -107,13 +119,78 @@ def _cheque_state_label(cheque_type: str, state: int) -> str:
     return labels.get(cheque_type, {}).get(state, "unknown")
 
 
+
+def _issued_posting_status(state: Any, status_document_description: Any = None) -> tuple[bool, str]:
+    """Return the Finance-approved accounting meaning of an issued cheque state.
+
+    State 11 is still an open long-term obligation. A move to a configured
+    cleared state (currently State=28) means the bank withdrawal happened and
+    the cheque has been posted/accounted for; it must not remain in future
+    cash-flow obligations.
+    """
+
+    status_text = str(status_document_description or "").strip()
+    normalized_status_text = status_text.replace("ي", "ی").replace("ك", "ک")
+    if any(marker in normalized_status_text for marker in ("تعیین وضعیت چک", "تعین وضعیت چک", "وصول چ", "پرداخت چک", "برداشت وجه چک")):
+        return True, "سند خورده / برداشت‌شده"
+
+    try:
+        code = int(state)
+    except (TypeError, ValueError):
+        return False, "وضعیت نامشخص"
+    paid_states = {
+        int(value.strip())
+        for value in settings.treasury_issued_paid_states.split(",")
+        if value.strip().lstrip("-").isdigit()
+    }
+    if code in paid_states:
+        return True, "سند خورده / برداشت‌شده"
+    if code == 11:
+        return False, "باز / سند نخورده"
+    if code == 15:
+        return False, "ابطال / اعاده"
+    if code in {-27, -12}:
+        return False, "برگشت عملیات"
+    return False, "وضعیت نامشخص"
+
 def _master_cheque_payload(row: Any, cheque_type: str) -> dict[str, Any]:
     state = row["ChequeState"]
+    current_status_description = row.get("CurrentStatusDescription")
+    is_posted, posting_status = _issued_posting_status(state) if cheque_type == "issued" else (False, None)
+    received_status_label = (
+        current_received_holding_label(state, current_status_description)
+        if cheque_type == "received"
+        else None
+    )
     return {
         "cheque_id": row["ChequeID"],
+        "document_id": row.get("DocumentID"),
+        "document_number": row.get("DocumentNumber"),
+        "document_date": _as_datetime(row.get("DocumentDate")),
+        "document_date_jalali": _as_jalali_date(row.get("DocumentDate")),
         "cheque_type": cheque_type,
         "state_code": state,
+        "master_state_code": row.get("MasterChequeState", state),
         "state": _cheque_state_label(cheque_type, state),
+        "state_label": posting_status if cheque_type == "issued" else received_status_label,
+        "current_status_description": current_status_description,
+        "current_status_date": _as_datetime(row.get("CurrentStatusDate")),
+        "current_status_date_jalali": _as_jalali_date(row.get("CurrentStatusDate")),
+        "current_status_document_date": _as_datetime(row.get("CurrentStatusDocumentDate")),
+        "current_status_document_date_jalali": _as_jalali_date(row.get("CurrentStatusDocumentDate")),
+        "current_status_transaction_id": row.get("CurrentStatusTransactionID"),
+        "status_source": (
+            "latest_receivable_note_transaction"
+            if cheque_type == "received" and row.get("CurrentStatusTransactionID") is not None
+            else "receivable_note_master" if cheque_type == "received" else None
+        ),
+        "is_posted": is_posted if cheque_type == "issued" else None,
+        "cashflow_open": (not is_posted and state == 11) if cheque_type == "issued" else None,
+        "status_document_id": row.get("StatusDocumentID"),
+        "status_document_number": row.get("StatusDocumentNumber"),
+        "status_document_date": _as_datetime(row.get("StatusDocumentDate")),
+        "status_document_date_jalali": _as_jalali_date(row.get("StatusDocumentDate")),
+        "status_document_description": row.get("StatusDocumentDescription"),
         "amount": _as_number(row["Amount"]),
         "due_date": _as_datetime(row["DueDate"]),
         "due_date_jalali": _as_jalali_date(row["DueDate"]),
@@ -134,7 +211,34 @@ def _master_cheque_payload(row: Any, cheque_type: str) -> dict[str, Any]:
         "currency_name": _currency_name(row["CurrencyRef"]),
         "normal_or_guarantee": row["NormalORGuarantee"],
         "description": row["Description"],
+        "source_system": "rahkaran",
+        "source_label": "راهکاران",
     }
+
+
+def _karamad_cheques(source_kind: str) -> list[dict[str, Any]]:
+    # V157: received cheques now come from the live Karamad SQL Server tables
+    # (dbo.tblChequeD) instead of the manually-uploaded Excel snapshot. If the
+    # live source is unreachable (e.g. credentials not configured yet), fall
+    # back to the manual snapshot rather than breaking the report.
+    if source_kind == "received_cheques":
+        try:
+            from app.services.karamad_live_received_cheque_service import KaramadLiveReceivedChequeService
+            return KaramadLiveReceivedChequeService().report().get("cheques", [])
+        except Exception:
+            pass
+    from app.services.karamad_manual_import_service import KaramadManualImportService
+    return KaramadManualImportService().cheque_rows(source_kind)
+
+
+def _karamad_received_period(rows: list[dict[str, Any]], period: str) -> list[dict[str, Any]]:
+    horizon = {"1m": 30, "3m": 90, "6m": 180, "12m": 365}
+    if period == "all":
+        return rows
+    if period == "overdue":
+        return [row for row in rows if row.get("days_until_due") is not None and row["days_until_due"] < 0]
+    days = horizon[period]
+    return [row for row in rows if row.get("days_until_due") is not None and 0 <= row["days_until_due"] < days]
 
 
 def _engine(engine: Engine | None) -> Engine:
@@ -664,23 +768,45 @@ def get_open_received_cheques(
     if normalized_period not in filters:
         raise ValueError("period must be all, overdue, 1m, 3m, 6m or 12m")
 
+    current_status_apply = current_received_status_apply("note", "current_status")
+    open_predicate = received_cheque_open_predicate("note", "current_status")
+    effective_state = current_received_state_expr("note", "current_status")
+
     query = text(
         f"""
         SELECT
             note.[ReceivableNoteID] AS [ChequeID],
-            note.[State] AS [ChequeState],
+            note.[State] AS [MasterChequeState],
+            {effective_state} AS [ChequeState],
+            current_status.[CurrentStatusDescription],
+            current_status.[CurrentStatusDate],
+            current_status.[CurrentStatusDocumentDate],
+            current_status.[CurrentStatusTransactionID],
             note.[Amount], note.[DueDate],
             DATEDIFF(day, CAST(GETDATE() AS date), CAST(note.[DueDate] AS date)) AS [DaysUntilDue],
             note.[SerialNumber], note.[Series], note.[SayadNumber], note.[AccountNumber],
             note.[BankRef], bank.[Name] AS [BankName], note.[BankBranchName], note.[BankBranchCode],
             note.[CounterPartRef], counterpart.[Code] AS [CounterPartCode],
             counterpart.[Title] AS [CounterPartName], note.[AccountRef], note.[CurrencyRef],
-            note.[NormalORGuarantee], note.[Description]
+            note.[NormalORGuarantee], note.[Description],
+            document_link.[DocumentID], document_link.[DocumentNumber], document_link.[DocumentDate]
         FROM RPA3.[ReceivableNote] AS note
         LEFT JOIN RPA3.[Bank] AS bank ON bank.[BankID] = note.[BankRef]
         LEFT JOIN FIN3.[DL] AS counterpart ON counterpart.[DLID] = note.[CounterPartRef]
+        {current_status_apply}
+        OUTER APPLY (
+            SELECT TOP (1)
+                receipt.[ReceiptID] AS [DocumentID],
+                receipt.[Number] AS [DocumentNumber],
+                receipt.[Date] AS [DocumentDate]
+            FROM RPA3.[ReceiptReceivableNote] AS receipt_note
+            INNER JOIN RPA3.[Receipt] AS receipt ON receipt.[ReceiptID] = receipt_note.[ReceiptRef]
+            WHERE receipt_note.[ReceivableNoteRef] = note.[ReceivableNoteID]
+              AND receipt.[ApproveState] = 3
+            ORDER BY receipt.[Date] DESC, receipt.[ReceiptID] DESC
+        ) AS document_link
         WHERE note.[NoteType] = 1
-          AND note.[State] IN (1, 2)
+          {open_predicate}
           AND note.[NormalORGuarantee] = 1
           AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
@@ -692,18 +818,136 @@ def get_open_received_cheques(
     )
     with _engine(engine).connect() as connection:
         rows = connection.execute(query).mappings().all()
-    cheques = [_master_cheque_payload(row, "received") for row in rows]
+    rahkaran_cheques = [_master_cheque_payload(row, "received") for row in rows]
+    karamad_cheques = _karamad_received_period(
+        [row for row in _karamad_cheques("received_cheques") if received_cheque_is_approved_open_holding(row)],
+        normalized_period,
+    )
+    cheques = sorted(
+        rahkaran_cheques + karamad_cheques,
+        key=lambda item: (item.get("due_date") or "9999-12-31", str(item.get("cheque_id") or "")),
+    )
     return {
         "status": "success",
         "report_type": "open_received_cheques",
-        "state_filter": [1, 2],
+        "state_filter": "approved_open_holding_only",
+        "allowed_open_holdings": ["نزد مأمور وصول", "نزد بانک", "نزد صندوق", "واگذار شده", "برگشتی نزد صندوق", "برگشتی نزد مشتری", "غیرقطعی"],
+        "legacy_master_state_filter": [1, 2],
+        "current_status_basis": "برای راهکاران فقط سه محل باز مصوب (نزد مأمور وصول/نزد بانک/نزد صندوق)؛ برای کارآمد این سه به‌علاوه واگذار شده و چک‌های برگشتی هنوز‌تسویه‌نشده (V157)",
         "period_filter": normalized_period,
+        "sql_due_date_horizon": "unbounded" if normalized_period == "all" else normalized_period,
         "row_limit": None,
         "guarantee_cheques_excluded": True,
+        "data_sources": ["راهکاران", "کارآمد"],
         "guarantee_detection_rules": [
             "NormalORGuarantee must equal 1",
             "Description must not contain ضمانت, تضمین or حسن انجام",
         ],
+        "cheques": cheques,
+        "returned_count": len(cheques),
+        "returned_total_amount": sum(cheque["amount"] for cheque in cheques),
+    }
+
+
+def get_open_issued_cheques(
+    engine: Engine | None = None,
+) -> dict[str, Any]:
+    """Authoritative active issued cheques used by the dashboard.
+
+    State 11 is the finance-confirmed open/active state. Cleared, cancelled,
+    reversed, guarantee and shareholder cheques are deliberately excluded.
+    """
+
+    query = text(
+        """
+        SELECT
+            note.[PayableNoteID] AS [ChequeID],
+            note.[State] AS [ChequeState],
+            note.[Amount], note.[DueDate],
+            DATEDIFF(day, CAST(GETDATE() AS date), CAST(note.[DueDate] AS date)) AS [DaysUntilDue],
+            note.[SerialNumber], note.[Series],
+            CAST(NULL AS nvarchar(100)) AS [SayadNumber],
+            note.[AccountNumber], note.[BankRef],
+            bank.[Name] AS [BankName], note.[BankBranchName], note.[BankBranchCode],
+            note.[CounterPartRef], counterpart.[Code] AS [CounterPartCode],
+            counterpart.[Title] AS [CounterPartName], note.[AccountRef], note.[CurrencyRef],
+            note.[NormalORGuarantee], note.[Description],
+            document_link.[DocumentID], document_link.[DocumentNumber],
+            COALESCE(document_link.[DocumentDate], note.[AgreementDate]) AS [DocumentDate],
+            status_link.[StatusDocumentID], status_link.[StatusDocumentNumber],
+            status_link.[StatusDocumentDate], status_link.[StatusDocumentDescription]
+        FROM RPA3.[PayableNote] AS note
+        LEFT JOIN RPA3.[Bank] AS bank ON bank.[BankID] = note.[BankRef]
+        LEFT JOIN FIN3.[DL] AS counterpart ON counterpart.[DLID] = note.[CounterPartRef]
+        OUTER APPLY (
+            SELECT TOP (1)
+                payment.[PaymentID] AS [DocumentID],
+                payment.[Number] AS [DocumentNumber],
+                payment.[Date] AS [DocumentDate]
+            FROM RPA3.[PaymentPayableNote] AS payment_note
+            INNER JOIN RPA3.[Payment] AS payment
+                ON payment.[PaymentID] = payment_note.[PaymentRef]
+            WHERE payment_note.[PayableNoteRef] = note.[PayableNoteID]
+              AND payment.[ApproveState] = 3
+            ORDER BY payment.[Date] DESC, payment.[PaymentID] DESC
+        ) AS document_link
+        OUTER APPLY (
+            SELECT TOP (1)
+                pnt.[DocumentRef] AS [StatusDocumentID],
+                pnt.[DocumentNumber] AS [StatusDocumentNumber],
+                COALESCE(pnt.[DocumentDate], pnt.[Date]) AS [StatusDocumentDate],
+                pnt.[Description] AS [StatusDocumentDescription]
+            FROM RPA3.[PayableNoteTransaction] AS pnt
+            WHERE pnt.[PayableNoteRef] = note.[PayableNoteID]
+              AND pnt.[State] = 11
+              AND pnt.[DocumentItemType] IN (24, 26)
+              AND pnt.[DocumentState] = 3
+              AND (
+                    ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
+              )
+            ORDER BY COALESCE(pnt.[DocumentDate], pnt.[Date]) DESC, pnt.[PayableNoteTransactionID] DESC
+        ) AS status_link
+        WHERE note.[NoteType] = 1
+          AND note.[State] = 11
+          AND status_link.[StatusDocumentID] IS NULL
+          AND note.[NormalORGuarantee] = 1
+          AND note.[DueDate] >= DATEADD(day, -20, CAST(GETDATE() AS date))
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%سهامدار%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%سود سهام%'
+        ORDER BY CASE WHEN note.[DueDate] IS NULL THEN 1 ELSE 0 END,
+                 note.[DueDate] ASC, note.[PayableNoteID] DESC
+        """
+    )
+    with _engine(engine).connect() as connection:
+        rows = connection.execute(query).mappings().all()
+    rahkaran_cheques = [_master_cheque_payload(row, "issued") for row in rows]
+    # KarAmand issued-cheque file is a snapshot of all registered cheques, not a complete
+    # open-commitment feed. Keep the full snapshot visible in the KarAmand source page;
+    # Rahkaran retains the 20-day overdue policy for open commitments.
+    karamad_cheques = _karamad_cheques("issued_cheques")
+    cheques = sorted(
+        rahkaran_cheques + karamad_cheques,
+        key=lambda item: (item.get("due_date") or "9999-12-31", str(item.get("cheque_id") or "")),
+    )
+    return {
+        "status": "success",
+        "report_type": "open_issued_cheques",
+        "data_source": "RPA3.PayableNote + KarAmand Excel",
+        "data_sources": ["راهکاران", "کارآمد"],
+        "state_filter": [11],
+        "paid_state_excluded": 28,
+        "posting_business_rule": "وجود سند تأییدشده تعیین وضعیت/وصول چک در PayableNoteTransaction یا State پرداخت‌شده = سند خورده و برداشت‌شده؛ از تعهدات باز و Cash Flow آینده حذف می‌شود",
+        "due_policy": "Rahkaran: from 20 days overdue through all future due dates; KarAmand: all registered cheques from latest snapshot (future coverage incomplete)",
+        "row_limit": None,
+        "guarantee_cheques_excluded": True,
+        "shareholder_cheques_excluded": True,
         "cheques": cheques,
         "returned_count": len(cheques),
         "returned_total_amount": sum(cheque["amount"] for cheque in cheques),
@@ -754,7 +998,9 @@ def get_latest_issued_cheques(
             counterpart.[Code] AS [CounterPartCode],
             counterpart.[Title] AS [CounterPartName],
             note.[Description] AS [ChequeDescription],
-            payment.[Description] AS [DocumentDescription]
+            payment.[Description] AS [DocumentDescription],
+            status_link.[StatusDocumentID], status_link.[StatusDocumentNumber],
+            status_link.[StatusDocumentDate], status_link.[StatusDocumentDescription]
         FROM RPA3.[PaymentPayableNote] AS note
         INNER JOIN RPA3.[Payment] AS payment
             ON payment.[PaymentID] = note.[PaymentRef]
@@ -764,6 +1010,26 @@ def get_latest_issued_cheques(
             ON bank.[BankID] = note.[BankRef]
         LEFT JOIN FIN3.[DL] AS counterpart
             ON counterpart.[DLID] = note.[CounterPartRef]
+        OUTER APPLY (
+            SELECT TOP (1)
+                pnt.[DocumentRef] AS [StatusDocumentID],
+                pnt.[DocumentNumber] AS [StatusDocumentNumber],
+                COALESCE(pnt.[DocumentDate], pnt.[Date]) AS [StatusDocumentDate],
+                pnt.[Description] AS [StatusDocumentDescription]
+            FROM RPA3.[PayableNoteTransaction] AS pnt
+            WHERE pnt.[PayableNoteRef] = master_note.[PayableNoteID]
+              AND pnt.[State] = 11
+              AND pnt.[DocumentItemType] IN (24, 26)
+              AND pnt.[DocumentState] = 3
+              AND (
+                    ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
+                 OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
+              )
+            ORDER BY COALESCE(pnt.[DocumentDate], pnt.[Date]) DESC, pnt.[PayableNoteTransactionID] DESC
+        ) AS status_link
         WHERE payment.[ApproveState] = 3
           AND note.[NoteType] = 1
           AND COALESCE(
@@ -776,6 +1042,11 @@ def get_latest_issued_cheques(
           AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%سهامدار%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%سود سهام%'
+          AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سهامدار%'
+          AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سود سهام%'
+          AND note.[DueDate] >= DATEADD(day, -20, CAST(GETDATE() AS date))
           {primary_future_filter}
         ORDER BY {primary_order}
         """
@@ -827,18 +1098,43 @@ def get_latest_issued_cheques(
                     counterpart.[Code] AS [CounterPartCode],
                     counterpart.[Title] AS [CounterPartName],
                     master_note.[Description] AS [ChequeDescription],
-                    CAST(NULL AS nvarchar(1024)) AS [DocumentDescription]
+                    CAST(NULL AS nvarchar(1024)) AS [DocumentDescription],
+                    status_link.[StatusDocumentID], status_link.[StatusDocumentNumber],
+                    status_link.[StatusDocumentDate], status_link.[StatusDocumentDescription]
                 FROM RPA3.[PayableNote] AS master_note
                 LEFT JOIN RPA3.[Bank] AS bank
                     ON bank.[BankID] = master_note.[BankRef]
                 LEFT JOIN FIN3.[DL] AS counterpart
                     ON counterpart.[DLID] = master_note.[CounterPartRef]
+                OUTER APPLY (
+                    SELECT TOP (1)
+                        pnt.[DocumentRef] AS [StatusDocumentID],
+                        pnt.[DocumentNumber] AS [StatusDocumentNumber],
+                        COALESCE(pnt.[DocumentDate], pnt.[Date]) AS [StatusDocumentDate],
+                        pnt.[Description] AS [StatusDocumentDescription]
+                    FROM RPA3.[PayableNoteTransaction] AS pnt
+                    WHERE pnt.[PayableNoteRef] = master_note.[PayableNoteID]
+                      AND pnt.[State] = 11
+                      AND pnt.[DocumentItemType] IN (24, 26)
+                      AND pnt.[DocumentState] = 3
+                      AND (
+                            ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
+                         OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
+                         OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
+                         OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
+                         OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
+                      )
+                    ORDER BY COALESCE(pnt.[DocumentDate], pnt.[Date]) DESC, pnt.[PayableNoteTransactionID] DESC
+                ) AS status_link
                 WHERE master_note.[NoteType] = 1
                   AND master_note.[NormalORGuarantee] = 1
                   AND ISNULL(master_note.[Description], N'') NOT LIKE N'%ضمانت%'
                   AND ISNULL(master_note.[Description], N'') NOT LIKE N'%تضمین%'
                   AND ISNULL(master_note.[Description], N'') NOT LIKE N'%حسن انجام%'
+                  AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سهامدار%'
+                  AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سود سهام%'
                   AND master_note.[State] = 11
+                  AND master_note.[DueDate] >= DATEADD(day, -20, CAST(GETDATE() AS date))
                   {fallback_future_filter}
                 ORDER BY
                     CASE WHEN master_note.[DueDate] IS NULL THEN 1 ELSE 0 END,
@@ -877,6 +1173,14 @@ def get_latest_issued_cheques(
                 "issued",
                 row["ChequeState"],
             ),
+            "state_label": _issued_posting_status(row["ChequeState"], row.get("StatusDocumentDescription"))[1],
+            "is_posted": _issued_posting_status(row["ChequeState"], row.get("StatusDocumentDescription"))[0],
+            "cashflow_open": (not _issued_posting_status(row["ChequeState"], row.get("StatusDocumentDescription"))[0] and row["ChequeState"] == 11),
+            "status_document_id": row.get("StatusDocumentID"),
+            "status_document_number": row.get("StatusDocumentNumber"),
+            "status_document_date": _as_datetime(row.get("StatusDocumentDate")),
+            "status_document_date_jalali": _as_jalali_date(row.get("StatusDocumentDate")),
+            "status_document_description": row.get("StatusDocumentDescription"),
             "bank_name": row["BankName"],
             "counterpart_code": row["CounterPartCode"],
             "counterpart_name": row["CounterPartName"],
@@ -895,6 +1199,8 @@ def get_latest_issued_cheques(
         "note_type_filter": 1,
         "normal_or_guarantee_filter": 1,
         "guarantee_cheques_excluded": True,
+        "shareholder_paid_cheques_excluded": True,
+        "shareholder_exclusion_rules": ["Description does not contain سهامدار or سود سهام"],
         "data_source": source,
         "fallback_used": source != "payment_document",
         "primary_query_error": primary_error,
@@ -905,6 +1211,208 @@ def get_latest_issued_cheques(
         ),
     }
 
+
+
+
+def get_received_cheque_sql_scope(engine: Engine | None = None) -> dict[str, Any]:
+    """Read-only SQL coverage check for Rahkaran received cheques.
+
+    This endpoint intentionally applies NO due-date horizon so Finance can see
+    whether SQL itself contains cheques beyond the dates currently visible in UI.
+    """
+    current_status_apply = current_received_status_apply("note", "current_status")
+    open_expression = received_cheque_open_expression("note", "current_status")
+    query = text(
+        f"""
+        SELECT
+            MIN(CAST(note.[DueDate] AS date)) AS [MinDueDate],
+            MAX(CAST(note.[DueDate] AS date)) AS [MaxDueDate],
+            COUNT_BIG(*) AS [AllNormalChequeCount],
+            COALESCE(SUM(note.[Amount]), 0) AS [AllNormalChequeAmount],
+            SUM(CASE WHEN {open_expression} THEN 1 ELSE 0 END) AS [OpenChequeCount],
+            COALESCE(SUM(CASE WHEN {open_expression} THEN note.[Amount] ELSE 0 END), 0) AS [OpenChequeAmount]
+        FROM RPA3.[ReceivableNote] AS note
+        {current_status_apply}
+        WHERE note.[NoteType] = 1
+          AND note.[NormalORGuarantee] = 1
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+        """
+    )
+    monthly_query = text(
+        f"""
+        SELECT
+            YEAR(note.[DueDate]) AS [DueYear],
+            MONTH(note.[DueDate]) AS [DueMonth],
+            COUNT_BIG(*) AS [OpenChequeCount],
+            COALESCE(SUM(note.[Amount]), 0) AS [OpenChequeAmount]
+        FROM RPA3.[ReceivableNote] AS note
+        {current_status_apply}
+        WHERE note.[NoteType] = 1
+          AND note.[NormalORGuarantee] = 1
+          AND note.[DueDate] IS NOT NULL
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+          AND {open_expression}
+        GROUP BY YEAR(note.[DueDate]), MONTH(note.[DueDate])
+        ORDER BY YEAR(note.[DueDate]), MONTH(note.[DueDate])
+        """
+    )
+    with _engine(engine).connect() as connection:
+        summary = connection.execute(query).mappings().one()
+        monthly = connection.execute(monthly_query).mappings().all()
+    return {
+        "status": "success",
+        "source_system": "rahkaran_sql",
+        "date_horizon": "unbounded",
+        "min_due_date": _as_datetime(summary["MinDueDate"]),
+        "max_due_date": _as_datetime(summary["MaxDueDate"]),
+        "all_normal_cheque_count": int(summary["AllNormalChequeCount"] or 0),
+        "all_normal_cheque_amount": _as_number(summary["AllNormalChequeAmount"]),
+        "open_cheque_count": int(summary["OpenChequeCount"] or 0),
+        "open_cheque_amount": _as_number(summary["OpenChequeAmount"]),
+        "open_due_months": [
+            {
+                "year": int(row["DueYear"]),
+                "month": int(row["DueMonth"]),
+                "count": int(row["OpenChequeCount"] or 0),
+                "amount": _as_number(row["OpenChequeAmount"]),
+            }
+            for row in monthly
+        ],
+    }
+
+def get_received_cheque_current_state_quality(engine: Engine | None = None) -> dict[str, Any]:
+    """Compare legacy master-state filtering with Rahkaran's latest operation state.
+
+    This is intentionally read-only and exists so Finance can audit exactly why
+    a cheque entered or left the open portfolio after V115.
+    """
+
+    current_status_apply = current_received_status_apply("note", "current_status")
+    effective_state = current_received_state_expr("note", "current_status")
+    open_expression = received_cheque_open_expression("note", "current_status")
+    query = text(
+        f"""
+        WITH CurrentRows AS (
+            SELECT
+                note.[ReceivableNoteID] AS [ChequeID],
+                note.[SerialNumber],
+                note.[SayadNumber],
+                note.[Amount],
+                note.[DueDate],
+                note.[State] AS [MasterState],
+                {effective_state} AS [EffectiveState],
+                current_status.[CurrentStatusDescription],
+                current_status.[CurrentStatusDate],
+                current_status.[CurrentStatusDocumentDate],
+                current_status.[CurrentStatusTransactionID],
+                CASE WHEN note.[State] IN (1, 2) THEN 1 ELSE 0 END AS [LegacyOpen],
+                CASE WHEN {open_expression} THEN 1 ELSE 0 END AS [BusinessOpen]
+            FROM RPA3.[ReceivableNote] AS note
+            {current_status_apply}
+            WHERE note.[NoteType] = 1
+              AND note.[NormalORGuarantee] = 1
+              AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+              AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+              AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+        )
+        SELECT
+            COUNT_BIG(*) AS [TotalNormalChequeCount],
+            SUM(CASE WHEN [LegacyOpen] = 1 THEN 1 ELSE 0 END) AS [LegacyOpenCount],
+            COALESCE(SUM(CASE WHEN [LegacyOpen] = 1 THEN [Amount] ELSE 0 END), 0) AS [LegacyOpenAmount],
+            SUM(CASE WHEN [BusinessOpen] = 1 THEN 1 ELSE 0 END) AS [BusinessOpenCount],
+            COALESCE(SUM(CASE WHEN [BusinessOpen] = 1 THEN [Amount] ELSE 0 END), 0) AS [BusinessOpenAmount],
+            SUM(CASE WHEN [LegacyOpen] = 1 AND [BusinessOpen] = 0 THEN 1 ELSE 0 END) AS [LegacyOnlyCount],
+            COALESCE(SUM(CASE WHEN [LegacyOpen] = 1 AND [BusinessOpen] = 0 THEN [Amount] ELSE 0 END), 0) AS [LegacyOnlyAmount],
+            SUM(CASE WHEN [LegacyOpen] = 0 AND [BusinessOpen] = 1 THEN 1 ELSE 0 END) AS [BusinessOnlyCount],
+            COALESCE(SUM(CASE WHEN [LegacyOpen] = 0 AND [BusinessOpen] = 1 THEN [Amount] ELSE 0 END), 0) AS [BusinessOnlyAmount]
+        FROM CurrentRows
+        """
+    )
+    mismatch_query = text(
+        f"""
+        SELECT TOP (200)
+            note.[ReceivableNoteID] AS [ChequeID],
+            note.[SerialNumber],
+            note.[SayadNumber],
+            note.[Amount],
+            note.[DueDate],
+            note.[State] AS [MasterState],
+            {effective_state} AS [EffectiveState],
+            current_status.[CurrentStatusDescription],
+            current_status.[CurrentStatusDate],
+            current_status.[CurrentStatusDocumentDate],
+            current_status.[CurrentStatusTransactionID],
+            CASE WHEN note.[State] IN (1, 2) THEN 1 ELSE 0 END AS [LegacyOpen],
+            CASE WHEN {open_expression} THEN 1 ELSE 0 END AS [BusinessOpen]
+        FROM RPA3.[ReceivableNote] AS note
+        {current_status_apply}
+        WHERE note.[NoteType] = 1
+          AND note.[NormalORGuarantee] = 1
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+          AND (
+                (note.[State] IN (1, 2) AND NOT {open_expression})
+                OR
+                (note.[State] NOT IN (1, 2) AND {open_expression})
+              )
+        ORDER BY
+            COALESCE(current_status.[CurrentStatusDate], current_status.[CurrentStatusDocumentDate], note.[DueDate]) DESC,
+            note.[ReceivableNoteID] DESC
+        """
+    )
+    with _engine(engine).connect() as connection:
+        summary = connection.execute(query).mappings().one()
+        mismatches = connection.execute(mismatch_query).mappings().all()
+
+    def money(value: Any) -> float:
+        return _as_number(value)
+
+    return {
+        "status": "success",
+        "definition": "سبد باز = State اصلی ۱/۲؛ آخرین عملیات تأییدشده فقط برای حذف وصول/مسترد/واخواست/واگذاری به غیر",
+        "legacy_definition": "ReceivableNote.State IN (1,2)",
+        "total_normal_cheque_count": int(summary["TotalNormalChequeCount"] or 0),
+        "legacy_open": {
+            "count": int(summary["LegacyOpenCount"] or 0),
+            "amount": money(summary["LegacyOpenAmount"]),
+        },
+        "business_open": {
+            "count": int(summary["BusinessOpenCount"] or 0),
+            "amount": money(summary["BusinessOpenAmount"]),
+        },
+        "legacy_only": {
+            "count": int(summary["LegacyOnlyCount"] or 0),
+            "amount": money(summary["LegacyOnlyAmount"]),
+        },
+        "business_only": {
+            "count": int(summary["BusinessOnlyCount"] or 0),
+            "amount": money(summary["BusinessOnlyAmount"]),
+        },
+        "mismatches": [
+            {
+                "cheque_id": row["ChequeID"],
+                "serial_number": row["SerialNumber"],
+                "sayad_number": row["SayadNumber"],
+                "amount": money(row["Amount"]),
+                "due_date": _as_datetime(row["DueDate"]),
+                "due_date_jalali": _as_jalali_date(row["DueDate"]),
+                "master_state": row["MasterState"],
+                "effective_state": row["EffectiveState"],
+                "current_status_description": row["CurrentStatusDescription"],
+                "current_status_date": _as_datetime(row["CurrentStatusDate"]),
+                "current_status_date_jalali": _as_jalali_date(row["CurrentStatusDate"]),
+                "legacy_open": bool(row["LegacyOpen"]),
+                "business_open": bool(row["BusinessOpen"]),
+            }
+            for row in mismatches
+        ],
+        "mismatch_count_returned": len(mismatches),
+    }
 
 def get_cheque_state_quality(engine: Engine | None = None) -> dict[str, Any]:
     """Return auditable cheque-state counts and the verified received pass rate.
@@ -960,6 +1468,8 @@ def get_cheque_state_quality(engine: Engine | None = None) -> dict[str, Any]:
             "past_due_count": int(row["PastDueCount"] or 0),
             "past_due_amount": _as_number(row["PastDueAmount"]),
             "verified_business_label": _cheque_state_label("issued", row["StateCode"]),
+            "posting_status_fa": _issued_posting_status(row["StateCode"])[1],
+            "means_accounting_posted": _issued_posting_status(row["StateCode"])[0],
         }
         for row in issued
     ]
@@ -979,7 +1489,7 @@ def get_cheque_state_quality(engine: Engine | None = None) -> dict[str, Any]:
     issued_actual_rate = None
     if paid_states:
         issued_actual_rate = {
-            "definition": "cleared matured PayableNote / valid matured notes in active state 11 or configured cleared states",
+            "definition": "سندخورده/برداشت‌شده (بلندمدت → روز؛ configured cleared states) / چک‌های سررسیدشده معتبر",
             "configured_paid_states": sorted(paid_states),
             "eligible_denominator_states": sorted(eligible_states),
             "due_count": due_count,
@@ -1039,6 +1549,22 @@ def get_cheque_due_report(
     state_sql = ", ".join(
         str(state) for state in configuration["active_states"]
     )
+    if normalized_type == "received":
+        current_status_apply = current_received_status_apply("note", "current_status")
+        effective_state = current_received_state_expr("note", "current_status")
+        state_select_sql = f"""
+            note.[State] AS [MasterChequeState],
+            {effective_state} AS [ChequeState],
+            current_status.[CurrentStatusDescription],
+            current_status.[CurrentStatusDate],
+            current_status.[CurrentStatusDocumentDate],
+            current_status.[CurrentStatusTransactionID],
+        """
+        active_state_predicate = received_cheque_open_predicate("note", "current_status")
+    else:
+        current_status_apply = ""
+        state_select_sql = "note.[State] AS [ChequeState],"
+        active_state_predicate = f"AND note.[State] IN ({state_sql})"
     if overdue:
         due_filter = """
             CAST(note.[DueDate] AS date) >=
@@ -1056,7 +1582,7 @@ def get_cheque_due_report(
         f"""
         SELECT TOP ({safe_limit})
             note.[{configuration['id_column']}] AS [ChequeID],
-            note.[State] AS [ChequeState],
+            {state_select_sql}
             note.[Amount],
             note.[DueDate],
             DATEDIFF(
@@ -1084,12 +1610,13 @@ def get_cheque_due_report(
             ON bank.[BankID] = note.[BankRef]
         LEFT JOIN FIN3.[DL] AS counterpart
             ON counterpart.[DLID] = note.[CounterPartRef]
+        {current_status_apply}
         WHERE note.[NoteType] = 1
           AND note.[NormalORGuarantee] = 1
           AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
-          AND note.[State] IN ({state_sql})
+          {active_state_predicate}
           AND note.[DueDate] IS NOT NULL
           AND {due_filter}
         ORDER BY note.[DueDate], note.[{configuration['id_column']}]
@@ -1102,12 +1629,13 @@ def get_cheque_due_report(
             COUNT_BIG(*) AS [TotalCount],
             COALESCE(SUM(note.[Amount]), 0) AS [TotalAmount]
         FROM RPA3.[{configuration['table']}] AS note
+        {current_status_apply}
         WHERE note.[NoteType] = 1
           AND note.[NormalORGuarantee] = 1
           AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
-          AND note.[State] IN ({state_sql})
+          {active_state_predicate}
           AND note.[DueDate] IS NOT NULL
           AND {due_filter}
         """
@@ -1139,7 +1667,11 @@ def get_cheque_due_report(
             if overdue
             else f"next_{safe_days}_days"
         ),
-        "active_state_filter": list(configuration["active_states"]),
+        "active_state_filter": (
+            "latest_positive_receivable_note_transaction_business_open"
+            if normalized_type == "received"
+            else list(configuration["active_states"])
+        ),
         "normal_or_guarantee_filter": 1,
         "cheques": cheques,
         "returned_count": len(cheques),
@@ -1613,4 +2145,813 @@ def get_receivable_report() -> dict[str, Any]:
         "message": (
             "تعریف و Query گزارش دریافتنی هنوز توسط واحد خزانه تأیید نشده است."
         ),
+    }
+
+
+def get_received_cheque_status_signatures(engine: Engine | None = None) -> dict[str, Any]:
+    """SQL-only audit of Rahkaran current-status signatures.
+
+    This does not use Excel as a data source. It exposes the fields that Rahkaran
+    uses around the latest approved ReceivableNoteTransaction so the official
+    report's «وضعیت فعلی» can be calibrated without guessing from master State.
+    """
+    current_status_apply = current_received_status_apply("note", "current_status")
+    query = text(
+        f"""
+        SELECT
+            note.[State] AS [MasterState],
+            current_status.[CurrentChequeState],
+            current_status.[CurrentDocumentItemType],
+            CASE WHEN current_status.[CurrentBankAccountRef] IS NULL THEN 0 ELSE 1 END AS [HasBankAccount],
+            CASE
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%مأمور وصول%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%مامور وصول%' THEN N'collector_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%واخواست%' THEN N'protested_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%مسترد%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%استرداد%' THEN N'returned_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%وصول%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%نقد%' THEN N'collected_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%واگذار%'
+                  AND ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%غیر%' THEN N'transferred_to_third_party_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%برگ دریافت چک%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%برگه دریافت چک%' THEN N'receipt_sheet_text'
+                WHEN NULLIF(LTRIM(RTRIM(ISNULL(current_status.[CurrentStatusDescription], N''))), N'') IS NULL THEN N'empty_text'
+                ELSE N'other_text'
+            END AS [DescriptionClass],
+            COUNT_BIG(*) AS [ChequeCount],
+            COALESCE(SUM(note.[Amount]), 0) AS [ChequeAmount],
+            MIN(CAST(note.[DueDate] AS date)) AS [MinDueDate],
+            MAX(CAST(note.[DueDate] AS date)) AS [MaxDueDate]
+        FROM RPA3.[ReceivableNote] AS note
+        {current_status_apply}
+        WHERE note.[NoteType] = 1
+          AND note.[NormalORGuarantee] = 1
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
+          AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+        GROUP BY
+            note.[State],
+            current_status.[CurrentChequeState],
+            current_status.[CurrentDocumentItemType],
+            CASE WHEN current_status.[CurrentBankAccountRef] IS NULL THEN 0 ELSE 1 END,
+            CASE
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%مأمور وصول%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%مامور وصول%' THEN N'collector_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%واخواست%' THEN N'protested_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%مسترد%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%استرداد%' THEN N'returned_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%وصول%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%نقد%' THEN N'collected_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%واگذار%'
+                  AND ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%غیر%' THEN N'transferred_to_third_party_text'
+                WHEN ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%برگ دریافت چک%'
+                  OR ISNULL(current_status.[CurrentStatusDescription], N'') LIKE N'%برگه دریافت چک%' THEN N'receipt_sheet_text'
+                WHEN NULLIF(LTRIM(RTRIM(ISNULL(current_status.[CurrentStatusDescription], N''))), N'') IS NULL THEN N'empty_text'
+                ELSE N'other_text'
+            END
+        ORDER BY [ChequeCount] DESC
+        """
+    )
+    with _engine(engine).connect() as connection:
+        rows = connection.execute(query).mappings().all()
+    return {
+        "status": "success",
+        "source_system": "rahkaran_sql",
+        "excel_used_as_data_source": False,
+        "purpose": "calibrate_official_current_status",
+        "signatures": [
+            {
+                "master_state": row["MasterState"],
+                "transaction_state": row["CurrentChequeState"],
+                "document_item_type": row["CurrentDocumentItemType"],
+                "has_bank_account": bool(row["HasBankAccount"]),
+                "description_class": row["DescriptionClass"],
+                "count": int(row["ChequeCount"] or 0),
+                "amount": _as_number(row["ChequeAmount"]),
+                "min_due_date": _as_datetime(row["MinDueDate"]),
+                "max_due_date": _as_datetime(row["MaxDueDate"]),
+            }
+            for row in rows
+        ],
+    }
+
+
+# V122 diagnostic: Excel is validation only; dashboard remains SQL-only.
+def compare_received_open_sql_with_rahkaran_excel(excel_bytes: bytes, engine: Engine | None = None) -> dict[str, Any]:
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    allowed_statuses = {"نزد بانک", "نزد صندوق", "نزد مأمور وصول", "نزد مامور وصول"}
+    def norm(v: Any) -> str:
+        if v is None: return ""
+        if isinstance(v, float) and v.is_integer(): v = int(v)
+        x = str(v).strip().replace("ي", "ی").replace("ك", "ک").replace("\u200c", " ")
+        return " ".join(x.split())
+
+    wb = load_workbook(BytesIO(excel_bytes), read_only=True, data_only=True)
+    ws = wb.active
+    rows = ws.iter_rows(values_only=True)
+    try: headers = [norm(x) for x in next(rows)]
+    except StopIteration: raise ValueError("فایل Excel خالی است")
+    aliases = {"serial":["شماره سریال","سریال","شماره چک"], "sayad":["شماره صیاد","صیاد","شناسه صیاد"], "status":["وضعیت فعلی"], "amount":["مبلغ","مبلغ به ارز عملیاتی"], "due":["تاریخ سررسید"]}
+    def col(name):
+        for a in aliases[name]:
+            if a in headers: return headers.index(a)
+        return None
+    idx={k:col(k) for k in aliases}
+    if idx["status"] is None or idx["amount"] is None: raise ValueError("ستون‌های وضعیت فعلی و مبلغ در Excel پیدا نشد")
+    excel_open=[]
+    excel_all=[]
+    for r in rows:
+        status=norm(r[idx["status"]]) if idx["status"] < len(r) else ""
+        amount=r[idx["amount"]] if idx["amount"] < len(r) else 0
+        try: amount_num=int(Decimal(str(amount or 0)))
+        except Exception: amount_num=0
+        item={"serial_number":norm(r[idx["serial"]]) if idx["serial"] is not None and idx["serial"] < len(r) else "", "sayad_number":norm(r[idx["sayad"]]) if idx["sayad"] is not None and idx["sayad"] < len(r) else "", "official_status":status.replace("نزد مامور وصول","نزد مأمور وصول"), "amount":amount_num, "due_date_excel":norm(r[idx["due"]]) if idx["due"] is not None and idx["due"] < len(r) else ""}
+        excel_all.append(item)
+        if status in allowed_statuses:
+            excel_open.append(item)
+
+    apply_sql=current_received_status_apply("note", "current_status")
+    q=text(f"""
+        SELECT note.[ReceivableNoteID] AS [ChequeID], note.[SerialNumber], note.[SayadNumber], note.[Amount], note.[DueDate], note.[State] AS [MasterState],
+               current_status.[CurrentChequeState], current_status.[CurrentDocumentItemType], current_status.[CurrentBankAccountRef], current_status.[CurrentStatusDescription],
+               current_status.[CurrentStatusDate], current_status.[CurrentStatusDocumentDate], current_status.[CurrentStatusTransactionID]
+        FROM RPA3.[ReceivableNote] note
+        {apply_sql}
+        WHERE note.[NoteType]=1 AND note.[State] IN (1,2) AND note.[NormalORGuarantee]=1
+          AND ISNULL(note.[Description],N'') NOT LIKE N'%ضمانت%' AND ISNULL(note.[Description],N'') NOT LIKE N'%تضمین%' AND ISNULL(note.[Description],N'') NOT LIKE N'%حسن انجام%'
+        ORDER BY note.[DueDate], note.[ReceivableNoteID]
+    """)
+    with _engine(engine).connect() as c: sql_rows=c.execute(q).mappings().all()
+    def sql_obj(r):
+        return {"cheque_id":r["ChequeID"], "serial_number":norm(r["SerialNumber"]), "sayad_number":norm(r["SayadNumber"]), "amount":_as_number(r["Amount"]), "due_date":_as_datetime(r["DueDate"]), "master_state":r["MasterState"], "transaction_state":r["CurrentChequeState"], "document_item_type":r["CurrentDocumentItemType"], "bank_account_ref":r["CurrentBankAccountRef"], "current_description":r["CurrentStatusDescription"], "current_status_date":_as_datetime(r["CurrentStatusDate"]), "current_document_date":_as_datetime(r["CurrentStatusDocumentDate"]), "current_transaction_id":r["CurrentStatusTransactionID"]}
+    sql_open=[sql_obj(r) for r in sql_rows]
+    by_sayad={}; by_serial_amount={}
+    for x in excel_open:
+        if x["sayad_number"]: by_sayad.setdefault(x["sayad_number"],[]).append(x)
+        if x["serial_number"]: by_serial_amount.setdefault((x["serial_number"],x["amount"]),[]).append(x)
+    used=set(); matched=[]; sql_only=[]
+    for sr in sql_open:
+        cand=by_sayad.get(sr["sayad_number"],[]) if sr["sayad_number"] else []
+        if not cand and sr["serial_number"]: cand=by_serial_amount.get((sr["serial_number"],int(sr["amount"] or 0)),[])
+        chosen=next((x for x in cand if id(x) not in used),None)
+        if chosen: used.add(id(chosen)); matched.append({**sr,"official_status":chosen["official_status"]})
+        else: sql_only.append(sr)
+    excel_only=[x for x in excel_open if id(x) not in used]
+
+    # V124: annotate SQL-only rows with their status in the *full* official report,
+    # even when that status is outside the three approved open holdings.
+    all_by_sayad={}
+    all_by_serial_amount={}
+    for x in excel_all:
+        if x["sayad_number"]: all_by_sayad.setdefault(x["sayad_number"], []).append(x)
+        if x["serial_number"]: all_by_serial_amount.setdefault((x["serial_number"], x["amount"]), []).append(x)
+    for sr in sql_only:
+        cand=all_by_sayad.get(sr["sayad_number"], []) if sr["sayad_number"] else []
+        if not cand and sr["serial_number"]:
+            cand=all_by_serial_amount.get((sr["serial_number"], int(sr["amount"] or 0)), [])
+        if cand:
+            sr["official_status_any"] = cand[0].get("official_status")
+            sr["official_due_date_excel"] = cand[0].get("due_date_excel")
+        else:
+            sr["official_status_any"] = None
+            sr["official_due_date_excel"] = None
+
+    def total(items): return int(sum(Decimal(str(x.get("amount") or 0)) for x in items))
+    status_counts={}
+    for x in sql_only:
+        key=x.get("official_status_any") or "<not-found-in-official-report>"
+        status_counts[key]=status_counts.get(key,0)+1
+    return {"status":"success", "source":"sql_vs_official_excel_control", "dashboard_source_changed":False, "allowed_official_statuses":["نزد بانک","نزد صندوق","نزد مأمور وصول"], "sql_open":{"count":len(sql_open),"amount":total(sql_open)}, "excel_open":{"count":len(excel_open),"amount":total(excel_open)}, "matched":{"count":len(matched),"amount":total(matched)}, "sql_only":{"count":len(sql_only),"amount":total(sql_only),"official_status_counts":status_counts,"rows":sql_only}, "excel_only":{"count":len(excel_only),"amount":total(excel_only),"rows":excel_only}, "difference":{"count":len(sql_open)-len(excel_open),"amount":total(sql_open)-total(excel_open)}, "note":"V124: sql_only rows are annotated with official_status_any from the full Excel report. Excel remains validation-only and is not a Dashboard source."}
+
+# V123 diagnostic: trace the complete SQL history of every cheque responsible for
+# the SQL-vs-official-report discrepancy. Excel remains validation-only.
+def analyze_received_cheque_official_discrepancies(excel_bytes: bytes, engine: Engine | None = None) -> dict[str, Any]:
+    comparison = compare_received_open_sql_with_rahkaran_excel(excel_bytes, engine=engine)
+    sql_only = comparison.get("sql_only", {}).get("rows", [])
+    excel_only = comparison.get("excel_only", {}).get("rows", [])
+
+    cheque_ids = {int(x["cheque_id"]) for x in sql_only if x.get("cheque_id") is not None}
+    excel_only_resolution = []
+
+    # Resolve the official-report-only rows back to ReceivableNote WITHOUT an
+    # open-state filter. This is precisely what lets us see why the 9 collector
+    # cheques were missed by State IN (1,2).
+    if excel_only:
+        clauses = []
+        params: dict[str, Any] = {}
+        for i, row in enumerate(excel_only):
+            sayad = str(row.get("sayad_number") or "").strip()
+            serial = str(row.get("serial_number") or "").strip()
+            amount = int(row.get("amount") or 0)
+            local = []
+            if sayad:
+                params[f"sayad_{i}"] = sayad
+                local.append(f"LTRIM(RTRIM(CAST(note.[SayadNumber] AS nvarchar(100)))) = :sayad_{i}")
+            if serial:
+                params[f"serial_{i}"] = serial
+                params[f"amount_{i}"] = amount
+                local.append(f"(LTRIM(RTRIM(CAST(note.[SerialNumber] AS nvarchar(100)))) = :serial_{i} AND note.[Amount] = :amount_{i})")
+            if local:
+                clauses.append("(" + " OR ".join(local) + ")")
+        if clauses:
+            q = text(f"""
+                SELECT note.[ReceivableNoteID] AS [ChequeID], note.[SerialNumber], note.[SayadNumber],
+                       note.[Amount], note.[DueDate], note.[State] AS [MasterState],
+                       note.[NormalORGuarantee], note.[Description]
+                FROM RPA3.[ReceivableNote] note
+                WHERE note.[NoteType] = 1 AND ({' OR '.join(clauses)})
+            """)
+            with _engine(engine).connect() as c:
+                resolved = c.execute(q, params).mappings().all()
+            for r in resolved:
+                cid = int(r["ChequeID"])
+                cheque_ids.add(cid)
+                excel_only_resolution.append({
+                    "cheque_id": cid,
+                    "serial_number": str(r["SerialNumber"] or "").strip(),
+                    "sayad_number": str(r["SayadNumber"] or "").strip(),
+                    "amount": _as_number(r["Amount"]),
+                    "due_date": _as_datetime(r["DueDate"]),
+                    "master_state": r["MasterState"],
+                    "normal_or_guarantee": r["NormalORGuarantee"],
+                    "master_description": r["Description"],
+                })
+
+    histories: list[dict[str, Any]] = []
+    if cheque_ids:
+        ids = sorted(cheque_ids)
+        bind = {f"id_{i}": cid for i, cid in enumerate(ids)}
+        placeholders = ",".join(f":id_{i}" for i in range(len(ids)))
+        q = text(f"""
+            SELECT note.[ReceivableNoteID] AS [ChequeID], note.[SerialNumber], note.[SayadNumber],
+                   note.[Amount], note.[DueDate], note.[State] AS [MasterState],
+                   rnt.[ReceivableNoteTransactionID] AS [TransactionID],
+                   rnt.[State] AS [TransactionState], rnt.[DocumentState],
+                   rnt.[DocumentItemType], rnt.[BankAccountRef], rnt.[DocumentRef],
+                   rnt.[DocumentNumber], rnt.[Date] AS [TransactionDate],
+                   rnt.[DocumentDate], rnt.[Description] AS [TransactionDescription]
+            FROM RPA3.[ReceivableNote] note
+            LEFT JOIN RPA3.[ReceivableNoteTransaction] rnt
+              ON rnt.[ReceivableNoteRef] = note.[ReceivableNoteID]
+            WHERE note.[ReceivableNoteID] IN ({placeholders})
+            ORDER BY note.[ReceivableNoteID], rnt.[Date], rnt.[DocumentDate], rnt.[ReceivableNoteTransactionID]
+        """)
+        with _engine(engine).connect() as c:
+            rows = c.execute(q, bind).mappings().all()
+        grouped: dict[int, dict[str, Any]] = {}
+        sql_only_ids = {int(x["cheque_id"]) for x in sql_only if x.get("cheque_id") is not None}
+        excel_only_ids = {int(x["cheque_id"]) for x in excel_only_resolution}
+        for r in rows:
+            cid = int(r["ChequeID"])
+            item = grouped.setdefault(cid, {
+                "cheque_id": cid,
+                "side": "sql_only" if cid in sql_only_ids else "excel_only" if cid in excel_only_ids else "resolved",
+                "serial_number": str(r["SerialNumber"] or "").strip(),
+                "sayad_number": str(r["SayadNumber"] or "").strip(),
+                "amount": _as_number(r["Amount"]),
+                "due_date": _as_datetime(r["DueDate"]),
+                "master_state": r["MasterState"],
+                "transactions": [],
+            })
+            if r["TransactionID"] is not None:
+                item["transactions"].append({
+                    "transaction_id": r["TransactionID"],
+                    "transaction_state": r["TransactionState"],
+                    "document_state": r["DocumentState"],
+                    "document_item_type": r["DocumentItemType"],
+                    "bank_account_ref": r["BankAccountRef"],
+                    "document_ref": r["DocumentRef"],
+                    "document_number": r["DocumentNumber"],
+                    "transaction_date": _as_datetime(r["TransactionDate"]),
+                    "document_date": _as_datetime(r["DocumentDate"]),
+                    "description": r["TransactionDescription"],
+                })
+        histories = list(grouped.values())
+
+    # Compact signatures make the common business transition visible without
+    # hiding the full history returned above.
+    signatures: dict[str, dict[str, int]] = {"sql_only": {}, "excel_only": {}}
+    for h in histories:
+        side = h["side"]
+        if side not in signatures:
+            continue
+        txs = h["transactions"]
+        last = txs[-1] if txs else {}
+        key = "master={}|tx={}|doc_item={}|bank={}|desc={}".format(
+            h.get("master_state"), last.get("transaction_state"), last.get("document_item_type"),
+            "yes" if last.get("bank_account_ref") is not None else "no",
+            (str(last.get("description") or "").strip()[:80] or "<empty>")
+        )
+        signatures[side][key] = signatures[side].get(key, 0) + 1
+
+    unresolved_excel_only = []
+    resolved_keys = {(x["serial_number"], x["sayad_number"], int(x["amount"] or 0)) for x in excel_only_resolution}
+    for x in excel_only:
+        key = (str(x.get("serial_number") or "").strip(), str(x.get("sayad_number") or "").strip(), int(x.get("amount") or 0))
+        if key not in resolved_keys:
+            unresolved_excel_only.append(x)
+
+    return {
+        "status": "success",
+        "purpose": "trace_exact_sql_vs_official_status_difference",
+        "dashboard_source_changed": False,
+        "control": {
+            "sql_open": comparison.get("sql_open"),
+            "excel_open": comparison.get("excel_open"),
+            "sql_only": {"count": len(sql_only), "amount": comparison.get("sql_only", {}).get("amount")},
+            "excel_only": {"count": len(excel_only), "amount": comparison.get("excel_only", {}).get("amount")},
+            "net_difference": comparison.get("difference"),
+        },
+        "excel_only_sql_resolution": {
+            "requested_count": len(excel_only),
+            "resolved_count": len(excel_only_resolution),
+            "unresolved_count": len(unresolved_excel_only),
+            "resolved_rows": excel_only_resolution,
+            "unresolved_rows": unresolved_excel_only,
+        },
+        "signatures": signatures,
+        "history_count": len(histories),
+        "histories": histories,
+        "next_step": "Use the full histories/signatures to derive the SQL-only business-status rule; do not hard-code cheque IDs.",
+    }
+
+# V125 diagnostic: discover the SQL scope rule behind the 26 rows that are absent
+# from Rahkaran's official ListData report. Excel is validation only.
+def analyze_received_cheque_official_scope_rule(excel_bytes: bytes, engine: Engine | None = None) -> dict[str, Any]:
+    comparison = compare_received_open_sql_with_rahkaran_excel(excel_bytes, engine=engine)
+    sql_only = comparison.get("sql_only", {}).get("rows", [])
+    ids = [int(x["cheque_id"]) for x in sql_only if x.get("cheque_id") is not None]
+    if not ids:
+        return {"status":"success", "version":"V125", "sql_only_count":0, "message":"هیچ رکورد SQL-only وجود ندارد."}
+
+    bind_names = ",".join(f":id{i}" for i in range(len(ids)))
+    params = {f"id{i}": v for i, v in enumerate(ids)}
+    # Return every master field for the 26 rows. This avoids guessing which
+    # Rahkaran master column controls the report scope.
+    q_master = text(f"SELECT * FROM RPA3.[ReceivableNote] WHERE [ReceivableNoteID] IN ({bind_names}) ORDER BY [ReceivableNoteID]")
+    # Also inspect the receipt/creation document and all transaction signatures.
+    q_tx = text(f"""
+        SELECT rnt.[ReceivableNoteRef] AS [ChequeID], rnt.*
+        FROM RPA3.[ReceivableNoteTransaction] rnt
+        WHERE rnt.[ReceivableNoteRef] IN ({bind_names})
+        ORDER BY rnt.[ReceivableNoteRef], rnt.[Date], rnt.[DocumentDate], rnt.[ReceivableNoteTransactionID]
+    """)
+    with _engine(engine).connect() as c:
+        masters = [dict(r) for r in c.execute(q_master, params).mappings().all()]
+        txs = [dict(r) for r in c.execute(q_tx, params).mappings().all()]
+
+    def safe(v: Any):
+        if v is None or isinstance(v, (str, int, float, bool)): return v
+        if isinstance(v, Decimal): return float(v)
+        if hasattr(v, "isoformat"): return v.isoformat()
+        return str(v)
+    masters = [{k:safe(v) for k,v in r.items()} for r in masters]
+    txs = [{k:safe(v) for k,v in r.items()} for r in txs]
+
+    # Profile master columns across the 26 rows. Constant/low-cardinality fields
+    # are the strongest candidates for the hidden official-report scope filter.
+    profile=[]
+    if masters:
+        for col in masters[0].keys():
+            vals=[r.get(col) for r in masters]
+            counts={}
+            for v in vals:
+                key="<NULL>" if v is None else str(v)
+                counts[key]=counts.get(key,0)+1
+            if len(counts) <= 12:
+                profile.append({"column":col,"distinct_count":len(counts),"values":dict(sorted(counts.items(), key=lambda kv:(-kv[1],kv[0]))[:12])})
+        profile.sort(key=lambda x:(x["distinct_count"], x["column"]))
+
+    tx_profile={}
+    for r in txs:
+        sig=f"state={r.get('State')}|doc_state={r.get('DocumentState')}|item={r.get('DocumentItemType')}|bank={'yes' if r.get('BankAccountRef') is not None else 'no'}"
+        tx_profile[sig]=tx_profile.get(sig,0)+1
+
+    return {
+        "status":"success",
+        "version":"V125",
+        "purpose":"discover_rahkaran_official_report_scope_rule",
+        "dashboard_source_changed":False,
+        "excel_runtime_source":False,
+        "control_target":{"count":comparison.get("excel_open",{}).get("count"),"amount":comparison.get("excel_open",{}).get("amount")},
+        "sql_only":{"count":len(ids),"amount":comparison.get("sql_only",{}).get("amount"),"ids":ids},
+        "master_low_cardinality_profile":profile,
+        "transaction_signature_counts":dict(sorted(tx_profile.items(), key=lambda kv:-kv[1])),
+        "master_rows":masters,
+        "transaction_rows":txs,
+        "next_step":"V126 will turn the discovered general SQL scope rule into the shared received-cheque predicate and validate 795 / 757785104980 without using Excel at runtime."
+    }
+
+
+def trace_received_cheque_mapping(
+    cheque_id: int | None = None,
+    serial_number: str | None = None,
+    sayad_number: str | None = None,
+    document_number: str | None = None,
+    engine: Engine | None = None,
+) -> dict[str, Any]:
+    """Trace one received cheque end-to-end to detect UI/API/SQL mapping mismatches.
+
+    Diagnostic only. It does not change dashboard business rules.
+    At least one identifier must be supplied. document_number is matched against
+    the approved Receipt linked to the cheque.
+    """
+    if not any([cheque_id, serial_number, sayad_number, document_number]):
+        raise ValueError("حداقل یکی از cheque_id، serial_number، sayad_number یا document_number لازم است")
+
+    where_parts = []
+    params: dict[str, Any] = {}
+    if cheque_id is not None:
+        where_parts.append("note.[ReceivableNoteID] = :cheque_id")
+        params["cheque_id"] = cheque_id
+    if serial_number:
+        where_parts.append("LTRIM(RTRIM(CONVERT(nvarchar(100), note.[SerialNumber]))) = :serial_number")
+        params["serial_number"] = str(serial_number).strip()
+    if sayad_number:
+        where_parts.append("LTRIM(RTRIM(CONVERT(nvarchar(100), note.[SayadNumber]))) = :sayad_number")
+        params["sayad_number"] = str(sayad_number).strip()
+    if document_number:
+        where_parts.append("EXISTS (SELECT 1 FROM RPA3.[ReceiptReceivableNote] rrn INNER JOIN RPA3.[Receipt] r ON r.[ReceiptID]=rrn.[ReceiptRef] WHERE rrn.[ReceivableNoteRef]=note.[ReceivableNoteID] AND CONVERT(nvarchar(100), r.[Number])=:document_number)")
+        params["document_number"] = str(document_number).strip()
+
+    query = text(f"""
+        SELECT note.[ReceivableNoteID] AS [ChequeID], note.[SerialNumber], note.[Series],
+               note.[SayadNumber], note.[Amount], note.[DueDate], note.[State] AS [MasterState],
+               note.[NormalORGuarantee], note.[Description], note.[BankRef],
+               bank.[Name] AS [BankName], note.[BankBranchName], note.[BankBranchCode],
+               note.[CounterPartRef], counterpart.[Code] AS [CounterPartCode],
+               counterpart.[Title] AS [CounterPartName]
+        FROM RPA3.[ReceivableNote] note
+        LEFT JOIN RPA3.[Bank] bank ON bank.[BankID]=note.[BankRef]
+        LEFT JOIN FIN3.[DL] counterpart ON counterpart.[DLID]=note.[CounterPartRef]
+        WHERE note.[NoteType]=1 AND ({' OR '.join(where_parts)})
+        ORDER BY note.[ReceivableNoteID]
+    """)
+
+    with _engine(engine).connect() as connection:
+        masters = connection.execute(query, params).mappings().all()
+        ids = [int(r["ChequeID"]) for r in masters]
+        if not ids:
+            return {"status": "success", "diagnostic_only": True, "match_count": 0, "matches": [], "warning": "هیچ چکی با شناسه‌های ورودی پیدا نشد"}
+
+        id_params = {f"id{i}": v for i, v in enumerate(ids)}
+        placeholders = ",".join(f":id{i}" for i in range(len(ids)))
+        tx_rows = connection.execute(text(f"""
+            SELECT rnt.[ReceivableNoteRef] AS [ChequeID], rnt.[ReceivableNoteTransactionID] AS [TransactionID],
+                   rnt.[State] AS [TransactionState], rnt.[DocumentState], rnt.[DocumentItemType],
+                   rnt.[BankAccountRef], rnt.[DocumentRef], rnt.[DocumentNumber], rnt.[Date] AS [TransactionDate],
+                   rnt.[DocumentDate], rnt.[Description]
+            FROM RPA3.[ReceivableNoteTransaction] rnt
+            WHERE rnt.[ReceivableNoteRef] IN ({placeholders})
+            ORDER BY rnt.[ReceivableNoteRef], rnt.[Date], rnt.[DocumentDate], rnt.[ReceivableNoteTransactionID]
+        """), id_params).mappings().all()
+        receipt_rows = connection.execute(text(f"""
+            SELECT rrn.[ReceivableNoteRef] AS [ChequeID], r.[ReceiptID], r.[Number] AS [ReceiptNumber],
+                   r.[Date] AS [ReceiptDate], r.[ApproveState], r.[Description] AS [ReceiptDescription]
+            FROM RPA3.[ReceiptReceivableNote] rrn
+            INNER JOIN RPA3.[Receipt] r ON r.[ReceiptID]=rrn.[ReceiptRef]
+            WHERE rrn.[ReceivableNoteRef] IN ({placeholders})
+            ORDER BY rrn.[ReceivableNoteRef], r.[Date], r.[ReceiptID]
+        """), id_params).mappings().all()
+
+    tx_by_id: dict[int, list[dict[str, Any]]] = {i: [] for i in ids}
+    for row in tx_rows:
+        d = dict(row)
+        for key in ("TransactionDate", "DocumentDate"):
+            d[key] = _as_datetime(d.get(key))
+        tx_by_id[int(row["ChequeID"])].append(d)
+    receipts_by_id: dict[int, list[dict[str, Any]]] = {i: [] for i in ids}
+    for row in receipt_rows:
+        d = dict(row); d["ReceiptDate"] = _as_datetime(d.get("ReceiptDate"))
+        receipts_by_id[int(row["ChequeID"])].append(d)
+
+    matches = []
+    for row in masters:
+        cid = int(row["ChequeID"])
+        master = dict(row)
+        master["Amount"] = _as_number(master.get("Amount"))
+        master["DueDate"] = _as_datetime(master.get("DueDate"))
+        master["DueDateJalali"] = _as_jalali_date(row.get("DueDate"))
+        txs = tx_by_id[cid]
+        latest = txs[-1] if txs else None
+        matches.append({
+            "cheque_id": cid,
+            "sql_master": master,
+            "api_expected_core": {
+                "cheque_id": cid,
+                "serial_number": str(row.get("SerialNumber") or ""),
+                "sayad_number": str(row.get("SayadNumber") or ""),
+                "amount_rial": _as_number(row.get("Amount")),
+                "amount_toman": _as_number(row.get("Amount")) / 10,
+                "due_date": _as_datetime(row.get("DueDate")),
+                "due_date_jalali": _as_jalali_date(row.get("DueDate")),
+                "master_state": row.get("MasterState"),
+                "counterparty": row.get("CounterPartName"),
+                "bank": row.get("BankName"),
+                "bank_branch": row.get("BankBranchName"),
+            },
+            "latest_transaction_any": latest,
+            "transactions": txs,
+            "linked_receipts": receipts_by_id[cid],
+        })
+    return {
+        "status": "success", "diagnostic_only": True, "dashboard_source_changed": False,
+        "input": {"cheque_id": cheque_id, "serial_number": serial_number, "sayad_number": sayad_number, "document_number": document_number},
+        "match_count": len(matches), "multiple_match_warning": len(matches) > 1,
+        "matches": matches,
+        "check": "Compare sql_master.DueDate/DueDateJalali with api_expected_core and the frontend row. If they differ in UI only, the bug is frontend mapping/merge; if SQL master itself differs, inspect identifier collision or source selection."
+    }
+
+
+def _payment_order_category(description: str | None) -> str:
+    text_value = (description or "").strip()
+    rules = [
+        ("تنخواه", ("تنخواه",)),
+        ("حقوق و پرسنل", ("حقوق", "مساعده", "تسویه حساب", "تسويه حساب")),
+        ("حمل و باربری", ("بارنامه", "حمل بار", "حمل و نقل", "راهداری")),
+        ("واردات و بازرگانی", ("ترخیص", "ترخيص", "کوتاژ", "ثبت سفارش", "پرفرم", "گواهینامه بازرسی")),
+        ("خرید و تأمین‌کننده", ("پ ف", "پیش فاکتور", "پيش فاکتور", "فاکتور", "بابت ظرف", "بابت قوطی", "بابت لیبل", "مواد اولیه")),
+        ("خدمات و هزینه‌ها", ("تعمیر", "سرویس", "آنالیز", "آزمایشگاه", "اجاره", "ایونت", "مارکتینگ", "طراحی", "کارشناسی")),
+    ]
+    for label, tokens in rules:
+        if any(token in text_value for token in tokens):
+            return label
+    return "سایر"
+
+
+def get_company_payment_orders(limit: int = 1000, engine: Engine | None = None) -> dict[str, Any]:
+    """حواله‌های پرداختی شرکت از PaymentOrder راهکاران، با تفکیک روش پرداخت و دسته مدیریتی."""
+    safe_limit = max(1, min(int(limit), 5000))
+    query = text(f"""
+        SELECT TOP ({safe_limit})
+            po.[PaymentOrderID], po.[Number] AS [PaymentOrderNumber],
+            po.[Date] AS [OrderDate], po.[CreationDate], po.[ApproveDate],
+            po.[CounterPartRef], cp.[Code] AS [CounterPartCode], cp.[Title] AS [CounterPartName],
+            po.[State], po.[PaymentType], po.[SourceType], po.[SourceRef],
+            po.[BranchRef], po.[FiscalYearRef], po.[Description], po.[CurrencyRef],
+            po.[TotalOperationalCurrencyAmount],
+            ISNULL(dep.[Amount], 0) AS [DepositAmount],
+            ISNULL(cash.[Amount], 0) AS [CashAmount],
+            ISNULL(note.[Amount], 0) AS [ChequeAmount]
+        FROM RPA3.[PaymentOrder] po
+        LEFT JOIN FIN3.[DL] cp ON cp.[DLID] = po.[CounterPartRef]
+        OUTER APPLY (
+            SELECT SUM(x.[Amount]) AS [Amount] FROM RPA3.[PaymentOrderDeposit] x
+            WHERE x.[PaymentOrderRef] = po.[PaymentOrderID]
+        ) dep
+        OUTER APPLY (
+            SELECT SUM(x.[Amount]) AS [Amount] FROM RPA3.[PaymentOrderCashMoney] x
+            WHERE x.[PaymentOrderRef] = po.[PaymentOrderID]
+        ) cash
+        OUTER APPLY (
+            SELECT SUM(x.[Amount]) AS [Amount] FROM RPA3.[PaymentOrderPayableNote] x
+            WHERE x.[PaymentOrderRef] = po.[PaymentOrderID]
+        ) note
+        ORDER BY po.[Date] DESC, po.[PaymentOrderID] DESC
+    """)
+    with _engine(engine).connect() as connection:
+        db_rows = connection.execute(query).mappings().all()
+
+    rows: list[dict[str, Any]] = []
+    for row in db_rows:
+        deposit = _as_number(row["DepositAmount"])
+        cash = _as_number(row["CashAmount"])
+        cheque = _as_number(row["ChequeAmount"])
+        calculated = deposit + cash + cheque
+        if cheque and not (deposit or cash):
+            method = "چکی"
+        elif (deposit or cash) and not cheque:
+            method = "نقد/بانکی"
+        elif calculated:
+            method = "ترکیبی"
+        else:
+            method = "نامشخص"
+        rows.append({
+            "payment_order_id": row["PaymentOrderID"],
+            "payment_order_number": row["PaymentOrderNumber"],
+            "order_date": _as_datetime(row["OrderDate"]),
+            "order_date_jalali": _as_jalali_date(row["OrderDate"]),
+            "creation_date": _as_datetime(row["CreationDate"]),
+            "approve_date": _as_datetime(row["ApproveDate"]),
+            "counterpart_ref": row["CounterPartRef"],
+            "counterpart_code": row["CounterPartCode"],
+            "counterpart_name": row["CounterPartName"],
+            "state": row["State"],
+            "state_label": f"وضعیت {row['State']}",
+            "payment_type": row["PaymentType"],
+            "source_type": row["SourceType"],
+            "source_ref": row["SourceRef"],
+            "branch_ref": row["BranchRef"],
+            "fiscal_year_ref": row["FiscalYearRef"],
+            "description": row["Description"],
+            "currency_ref": row["CurrencyRef"],
+            "operational_currency_amount": _as_number(row["TotalOperationalCurrencyAmount"]),
+            "deposit_amount": deposit,
+            "cash_amount": cash,
+            "cheque_amount": cheque,
+            "calculated_amount": calculated,
+            "payment_method": method,
+            "category": _payment_order_category(row["Description"]),
+            "is_approved": row["ApproveDate"] is not None,
+        })
+
+    categories: dict[str, dict[str, Any]] = {}
+    for item in rows:
+        bucket = categories.setdefault(item["category"], {"count": 0, "amount": 0})
+        bucket["count"] += 1
+        bucket["amount"] += item["calculated_amount"]
+    return {
+        "status": "ok", "source": "rahkaran", "rows": rows,
+        "summary": {
+            "count": len(rows),
+            "calculated_amount": sum(x["calculated_amount"] for x in rows),
+            "approved_count": sum(1 for x in rows if x["is_approved"]),
+            "waiting_count": sum(1 for x in rows if not x["is_approved"]),
+            "bank_cash_count": sum(1 for x in rows if x["payment_method"] == "نقد/بانکی"),
+            "cheque_count": sum(1 for x in rows if x["payment_method"] == "چکی"),
+            "categories": categories,
+        },
+        "note": "دسته‌بندی مدیریتی بر پایه شرح حواله است؛ State خام راهکاران نیز برای کنترل نمایش داده می‌شود.",
+    }
+
+_B2B_INTERNAL_TOKENS = ("جاری شرکا", "جاري شرکا", "بابت انتقال", "انتقال از", "انتقال بین", "انتقال بانکی")
+_B2B_REVERSE_TOKENS = ("بازگشت اعلامیه پرداخت", "بازگشت پرداخت", "برگشت اعلامیه پرداخت")
+_B2B_CHEQUE_CASHOUT_TOKENS = ("نقد کردن چک", "نقدکردن چک")
+_B2B_RETURNED_CHEQUE_TOKENS = ("چک برگشتی", "چک عودتی", "برگشتی", "واخواست")
+
+
+def _b2b_remittance_category(description: Any) -> tuple[str, bool]:
+    value = str(description or "").strip()
+    if any(t in value for t in _B2B_INTERNAL_TOKENS):
+        return "انتقال داخلی / جاری شرکا", False
+    if any(t in value for t in _B2B_REVERSE_TOKENS):
+        return "بازگشت پرداخت", False
+    if any(t in value for t in _B2B_CHEQUE_CASHOUT_TOKENS):
+        return "نقد کردن چک", False
+    if any(t in value for t in _B2B_RETURNED_CHEQUE_TOKENS):
+        return "تسویه چک برگشتی", True
+    if "تامین موجودی" in value or "تأمین موجودی" in value:
+        return "تأمین موجودی B2B", True
+    if "فروش مواد اولیه" in value or "بابت فروش" in value or "فاکتور" in value:
+        return "فروش / فاکتور B2B", True
+    if "واریز" in value or "واریزی" in value or "دریافت از" in value:
+        return "واریز مستقیم مشتری", True
+    return "سایر دریافت بانکی", False
+
+
+def get_customer_b2b_remittances_karamad(
+    limit: int = 20000,
+    counterpart_ref: int | None = None,
+) -> dict[str, Any]:
+    """واریزهای بانکی مشتریان کارآمد (dbo.tblDraftD)، با همون طبقه‌بندی متنی B2B راهکاران.
+
+    فقط ردیف‌های ورودی («حواله دریافتی») که طرف‌حسابشون واقعاً یک مشتری است
+    (dl_class_ref = 9 «مشتریان» در tblDLClass) به‌عنوان دریافت B2B در نظر گرفته
+    می‌شود — سایر طرف‌حساب‌ها (بانک، پرسنل، تامین‌کننده و ...) حتی اگر ورودی
+    باشند، اینجا نمی‌آیند.
+    """
+    from app.services.karamad_live_cash_draft_service import KaramadLiveCashDraftService
+    from datetime import date
+
+    safe_limit = max(1, min(int(limit), 200000))
+    data = KaramadLiveCashDraftService().report(
+        start=date(2000, 1, 1), end=date.today(), limit=safe_limit,
+    )
+    rows: list[dict[str, Any]] = []
+    for m in data.get("movements", []):
+        if m.get("channel") != "draft" or m.get("direction") != "inflow":
+            continue
+        if m.get("dl_class_ref") != 9:
+            continue
+        if counterpart_ref is not None and m.get("dl_ref") != counterpart_ref:
+            continue
+        description = m.get("description") or m.get("purpose") or m.get("behalf") or ""
+        category, eligible = _b2b_remittance_category(description)
+        rows.append({
+            "receipt_deposit_id": f"karamad:{m.get('document_id')}", "receipt_id": m.get("document_id"),
+            "receipt_number": m.get("document_number"), "receipt_date": m.get("document_date"),
+            "deposit_number": m.get("document_number"), "deposit_date": m.get("document_date"),
+            "deposit_date_jalali": m.get("document_date_jalali"),
+            "approve_date": m.get("document_date"), "approve_state": 3 if m.get("confirmed") else 2,
+            "approve_state_label": "تأیید نهایی" if m.get("confirmed") else "تأییدشده",
+            "receipt_type": None, "item_type": None,
+            "counterpart_ref": m.get("dl_ref"), "customer_code": None,
+            "customer_name": m.get("level4_name") or m.get("counterpart_name"), "amount_rial": m.get("amount_rial"),
+            "currency_amount": None, "bank_account_ref": m.get("bank_ref"),
+            "bank_ref": m.get("bank_ref"), "bank_branch_code": None,
+            "bank_branch_name": m.get("bank_name"), "branch_ref": m.get("branch_ref"),
+            "fiscal_year_ref": None, "description": description,
+            "category": category, "is_b2b_customer_payment": eligible,
+            "is_returned_cheque_settlement": category == "تسویه چک برگشتی", "source": "کارآمد",
+        })
+
+    eligible_rows = [x for x in rows if x["is_b2b_customer_payment"]]
+    direct_rows = [x for x in eligible_rows if not x["is_returned_cheque_settlement"]]
+    returned_rows = [x for x in eligible_rows if x["is_returned_cheque_settlement"]]
+    return {
+        "status": "success", "live": True, "source": "Karamad Live SQL / dbo.tblDraftD",
+        "rows": rows,
+        "summary": {
+            "all_bank_deposit_count": len(rows),
+            "b2b_count": len(eligible_rows),
+            "b2b_amount_rial": sum(float(x["amount_rial"] or 0) for x in eligible_rows),
+            "direct_count": len(direct_rows),
+            "direct_amount_rial": sum(float(x["amount_rial"] or 0) for x in direct_rows),
+            "returned_cheque_settlement_count": len(returned_rows),
+            "returned_cheque_settlement_amount_rial": sum(float(x["amount_rial"] or 0) for x in returned_rows),
+        },
+    }
+
+
+def get_customer_b2b_remittances(
+    limit: int = 20000,
+    counterpart_ref: int | None = None,
+    engine: Engine | None = None,
+) -> dict[str, Any]:
+    """واریزهای بانکی مشتریان از ReceiptDeposit با طبقه‌بندی قابل توضیح B2B."""
+    safe_limit = max(1, min(int(limit), 20000))
+    customer_where = "AND COALESCE(rd.[CounterPartRef], r.[CounterPartRef]) = :counterpart_ref" if counterpart_ref else ""
+    query = text(f"""
+        SELECT TOP ({safe_limit})
+            r.[ReceiptID], r.[Number] AS [ReceiptNumber], r.[Date] AS [ReceiptDate],
+            r.[ApproveDate], r.[ApproveState], r.[ReceiptType], r.[ItemType],
+            COALESCE(rd.[CounterPartRef], r.[CounterPartRef]) AS [CounterPartRef],
+            cp.[Code] AS [CustomerCode], cp.[Title] AS [CustomerName],
+            rd.[ReceiptDepositID], rd.[Number] AS [DepositNumber], rd.[Date] AS [DepositDate],
+            rd.[Amount] AS [AmountRial], rd.[CurrencyAmount], rd.[BankAccountRef], rd.[BankRef],
+            rd.[BankBranchCode], rd.[BankBranchName], r.[BranchRef], r.[FiscalYearRef],
+            r.[Description] AS [ReceiptDescription], rd.[Description] AS [DepositDescription]
+        FROM RPA3.[Receipt] r
+        INNER JOIN RPA3.[ReceiptDeposit] rd ON rd.[ReceiptRef] = r.[ReceiptID]
+        LEFT JOIN FIN3.[DL] cp ON cp.[DLID] = COALESCE(rd.[CounterPartRef], r.[CounterPartRef])
+        WHERE r.[ApproveState] IN (2, 3)
+          AND COALESCE(rd.[CounterPartRef], r.[CounterPartRef]) IS NOT NULL
+          {customer_where}
+        ORDER BY rd.[Date] DESC, rd.[ReceiptDepositID] DESC
+    """)
+    params = {"counterpart_ref": counterpart_ref} if counterpart_ref else {}
+    with _engine(engine).connect() as connection:
+        db_rows = connection.execute(query, params).mappings().all()
+
+    rows: list[dict[str, Any]] = []
+    for row in db_rows:
+        description = row["DepositDescription"] or row["ReceiptDescription"] or ""
+        category, eligible = _b2b_remittance_category(description)
+        rows.append({
+            "receipt_deposit_id": row["ReceiptDepositID"], "receipt_id": row["ReceiptID"],
+            "receipt_number": row["ReceiptNumber"], "receipt_date": _as_datetime(row["ReceiptDate"]),
+            "deposit_number": row["DepositNumber"], "deposit_date": _as_datetime(row["DepositDate"]),
+            "deposit_date_jalali": _as_jalali_date(row["DepositDate"]),
+            "approve_date": _as_datetime(row["ApproveDate"]), "approve_state": row["ApproveState"],
+            "approve_state_label": "تأیید نهایی" if row["ApproveState"] == 3 else "تأییدشده",
+            "receipt_type": row["ReceiptType"], "item_type": row["ItemType"],
+            "counterpart_ref": row["CounterPartRef"], "customer_code": row["CustomerCode"],
+            "customer_name": row["CustomerName"], "amount_rial": _as_number(row["AmountRial"]),
+            "currency_amount": _as_number(row["CurrencyAmount"]), "bank_account_ref": row["BankAccountRef"],
+            "bank_ref": row["BankRef"], "bank_branch_code": row["BankBranchCode"],
+            "bank_branch_name": row["BankBranchName"], "branch_ref": row["BranchRef"],
+            "fiscal_year_ref": row["FiscalYearRef"], "description": description,
+            "category": category, "is_b2b_customer_payment": eligible,
+            "is_returned_cheque_settlement": category == "تسویه چک برگشتی", "source": "راهکاران",
+        })
+
+    eligible_rows = [x for x in rows if x["is_b2b_customer_payment"]]
+    direct_rows = [x for x in eligible_rows if not x["is_returned_cheque_settlement"]]
+    returned_rows = [x for x in eligible_rows if x["is_returned_cheque_settlement"]]
+    customer_refs = {x["counterpart_ref"] for x in eligible_rows if x["counterpart_ref"] is not None}
+    return {
+        "status": "success", "source": "Rahkaran / RPA3.Receipt + ReceiptDeposit",
+        "rows": rows,
+        "summary": {
+            "all_bank_deposit_count": len(rows),
+            "b2b_count": len(eligible_rows),
+            "b2b_amount_rial": sum(float(x["amount_rial"] or 0) for x in eligible_rows),
+            "direct_count": len(direct_rows),
+            "direct_amount_rial": sum(float(x["amount_rial"] or 0) for x in direct_rows),
+            "returned_cheque_settlement_count": len(returned_rows),
+            "returned_cheque_settlement_amount_rial": sum(float(x["amount_rial"] or 0) for x in returned_rows),
+            "customer_count": len(customer_refs),
+        },
+        "classification_note": "انتقال داخلی/جاری شرکا، بازگشت پرداخت و نقد کردن چک از پرداخت B2B حذف می‌شوند؛ تسویه چک برگشتی جداگانه علامت‌گذاری می‌شود.",
+    }
+
+
+def get_customer_b2b_behavior(counterpart_ref: int, engine: Engine | None = None) -> dict[str, Any]:
+    report = get_customer_b2b_remittances(limit=20000, counterpart_ref=counterpart_ref, engine=engine)
+    rows = [x for x in report["rows"] if x["is_b2b_customer_payment"]]
+    direct = [x for x in rows if not x["is_returned_cheque_settlement"]]
+    returned = [x for x in rows if x["is_returned_cheque_settlement"]]
+    total = sum(float(x["amount_rial"] or 0) for x in rows)
+    direct_total = sum(float(x["amount_rial"] or 0) for x in direct)
+    returned_total = sum(float(x["amount_rial"] or 0) for x in returned)
+    return {
+        "count": len(rows), "amount_rial": total,
+        "direct_count": len(direct), "direct_amount_rial": direct_total,
+        "returned_cheque_settlement_count": len(returned), "returned_cheque_settlement_amount_rial": returned_total,
+        "returned_settlement_ratio_percent": round((returned_total / total * 100), 1) if total else 0,
+        "average_amount_rial": round(total / len(rows), 2) if rows else 0,
+        "last_payment_date": rows[0]["deposit_date"] if rows else None,
+        "rows": rows,
     }

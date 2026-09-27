@@ -16,6 +16,30 @@ class AlertUpdate(BaseModel):
     assignee: str | None = None
 
 
+def _refresh_finance_agents_after_karamad_import(result: dict) -> dict:
+    """Refresh agent reports after a successful KarAmand snapshot update.
+
+    Import success is never rolled back if SQL/LLM refresh is temporarily unavailable.
+    The response tells the UI whether the new report was generated or still needs a retry.
+    """
+    try:
+        from app.services.finance_operations_service import FinanceAgentOrchestrator
+        refreshed = FinanceAgentOrchestrator().run_all(trigger="karamad_snapshot_update")
+        result["agent_refresh"] = {
+            "status": "success",
+            "report_id": refreshed.get("report_id"),
+            "data_version": refreshed.get("data_version"),
+            "generated_at": refreshed.get("generated_at"),
+        }
+    except Exception as exc:
+        result["agent_refresh"] = {
+            "status": "pending",
+            "message": "فایل ثبت شد، اما گزارش Agentها در این لحظه بازسازی نشد؛ اجرای دستی Agentها دوباره تلاش می‌کند.",
+            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+        }
+    return result
+
+
 @router.post("/cashflow-excel/upload", summary="بارگذاری روزانه Cash Flow و تحلیل خودکار ماه شمسی")
 async def upload_daily_cashflow_excel(file: UploadFile = File(...)):
     from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
@@ -88,6 +112,202 @@ def cashflow_excel_download(jalali_year: int, jalali_month: int, stored_file: st
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+
+@router.post("/karamad-payment-transfers/upload", summary="ورود حواله‌های پرداختی کارآمد از Excel")
+async def upload_karamad_payment_transfers(file: UploadFile = File(...)):
+    from app.services.karamad_payment_transfer_service import KaramadPaymentTransferService
+
+    filename = Path(file.filename or "").name
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="فقط فایل Excel با پسوند xlsx مجاز است.")
+    temporary: Path | None = None
+    try:
+        content = await file.read()
+        if len(content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="حجم فایل نباید بیشتر از ۲۵ مگابایت باشد.")
+        with NamedTemporaryFile(delete=False, suffix=".xlsx") as handle:
+            handle.write(content)
+            temporary = Path(handle.name)
+        return KaramadPaymentTransferService().import_workbook(temporary, filename)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"پردازش حواله‌های کارآمد با خطا مواجه شد: {exc}") from exc
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+@router.get("/karamad-payment-transfers", summary="فهرست حواله‌های پرداختی واردشده از کارآمد")
+def karamad_payment_transfers(
+    month: str | None = Query(default=None, description="ماه شمسی مانند 1405/06"),
+    search: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0),
+):
+    from app.services.karamad_payment_transfer_service import KaramadPaymentTransferService
+
+    try:
+        return KaramadPaymentTransferService().report(
+            month=month, search=search, limit=limit, offset=offset
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/karamad-manual/folder/status", summary="وضعیت پوشه ورود خودکار چهار فایل کارآمد")
+def karamad_manual_folder_status():
+    from app.services.karamad_manual_import_service import KaramadManualImportService
+    return KaramadManualImportService().status()
+
+
+@router.post("/karamad-manual/folder/scan", summary="بررسی فوری پوشه چهار فایل کارآمد")
+def karamad_manual_folder_scan():
+    from app.services.karamad_manual_import_service import KaramadManualImportService
+    try:
+        result = KaramadManualImportService().scan()
+        if result.get("imported_count"):
+            return _refresh_finance_agents_after_karamad_import(result)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"بررسی پوشه کارآمد با خطا مواجه شد: {exc}") from exc
+
+
+@router.post("/karamad-manual/upload", summary="ورود دستی یکی از چهار خروجی کارآمد")
+async def upload_karamad_manual(
+    file: UploadFile = File(...),
+    source_kind: str | None = Query(default=None, pattern="^(received_cheques|issued_cheques|received_transfers|paid_transfers)$"),
+):
+    from app.services.karamad_manual_import_service import KaramadManualImportService
+    filename = Path(file.filename or "").name
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="فقط فایل Excel با پسوند xlsx مجاز است.")
+    temporary: Path | None = None
+    try:
+        content = await file.read()
+        if len(content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="حجم فایل نباید بیشتر از ۲۵ مگابایت باشد.")
+        with NamedTemporaryFile(delete=False, suffix=".xlsx") as handle:
+            handle.write(content)
+            temporary = Path(handle.name)
+        result = KaramadManualImportService().import_workbook(temporary, filename, source_kind)
+        return _refresh_finance_agents_after_karamad_import(result)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"پردازش فایل کارآمد با خطا مواجه شد: {exc}") from exc
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+@router.post("/karamad-manual/received-cheques/replace", summary="جایگزینی کامل سبد چک‌های دریافتی کارآمد")
+async def replace_karamad_received_cheques(file: UploadFile = File(...)):
+    from app.services.karamad_manual_import_service import KaramadManualImportService
+    filename = Path(file.filename or "").name
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="برای به‌روزرسانی سبد چک دریافتی فقط فایل xlsx مجاز است.")
+    temporary: Path | None = None
+    try:
+        content = await file.read()
+        if len(content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="حجم فایل نباید بیشتر از ۲۵ مگابایت باشد.")
+        with NamedTemporaryFile(delete=False, suffix=".xlsx") as handle:
+            handle.write(content)
+            temporary = Path(handle.name)
+        result = KaramadManualImportService().import_workbook(temporary, filename, "received_cheques")
+        if not result.get("import", {}).get("snapshot_replace") and not result.get("duplicate_file"):
+            raise HTTPException(status_code=422, detail="این فایل ساختار سبد کامل چک‌های دریافتی کارآمد را ندارد.")
+        return _refresh_finance_agents_after_karamad_import(result)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"به‌روزرسانی سبد چک دریافتی کارآمد با خطا مواجه شد: {exc}") from exc
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+
+
+@router.post("/karamad-manual/issued-cheques/replace", summary="جایگزینی چک‌های پرداختی ثبت‌شده کارآمد")
+async def replace_karamad_issued_cheques(file: UploadFile = File(...)):
+    from app.services.karamad_manual_import_service import KaramadManualImportService
+    filename = Path(file.filename or "").name
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="برای به‌روزرسانی چک‌های پرداختی ثبت‌شده فقط فایل xlsx مجاز است.")
+    temporary: Path | None = None
+    try:
+        content = await file.read()
+        if len(content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="حجم فایل نباید بیشتر از ۲۵ مگابایت باشد.")
+        with NamedTemporaryFile(delete=False, suffix=".xlsx") as handle:
+            handle.write(content)
+            temporary = Path(handle.name)
+        result = KaramadManualImportService().import_workbook(temporary, filename, "issued_cheques")
+        imported = result.get("import", {})
+        if not result.get("duplicate_file") and (not imported.get("snapshot_replace") or imported.get("snapshot_kind") != "issued_cheques"):
+            raise HTTPException(status_code=422, detail="این فایل ساختار چک‌های پرداختی ثبت‌شده کارآمد را ندارد.")
+        return _refresh_finance_agents_after_karamad_import(result)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"به‌روزرسانی چک‌های پرداختی کارآمد با خطا مواجه شد: {exc}") from exc
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+@router.get("/karamad-manual/movements", summary="گردش یکتاشده چهار فایل کارآمد")
+def karamad_manual_movements(
+    month: str | None = Query(default=None, description="ماه شمسی مانند 1405/06"),
+    direction: str | None = Query(default=None, pattern="^(inflow|outflow)$"),
+    classification: str | None = Query(default=None, pattern="^(operational|company_bank_transfer|petty_cash)$"),
+    search: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=500, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+    branch: str | None = Query(default=None, max_length=200),
+):
+    from app.services.karamad_manual_import_service import KaramadManualImportService
+    try:
+        return KaramadManualImportService().report(month, direction, classification, search, limit, offset, branch)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/karamad-manual/customer-summary", summary="خلاصه رفتار مشتری از داده‌های کارآمد با فیلتر شعبه")
+def karamad_customer_summary(branch: str | None = Query(default=None, max_length=200)):
+    # V159: live SQL first (transfers + received cheques; issued cheques still
+    # merged in from the manual snapshot inside the live service itself),
+    # falling back to the fully-manual snapshot only if the live source errors.
+    try:
+        from app.services.karamad_live_customer_activity_service import KaramadLiveCustomerActivityService
+        return KaramadLiveCustomerActivityService().customer_summary(branch=branch)
+    except Exception:
+        from app.services.karamad_manual_import_service import KaramadManualImportService
+        return KaramadManualImportService().customer_summary(branch=branch)
+
+
+@router.get("/karamad-manual/customer-detail", summary="ریز چک و حواله یک مشتری از کارآمد")
+def karamad_customer_detail(
+    customer_name: str = Query(..., min_length=1, max_length=300),
+    branch: str | None = Query(default=None, max_length=200),
+):
+    try:
+        from app.services.karamad_live_customer_activity_service import KaramadLiveCustomerActivityService
+        return KaramadLiveCustomerActivityService().customer_detail(customer_name=customer_name, branch=branch)
+    except Exception:
+        from app.services.karamad_manual_import_service import KaramadManualImportService
+        return KaramadManualImportService().customer_detail(customer_name=customer_name, branch=branch)
+
+
 @router.post("/customer-automation/run", summary="اجرای فوری اتوماسیون رفتار مشتری")
 def run_customer_automation():
     from app.services.customer_automation_service import CustomerAutomationService
@@ -129,7 +349,7 @@ def customer_agent_status():
 )
 def customer_cheque_behavior(
     history_days: int = Query(default=365, ge=30, le=730),
-    forecast_days: int = Query(default=30, ge=1, le=180),
+    forecast_days: int = Query(default=30, ge=7, le=180),
     allowed_term_days: int = Query(default=90, ge=1, le=365),
     limit: int | None = Query(default=200, ge=1, le=5000),
 ):
@@ -217,6 +437,25 @@ def customer_intelligence(
         ).dashboard(limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"تحلیل رفتار مشتری با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/customer-collection-portfolio", summary="پرتفوی جامع مطالبات و پوشش وصول مشتریان")
+def customer_collection_portfolio(
+    limit: int = Query(default=300, ge=1, le=1000),
+    source: str = Query(default="rahkaran", pattern="^(rahkaran|karamad)$"),
+    branch: str | None = Query(default=None, max_length=200),
+):
+    if source == "karamad":
+        from app.services.karamad_live_customer_activity_service import KaramadLiveCustomerActivityService
+        try:
+            return KaramadLiveCustomerActivityService().collection_portfolio(branch=branch, limit=limit)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"بارگذاری ماژول جامع مطالبات مشتریان کارآمد با خطا مواجه شد: {exc}") from exc
+    from app.services.customer_intelligence_service import CustomerIntelligenceService
+    try:
+        return CustomerIntelligenceService().collection_portfolio(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"بارگذاری ماژول جامع مطالبات مشتریان با خطا مواجه شد: {exc}") from exc
 
 
 @router.get("/customer-intelligence/{counterpart_ref}", summary="تحلیل انسانی رفتار یک مشتری")
@@ -384,6 +623,38 @@ def cash_shortage_prediction(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"پیش‌بینی کسری نقدینگی با خطا مواجه شد: {exc}",
         ) from exc
+
+
+@router.get(
+    "/cashflow/unified",
+    summary="Cash Flow واحد: موجودی Excel و خط زمان SQL",
+)
+def unified_cashflow(
+    history_days: int = Query(default=365, ge=30, le=730),
+    forecast_days: int = Query(default=30, ge=7, le=180),
+    allowed_term_days: int = Query(default=90, ge=1, le=365),
+):
+    from app.services.unified_cashflow_service import UnifiedDailyCashflowService
+    try:
+        return UnifiedDailyCashflowService(
+            history_days=history_days,
+            forecast_days=forecast_days,
+            allowed_term_days=allowed_term_days,
+        ).build()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"ساخت Cash Flow واحد با خطا مواجه شد: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/cashflow/history",
+    summary="مقایسه چند ماه Cash Flow واقعی Excel",
+)
+def cashflow_history(months: int = Query(default=6, ge=2, le=24)):
+    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
+    return MonthlyCashflowExcelService().historical_comparison(months_limit=months)
 
 
 @router.get(

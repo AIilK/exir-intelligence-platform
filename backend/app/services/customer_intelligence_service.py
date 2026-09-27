@@ -3,6 +3,24 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.finance_prediction_service import FinancePredictionService
+from app.services.treasury_service import get_customer_b2b_behavior, get_customer_b2b_remittances
+
+
+def _is_hybrid_customer(item: dict[str, Any]) -> bool:
+    """True when the customer is a Hybrid sales channel, not a receivable customer.
+
+    Hybrid sales settle directly into company bank accounts, so keeping these rows in
+    customer receivables would create a false customer debt/exposure.
+    """
+    values = (
+        item.get("counterpart_name"),
+        item.get("customer_name"),
+        item.get("name"),
+        item.get("title"),
+    )
+    text = " ".join(str(value or "") for value in values)
+    text = text.replace("ي", "ی").replace("ى", "ی").replace("ك", "ک").replace("‌", " ").lower()
+    return "هیبرید" in text or "hybrid" in text
 
 
 class CustomerIntelligenceService:
@@ -22,7 +40,26 @@ class CustomerIntelligenceService:
         report = self.prediction.customer_predictions(limit=limit)
         priorities = self.prediction.collection_priorities(limit=min(limit, 100))
         priority_by_ref = {int(x["counterpart_ref"]): x for x in priorities.get("customers", [])}
-        customers = [self._enrich(x, priority_by_ref.get(int(x["counterpart_ref"]))) for x in report.get("customers", [])]
+        b2b_report = get_customer_b2b_remittances(limit=20000)
+        b2b_by_ref: dict[int, dict[str, Any]] = {}
+        for remittance in b2b_report.get("rows", []):
+            if not remittance.get("is_b2b_customer_payment") or not remittance.get("counterpart_ref"):
+                continue
+            ref = int(remittance["counterpart_ref"])
+            bucket = b2b_by_ref.setdefault(ref, {"count": 0, "amount_rial": 0.0, "direct_count": 0, "direct_amount_rial": 0.0, "returned_cheque_settlement_count": 0, "returned_cheque_settlement_amount_rial": 0.0, "last_payment_date": None})
+            amount = float(remittance.get("amount_rial", 0) or 0)
+            bucket["count"] += 1; bucket["amount_rial"] += amount
+            if remittance.get("is_returned_cheque_settlement"):
+                bucket["returned_cheque_settlement_count"] += 1; bucket["returned_cheque_settlement_amount_rial"] += amount
+            else:
+                bucket["direct_count"] += 1; bucket["direct_amount_rial"] += amount
+            if not bucket["last_payment_date"]:
+                bucket["last_payment_date"] = remittance.get("deposit_date")
+        for bucket in b2b_by_ref.values():
+            total = float(bucket["amount_rial"] or 0)
+            bucket["average_amount_rial"] = round(total / bucket["count"], 2) if bucket["count"] else 0
+            bucket["returned_settlement_ratio_percent"] = round(float(bucket["returned_cheque_settlement_amount_rial"] or 0) / total * 100, 1) if total else 0
+        customers = [self._enrich(x, priority_by_ref.get(int(x["counterpart_ref"])), b2b_by_ref.get(int(x["counterpart_ref"]))) for x in report.get("customers", []) if not _is_hybrid_customer(x)]
         customers.sort(key=lambda x: (x["risk_score"], x["open_exposure"]), reverse=True)
 
         high = [x for x in customers if x["risk_level"] == "high"]
@@ -65,6 +102,52 @@ class CustomerIntelligenceService:
             "limitations": report.get("limitations", []),
         }
 
+    def collection_portfolio(self, limit: int = 300) -> dict[str, Any]:
+        """Managerial customer-collection portfolio with account + cheque coverage in one dataset."""
+        dashboard = self.dashboard(limit=limit)
+        rows: list[dict[str, Any]] = []
+        for item in dashboard.get("customers", []):
+            # Defensive guard: dashboard already excludes Hybrid customers, but keep
+            # the portfolio protected if its upstream source changes later.
+            if _is_hybrid_customer(item):
+                continue
+            ref = item.get("counterpart_ref")
+            if ref is None:
+                continue
+            try:
+                account = self.prediction.customer_account_position(int(ref))
+            except Exception as exc:
+                account = {"found": False, "error": str(exc)}
+            balance = float(account.get("balance_rial", 0) or 0) if account.get("found") else 0.0
+            open_account = max(balance, 0.0)
+            customer_credit = max(-balance, 0.0)
+            open_cheques = float(item.get("open_exposure", 0) or 0)
+            exposure = round(open_account + open_cheques, 2)
+            rows.append({
+                **item,
+                "account_position": account,
+                "collection_position": {
+                    "open_account_receivable_rial": round(open_account, 2),
+                    "customer_credit_rial": round(customer_credit, 2),
+                    "open_cheque_amount_rial": round(open_cheques, 2),
+                    "total_collection_exposure_rial": exposure,
+                    "cheque_coverage_percent": round(open_cheques / exposure * 100, 1) if exposure else 0.0,
+                    "uncovered_percent": round(open_account / exposure * 100, 1) if exposure else 0.0,
+                },
+            })
+        rows.sort(key=lambda x: float(x.get("collection_position", {}).get("total_collection_exposure_rial", 0) or 0), reverse=True)
+        return {
+            "status": "success",
+            "summary": {
+                "customer_count": len(rows),
+                "open_account_receivable_rial": round(sum(float(x["collection_position"]["open_account_receivable_rial"]) for x in rows), 2),
+                "open_cheque_amount_rial": round(sum(float(x["collection_position"]["open_cheque_amount_rial"]) for x in rows), 2),
+                "total_collection_exposure_rial": round(sum(float(x["collection_position"]["total_collection_exposure_rial"]) for x in rows), 2),
+                "customer_credit_rial": round(sum(float(x["collection_position"]["customer_credit_rial"]) for x in rows), 2),
+            },
+            "customers": rows,
+        }
+
     def customer(self, counterpart_ref: int) -> dict[str, Any]:
         report = self.prediction.customer_prediction(counterpart_ref)
         if report.get("status") == "not_found":
@@ -72,11 +155,30 @@ class CustomerIntelligenceService:
         item = report.get("customers", [])[0]
         priorities = self.prediction.collection_priorities(limit=200).get("customers", [])
         priority = next((x for x in priorities if int(x["counterpart_ref"]) == int(counterpart_ref)), None)
-        customer = self._enrich(item, priority)
+        b2b = get_customer_b2b_behavior(counterpart_ref)
+        customer = self._enrich(item, priority, b2b)
+        customer["b2b_remittances"] = b2b
+        customer["latest_invoice"] = self.prediction.customer_latest_invoice(counterpart_ref)
+        customer["all_cheques"] = self.prediction.customer_all_cheques(counterpart_ref)
         customer["open_cheques"] = self.prediction.customer_open_cheques(counterpart_ref)
+        customer["returned_cheques"] = self.prediction.customer_returned_cheques(counterpart_ref)
+        account = self.prediction.customer_account_position(counterpart_ref)
+        open_cheque_amount = round(sum(float(x.get("amount", 0) or 0) for x in customer["open_cheques"]), 2)
+        open_account = float(account.get("open_account_receivable_rial", 0) or 0)
+        total_collection_exposure = round(open_account + open_cheque_amount, 2)
+        customer["account_position"] = account
+        customer["collection_position"] = {
+            "open_account_receivable_rial": round(open_account, 2),
+            "customer_credit_rial": round(float(account.get("customer_credit_rial", 0) or 0), 2),
+            "open_cheque_amount_rial": open_cheque_amount,
+            "total_collection_exposure_rial": total_collection_exposure,
+            "cheque_coverage_percent": round(open_cheque_amount / total_collection_exposure * 100, 1) if total_collection_exposure else 0.0,
+            "uncovered_percent": round(open_account / total_collection_exposure * 100, 1) if total_collection_exposure else 0.0,
+            "accounting_note": "مانده مشتری از گردش سند حسابداری سال مالی روی تفصیلی مشتری و حساب‌های دریافتنی تجاری، برگشتی و اشخاص محاسبه می‌شود؛ انتقال داخلی بین این حساب‌ها در جمع خنثی است.",
+        }
         return {"status": "success", "customer": customer, "alert": self._alert(customer)}
 
-    def _enrich(self, item: dict[str, Any], priority: dict[str, Any] | None) -> dict[str, Any]:
+    def _enrich(self, item: dict[str, Any], priority: dict[str, Any] | None, b2b: dict[str, Any] | None = None) -> dict[str, Any]:
         late = item.get("late_payment_risk", {})
         returned = item.get("cheque_return_probability", {})
         forecast = item.get("collection_forecast", {})
@@ -84,7 +186,13 @@ class CustomerIntelligenceService:
         return_value = float(returned.get("value", 0) or 0)
         overdue_ratio = float(item.get("current_overdue_open_ratio_percent", 0) or 0)
         over_policy_count = int(item.get("over_policy_count", 0) or 0)
-        risk_score = round(min(100, 0.45 * late_value + 0.35 * return_value + 0.20 * overdue_ratio), 1)
+        base_risk_score = 0.45 * late_value + 0.35 * return_value + 0.20 * overdue_ratio
+        b2b = b2b or {}
+        direct_count = int(b2b.get("direct_count", 0) or 0)
+        returned_settlement_ratio = float(b2b.get("returned_settlement_ratio_percent", 0) or 0)
+        # حواله مستقیم و تکرارشونده یک سیگنال مثبت محدود است؛ تسویه چک برگشتی سیگنال منفی است.
+        remittance_adjustment = min(8.0, direct_count * 0.4) - min(12.0, returned_settlement_ratio * 0.20)
+        risk_score = round(max(0, min(100, base_risk_score - remittance_adjustment)), 1)
         # سیاست قطعی شرکت: وجود چک بالاتر از سقف ۹۰ روز حداقل هشدار است.
         # تکرار بالا همراه با مانده معوق، وضعیت را بحرانی می‌کند.
         policy_critical = (
@@ -115,6 +223,8 @@ class CustomerIntelligenceService:
             "human_explanation": explanation,
             "recommended_actions": actions,
             "priority": priority,
+            "b2b_behavior": b2b,
+            "b2b_risk_adjustment": round(-remittance_adjustment, 1),
         }
 
     def _actions(self, level: str, overdue_ratio: float, return_risk: float, exposure: float, priority: dict | None, over_policy_count: int = 0) -> list[dict[str, str]]:

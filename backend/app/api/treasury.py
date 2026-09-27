@@ -5,6 +5,7 @@ from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
+    Depends,
     File,
     Form,
     HTTPException,
@@ -16,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from app.schemas.treasury import (
     FinancialQueryRequest,
+    PaymentCommitmentDecisionRequest,
     TreasuryChatRequest,
     TreasuryChatResponse,
     TreasuryChatStatusResponse,
@@ -41,8 +43,19 @@ from app.services.treasury_service import (
     get_cheque_due_report,
     get_latest_issued_cheques,
     get_cheque_state_quality,
+    get_received_cheque_current_state_quality,
+    get_received_cheque_sql_scope,
+    get_received_cheque_status_signatures,
+    compare_received_open_sql_with_rahkaran_excel,
+    analyze_received_cheque_official_discrepancies,
+    analyze_received_cheque_official_scope_rule,
+    trace_received_cheque_mapping,
     get_latest_payments,
+    get_company_payment_orders,
+    get_customer_b2b_remittances,
+    get_customer_b2b_remittances_karamad,
     get_latest_received_cheques,
+    get_open_issued_cheques,
     get_open_received_cheques,
     get_latest_receipts,
     get_received_cheques_by_status,
@@ -72,6 +85,8 @@ from app.services.treasury_chat_service import (
     run_treasury_chat,
 )
 from app.services.cash_bank_movement_service import CashBankMovementService
+from app.services.payment_commitment_service import PaymentCommitmentService
+from app.api.reconciliation_access import require_reconciliation_api_key
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +98,25 @@ router = APIRouter(
 )
 
 
+@router.get("/cash-bank/karamad-live/health", summary="بررسی اتصال Live SQL کارآمد برای نقد و حواله")
+def karamad_live_health():
+    try:
+        from app.services.karamad_live_cash_draft_service import KaramadLiveCashDraftService
+        service = KaramadLiveCashDraftService()
+        branches = service.branches()
+        return {
+            "status": "success",
+            "live": True,
+            "source_system": "karamad",
+            "database": "KDB",
+            "tables": ["dbo.tblCashD", "dbo.tblCashP", "dbo.tblDraftD", "dbo.tblDraftP"],
+            "available_branches": branches,
+        }
+    except Exception as exc:
+        logger.exception("Karamad live SQL health check failed")
+        raise HTTPException(status_code=500, detail=f"اتصال Live SQL کارآمد برقرار نشد: {exc}") from exc
+
+
 @router.get("/cash-bank/movements", summary="ریز دریافت و پرداخت نقدی و بانکی")
 def cash_bank_movements(
     period: Literal["today", "week", "month", "3m", "6m", "12m", "custom"] = Query(default="month"),
@@ -91,11 +125,13 @@ def cash_bank_movements(
     date_to: date | None = Query(default=None),
     limit: int = Query(default=500, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
+    branch: str | None = Query(default=None, max_length=200),
+    source: Literal["all", "rahkaran", "karamad"] = Query(default="all"),
 ):
     try:
         return CashBankMovementService().report(
             period=period, approval_status=approval_status,
-            date_from=date_from, date_to=date_to, limit=limit, offset=offset,
+            date_from=date_from, date_to=date_to, limit=limit, offset=offset, branch=branch, source=source,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -121,6 +157,65 @@ def internal_cash_bank_transfers(
     except Exception as exc:
         logger.exception("Internal transfer endpoint failed")
         raise HTTPException(status_code=500, detail=f"دریافت انتقال‌های داخلی با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/cash-bank/petty-cash", summary="تنخواه‌های شرکت؛ خارج از Cash Flow")
+def petty_cash_transfers(
+    period: Literal["today", "week", "month", "3m", "6m", "12m", "custom"] = Query(default="month"),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+):
+    try:
+        return CashBankMovementService().petty_cash_transfers(period, date_from, date_to, limit, offset)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Petty cash endpoint failed")
+        raise HTTPException(status_code=500, detail=f"دریافت تنخواه با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/cash-bank/commitments", summary="تعهدات آینده و دستورهای پرداخت تعیین‌تکلیف‌نشده")
+def payment_order_commitments(
+    horizon_days: int = Query(default=365, ge=1, le=730),
+    limit: int = Query(default=500, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+):
+    try:
+        return PaymentCommitmentService().report(
+            horizon_days=horizon_days, limit=limit, offset=offset,
+        )
+    except Exception as exc:
+        logger.exception("Payment commitment endpoint failed")
+        raise HTTPException(status_code=500, detail=f"دریافت تعهدات پرداخت با خطا مواجه شد: {exc}") from exc
+
+
+@router.put(
+    "/cash-bank/commitments/{installment_id}/decision",
+    summary="ثبت تصمیم خزانه برای یک قسط معوق دستور پرداخت",
+)
+def update_payment_commitment_decision(
+    installment_id: int,
+    request: PaymentCommitmentDecisionRequest,
+):
+    try:
+        return PaymentCommitmentService().set_review_decision(
+            installment_id=installment_id,
+            payment_order_id=request.payment_order_id,
+            decision=request.decision,
+            note=request.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Payment commitment decision update failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"ثبت تعیین‌تکلیف تعهد پرداخت با خطا مواجه شد: {exc}",
+        ) from exc
 
 
 @router.post(
@@ -241,6 +336,42 @@ def latest_treasury_receipts(
         ) from exc
 
 
+@router.get("/payment-orders/company", summary="حواله‌های پرداختی شرکت در راهکاران")
+def company_payment_orders(limit: int = Query(default=1000, ge=1, le=5000)):
+    try:
+        return get_company_payment_orders(limit=limit)
+    except Exception as exc:
+        logger.exception("Company payment orders endpoint failed")
+        raise HTTPException(status_code=500, detail="دریافت حواله‌های پرداختی شرکت از راهکاران با خطا مواجه شد.") from exc
+
+
+@router.get("/customer-b2b-remittances", summary="حواله‌ها و واریزهای B2B مشتریان")
+def customer_b2b_remittances(
+    limit: int = Query(default=20000, ge=1, le=20000),
+    counterpart_ref: int | None = Query(default=None, ge=1),
+    source: str = Query(default="rahkaran", pattern="^(rahkaran|karamad|all)$"),
+):
+    try:
+        if source == "rahkaran":
+            return get_customer_b2b_remittances(limit=limit, counterpart_ref=counterpart_ref)
+        if source == "karamad":
+            return get_customer_b2b_remittances_karamad(limit=limit, counterpart_ref=counterpart_ref)
+        rahkaran = get_customer_b2b_remittances(limit=limit, counterpart_ref=counterpart_ref)
+        karamad = get_customer_b2b_remittances_karamad(limit=limit, counterpart_ref=counterpart_ref)
+        merged_rows = rahkaran.get("rows", []) + karamad.get("rows", [])
+        merged_rows.sort(key=lambda x: (x.get("deposit_date_jalali") or "", str(x.get("receipt_deposit_id") or "")), reverse=True)
+        return {
+            "status": "success", "source": "Rahkaran + Karamad", "rows": merged_rows,
+            "summary": {
+                key: (rahkaran["summary"].get(key, 0) or 0) + (karamad["summary"].get(key, 0) or 0)
+                for key in rahkaran["summary"]
+            },
+        }
+    except Exception as exc:
+        logger.exception("Customer B2B remittances endpoint failed")
+        raise HTTPException(status_code=500, detail="دریافت حواله‌های B2B مشتریان با خطا مواجه شد.") from exc
+
+
 @router.get("/payments/latest")
 def latest_treasury_payments(
     limit: int = Query(default=10, ge=1, le=100),
@@ -302,6 +433,84 @@ def latest_issued_treasury_cheques(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"دریافت آخرین چک‌های پرداختی با خطا مواجه شد: {exc}",
         ) from exc
+
+
+@router.get("/cheques/issued/open", summary="چک‌های پرداختی باز و فعال")
+def open_issued_treasury_cheques():
+    """فقط State=11؛ پرداخت‌شده، تضمینی و سهامدار حذف می‌شوند."""
+    try:
+        return get_open_issued_cheques()
+    except Exception as exc:
+        logger.exception("Open issued treasury cheques endpoint failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"دریافت چک‌های پرداختی باز با خطا مواجه شد: {exc}",
+        ) from exc
+
+
+@router.get("/cheques/received/sql-scope", summary="کنترل دامنه زمانی SQL چک‌های دریافتی راهکاران")
+def treasury_received_cheque_sql_scope():
+    try:
+        return get_received_cheque_sql_scope()
+    except Exception as exc:
+        logger.exception("Received cheque SQL scope endpoint failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"کنترل دامنه SQL چک‌های دریافتی با خطا مواجه شد: {exc}",
+        ) from exc
+
+
+@router.get("/cheques/received/current-state-quality", summary="کنترل وضعیت فعلی چک‌های دریافتی راهکاران")
+def treasury_received_cheque_current_state_quality():
+    try:
+        return get_received_cheque_current_state_quality()
+    except Exception as exc:
+        logger.exception("Received cheque current-state quality endpoint failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"کنترل وضعیت فعلی چک‌های دریافتی با خطا مواجه شد: {exc}",
+        ) from exc
+
+
+@router.get("/cheques/received/status-signatures", summary="ممیزی SQL برای بازسازی وضعیت فعلی راهکاران")
+def treasury_received_cheque_status_signatures():
+    try:
+        return get_received_cheque_status_signatures()
+    except Exception as exc:
+        logger.exception("Received cheque status-signatures endpoint failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"ممیزی وضعیت فعلی چک‌های دریافتی با خطا مواجه شد: {exc}",
+        ) from exc
+
+
+
+
+@router.post("/cheques/received/compare-official-excel", summary="مقایسه کاندیدهای SQL با گزارش رسمی راهکاران")
+async def compare_received_cheques_with_official_excel(file: UploadFile = File(..., description="Excel رسمی ListData راهکاران")):
+    try:
+        content = await file.read()
+        if not content: raise HTTPException(status_code=400, detail="فایل خالی است")
+        return compare_received_open_sql_with_rahkaran_excel(content)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Received cheque official Excel comparison failed")
+        raise HTTPException(status_code=500, detail=f"مقایسه SQL و Excel راهکاران با خطا مواجه شد: {exc}") from exc
+
+
+@router.post("/cheques/received/analyze-official-difference", summary="ردیابی کامل اختلاف SQL با وضعیت فعلی گزارش رسمی راهکاران")
+async def analyze_received_cheque_official_difference(file: UploadFile = File(..., description="Excel رسمی ListData راهکاران")):
+    try:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="فایل خالی است")
+        return analyze_received_cheque_official_discrepancies(content)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Received cheque discrepancy-history analysis failed")
+        raise HTTPException(status_code=500, detail=f"ردیابی اختلاف SQL و Excel راهکاران با خطا مواجه شد: {exc}") from exc
 
 
 @router.get("/cheques/status-quality", summary="نرخ قطعی وصول و کنترل وضعیت چک‌های صادرشده")
@@ -547,11 +756,12 @@ def treasury_executive_dashboard(
         "Endpoint عملیاتی کارکنان خزانه؛ فقط فایل صورتحساب ارسال می‌شود. "
         "بانک، حساب، شبا، Sheet، ردیف عنوان و ستون‌ها خودکار تشخیص داده می‌شوند."
     ),
+    dependencies=[Depends(require_reconciliation_api_key)],
 )
 async def auto_upload_bank_statement_for_reconciliation(
     file: UploadFile = File(
         ...,
-        description="فایل صورتحساب بانک با فرمت XLS، XLSX یا CSV",
+        description="فایل صورتحساب بانک با فرمت XLS، XLSX، CSV، PDF یا HTML",
     ),
 ):
     return await _process_reconciliation_upload(
@@ -576,6 +786,7 @@ async def auto_upload_bank_statement_for_reconciliation(
     summary="مغایرت‌گیری پیشرفته صورتحساب بانک",
     description="تنظیمات دستی؛ فقط برای پشتیبانی فنی و قالب‌های ناشناخته.",
     deprecated=True,
+    dependencies=[Depends(require_reconciliation_api_key)],
 )
 async def upload_bank_statement_for_reconciliation(
     file: UploadFile = File(...),
@@ -620,7 +831,10 @@ async def upload_bank_statement_for_reconciliation(
     )
 
 
-@router.get("/reconciliation/{reconciliation_id}")
+@router.get(
+    "/reconciliation/{reconciliation_id}",
+    dependencies=[Depends(require_reconciliation_api_key)],
+)
 def treasury_reconciliation_report(reconciliation_id: str):
     try:
         return get_reconciliation_report(reconciliation_id)
@@ -631,7 +845,10 @@ def treasury_reconciliation_report(reconciliation_id: str):
         ) from exc
 
 
-@router.get("/reconciliation/{reconciliation_id}/summary")
+@router.get(
+    "/reconciliation/{reconciliation_id}/summary",
+    dependencies=[Depends(require_reconciliation_api_key)],
+)
 def treasury_reconciliation_summary(reconciliation_id: str):
     try:
         return get_reconciliation_summary(reconciliation_id)
@@ -642,7 +859,10 @@ def treasury_reconciliation_summary(reconciliation_id: str):
         ) from exc
 
 
-@router.get("/reconciliation/{reconciliation_id}/rows")
+@router.get(
+    "/reconciliation/{reconciliation_id}/rows",
+    dependencies=[Depends(require_reconciliation_api_key)],
+)
 def treasury_reconciliation_rows(
     reconciliation_id: str,
     business_status: Literal[
@@ -670,7 +890,10 @@ def treasury_reconciliation_rows(
         ) from exc
 
 
-@router.get("/reconciliation/{reconciliation_id}/export.xlsx")
+@router.get(
+    "/reconciliation/{reconciliation_id}/export.xlsx",
+    dependencies=[Depends(require_reconciliation_api_key)],
+)
 def treasury_reconciliation_excel(reconciliation_id: str):
     try:
         report = get_reconciliation_report(reconciliation_id)
@@ -764,3 +987,36 @@ async def treasury_chat(request: TreasuryChatRequest):
 )
 def treasury_chat_status():
     return get_treasury_agent_status()
+
+
+@router.post("/cheques/received/analyze-official-scope-rule", summary="کشف Rule دامنه گزارش رسمی چک‌های دریافتی راهکاران")
+async def analyze_received_cheque_scope_rule(file: UploadFile = File(..., description="Excel رسمی ListData راهکاران - فقط کنترل")):
+    try:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="فایل خالی است")
+        return analyze_received_cheque_official_scope_rule(content)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Received cheque official scope-rule analysis failed")
+        raise HTTPException(status_code=500, detail=f"کشف Rule دامنه گزارش رسمی راهکاران با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/cheques/received/trace", summary="ردیابی کامل یک چک دریافتی از SQL تا API")
+def trace_received_cheque(
+    cheque_id: int | None = Query(default=None),
+    serial_number: str | None = Query(default=None),
+    sayad_number: str | None = Query(default=None),
+    document_number: str | None = Query(default=None),
+):
+    try:
+        return trace_received_cheque_mapping(
+            cheque_id=cheque_id, serial_number=serial_number,
+            sayad_number=sayad_number, document_number=document_number,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Received cheque mapping trace failed")
+        raise HTTPException(status_code=500, detail=f"ردیابی چک با خطا مواجه شد: {exc}") from exc

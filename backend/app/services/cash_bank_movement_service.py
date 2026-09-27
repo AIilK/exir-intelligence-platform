@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+import re
 from typing import Any, Literal
 
 from sqlalchemy import text
@@ -73,6 +74,13 @@ def _approval_clause(status: Approval, alias: str) -> str:
 class CashBankMovementService:
     """Canonical cash/bank movement source; cheque and internal-transfer safe."""
 
+    PETTY_CASH_MARKERS = ("تنخواه", "علی الحساب تنخواه", "علی‌الحساب تنخواه")
+    COMPANY_TRANSFER_MARKERS = (
+        "حواله شرکتی", "انتقال بین بانکی", "انتقال بین‌بانکی", "انتقال بانک به بانک",
+        "انتقال بانک‌به‌بانک", "بانک به بانک", "بانک‌به‌بانک", "بابت انتقال",
+        "جهت انتقال", "طرف حساب شرکتی", "شرکتی",
+    )
+
     def __init__(self, engine: Engine | None = None):
         self.engine = engine or get_sqlserver_engine()
 
@@ -135,24 +143,18 @@ class CashBankMovementService:
         date_to: date | None = None,
         limit: int = 500,
         offset: int = 0,
+        branch: str | None = None,
+        source: Literal["all", "rahkaran", "karamad"] = "all",
     ) -> dict[str, Any]:
+        if source not in ("all", "rahkaran", "karamad"):
+            raise ValueError("منبع گزارش معتبر نیست")
+        if source == "rahkaran":
+            branch = None
         start, end = _range(period, date_from, date_to)
         limit, offset = max(1, min(int(limit), 5000)), max(0, int(offset))
         union = self._base_union(approval_status)
         params = {"date_from": start, "date_to_exclusive": end + timedelta(days=1), "limit": limit, "offset": offset}
         where = "[DocumentDate] >= :date_from AND [DocumentDate] < :date_to_exclusive"
-        summary_sql = text(f"""
-            WITH movements AS ({union})
-            SELECT
-                COUNT_BIG(*) AS [TotalCount],
-                SUM(CASE WHEN [Direction]=N'inflow' THEN [AmountRial] ELSE 0 END) AS [InflowRial],
-                SUM(CASE WHEN [Direction]=N'outflow' THEN [AmountRial] ELSE 0 END) AS [OutflowRial],
-                SUM(CASE WHEN [MovementType]=N'cash_receipt' THEN [AmountRial] ELSE 0 END) AS [CashReceiptRial],
-                SUM(CASE WHEN [MovementType]=N'bank_receipt' THEN [AmountRial] ELSE 0 END) AS [BankReceiptRial],
-                SUM(CASE WHEN [MovementType]=N'cash_payment' THEN [AmountRial] ELSE 0 END) AS [CashPaymentRial],
-                SUM(CASE WHEN [MovementType]=N'bank_payment' THEN [AmountRial] ELSE 0 END) AS [BankPaymentRial]
-            FROM movements WHERE {where}
-        """)
         rows_sql = text(f"""
             WITH movements AS ({union})
             SELECT m.*, cp.[Code] AS [CounterPartCode], cp.[Title] AS [CounterPartName],
@@ -162,39 +164,160 @@ class CashBankMovementService:
             LEFT JOIN RPA3.[BankAccount] ba ON ba.[BankAccountID] = m.[BankAccountRef]
             WHERE {where}
             ORDER BY m.[DocumentDate] DESC, m.[DocumentID] DESC, m.[MovementID] DESC
-            OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY
         """)
-        daily_sql = text(f"""
-            WITH movements AS ({union})
-            SELECT CAST([DocumentDate] AS date) AS [MovementDate],
-                   SUM(CASE WHEN [Direction]=N'inflow' THEN [AmountRial] ELSE 0 END) AS [InflowRial],
-                   SUM(CASE WHEN [Direction]=N'outflow' THEN [AmountRial] ELSE 0 END) AS [OutflowRial]
-            FROM movements WHERE {where}
-            GROUP BY CAST([DocumentDate] AS date) ORDER BY [MovementDate]
-        """)
-        with self.engine.connect() as connection:
-            summary = dict(connection.execute(summary_sql, params).mappings().one())
-            rows = connection.execute(rows_sql, params).mappings().all()
-            daily = connection.execute(daily_sql, params).mappings().all()
-        inflow = _number(summary.get("InflowRial"))
-        outflow = _number(summary.get("OutflowRial"))
+        rows = []
+        if source != "karamad" and not branch:
+            with self.engine.connect() as connection:
+                rows = connection.execute(rows_sql, params).mappings().all()
+        payloads = [self._movement_payload(row) for row in rows]
+        operational_rows = [row for row in payloads if row["classification"] == "operational"]
+        company_transfer_rows = [row for row in payloads if row["classification"] == "company_bank_transfer"]
+        petty_cash_rows = [row for row in payloads if row["classification"] == "petty_cash"]
+
+        # Live KarAmand SQL source. The legacy Excel/manual importer remains
+        # available in its dedicated tab, but the main Cash & Remittance
+        # dashboard now reads the four live Karamad tables directly.
+        from app.services.karamad_live_cash_draft_service import KaramadLiveCashDraftService
+        if source != "rahkaran":
+            karamad_live = KaramadLiveCashDraftService().report(start, end, limit=5000, offset=0, branch=branch)
+            karamad_rows = karamad_live.get("movements", [])
+            karamad_transfers_raw = karamad_live.get("company_bank_transfers", [])
+            karamad_petty_raw = karamad_live.get("petty_cash_movements", [])
+        else:
+            karamad_rows, karamad_transfers_raw, karamad_petty_raw = [], [], []
+        karamad_operational = [self._karamad_payload(row) for row in karamad_rows if row.get("classification") == "operational"]
+        karamad_transfers = [self._karamad_payload(row) for row in karamad_transfers_raw]
+        karamad_petty = [self._karamad_payload(row) for row in karamad_petty_raw]
+
+        def total(kind: str) -> int | float:
+            return _number(sum(float(row["amount_rial"] or 0) for row in operational_rows if row["movement_type"] == kind))
+
+        rahkaran_inflow = _number(sum(float(row["amount_rial"] or 0) for row in operational_rows if row["direction"] == "inflow"))
+        rahkaran_outflow = _number(sum(float(row["amount_rial"] or 0) for row in operational_rows if row["direction"] == "outflow"))
+        karamad_inflow = _number(sum(float(row["amount_rial"] or 0) for row in karamad_operational if row["direction"] == "inflow"))
+        karamad_outflow = _number(sum(float(row["amount_rial"] or 0) for row in karamad_operational if row["direction"] == "outflow"))
+        karamad_cash_receipt = _number(sum(float(row["amount_rial"] or 0) for row in karamad_operational if row["movement_type"] == "cash_receipt"))
+        karamad_bank_receipt = _number(sum(float(row["amount_rial"] or 0) for row in karamad_operational if row["movement_type"] == "bank_receipt"))
+        karamad_cash_payment = _number(sum(float(row["amount_rial"] or 0) for row in karamad_operational if row["movement_type"] == "cash_payment"))
+        karamad_bank_payment = _number(sum(float(row["amount_rial"] or 0) for row in karamad_operational if row["movement_type"] == "bank_payment"))
+        inflow = _number(float(rahkaran_inflow) + float(karamad_inflow))
+        outflow = _number(float(rahkaran_outflow) + float(karamad_outflow))
+        merged_operational = sorted(
+            operational_rows + karamad_operational,
+            key=lambda row: (row.get("document_date_jalali") or "", str(row.get("movement_id") or "")),
+            reverse=True,
+        )
+        available_branches = []
+        if source != "rahkaran":
+            try:
+                from app.services.karamad_live_cash_draft_service import KaramadLiveCashDraftService
+                available_branches = KaramadLiveCashDraftService().branches()
+            except Exception:
+                available_branches = []
+        if branch:
+            # A selected branch is a KarAmand scope. Rahkaran has no comparable branch dimension,
+            # so branch statistics and rows intentionally show only that KarAmand branch.
+            operational_rows = []
+            company_transfer_rows = []
+            petty_cash_rows = []
+            merged_operational = sorted(karamad_operational, key=lambda row: (row.get("document_date_jalali") or "", str(row.get("movement_id") or "")), reverse=True)
+            inflow = karamad_inflow
+            outflow = karamad_outflow
+        # Classify the entire filtered population before pagination. Totals and
+        # the daily chart must use the same population as the detail report.
+        all_scoped = merged_operational + company_transfer_rows + karamad_transfers + petty_cash_rows + karamad_petty
+        bank_paid = [r for r in all_scoped if r["movement_type"] == "bank_payment"]
+        bank_paid_total = _number(sum(float(r["amount_rial"] or 0) for r in bank_paid))
+        bank_paid_internal = _number(sum(float(r["amount_rial"] or 0) for r in bank_paid if r["classification"] == "company_bank_transfer"))
+        daily_totals = {}
+        for row in merged_operational:
+            key = row.get("document_date_jalali") or row.get("document_date") or ""
+            item = daily_totals.setdefault(key, {"date": row.get("document_date"), "date_jalali": row.get("document_date_jalali"), "inflow_rial": 0, "outflow_rial": 0})
+            item[row["direction"] + "_rial"] += float(row["amount_rial"] or 0)
+        operational_count = len(merged_operational)
+        page = merged_operational[offset:offset + limit]
         return {
             "status": "success", "report_type": "cash_bank_movements",
-            "filters": {"period": period, "approval_status": approval_status, "date_from": start.isoformat(), "date_to": end.isoformat()},
-            "pagination": {"limit": limit, "offset": offset, "returned_count": len(rows), "total_count": int(summary.get("TotalCount") or 0), "has_more": offset + len(rows) < int(summary.get("TotalCount") or 0)},
+            "filters": {"period": period, "approval_status": approval_status, "date_from": start.isoformat(), "date_to": end.isoformat(), "branch": branch, "source": source},
+            "pagination": {"limit": limit, "offset": offset, "returned_count": len(page), "total_count": operational_count, "has_more": offset + len(page) < operational_count},
             "summary": {"inflow_rial": inflow, "outflow_rial": outflow, "net_rial": inflow - outflow,
-                        "cash_receipt_rial": _number(summary.get("CashReceiptRial")), "bank_receipt_rial": _number(summary.get("BankReceiptRial")),
-                        "cash_payment_rial": _number(summary.get("CashPaymentRial")), "bank_payment_rial": _number(summary.get("BankPaymentRial"))},
-            "movements": [{
-                "movement_type": r["MovementType"], "direction": r["Direction"], "channel": r["Channel"],
-                "movement_id": r["MovementID"], "document_id": r["DocumentID"], "document_number": r["DocumentNumber"],
-                "document_date": _iso(r["DocumentDate"]), "document_date_jalali": _jalali(r["DocumentDate"]), "approve_state": r["ApproveState"],
-                "amount_rial": _number(r["AmountRial"]), "counterpart_ref": r["CounterPartRef"], "counterpart_code": r["CounterPartCode"],
-                "counterpart_name": r["CounterPartName"], "cash_flow_factor_ref": r["CashFlowFactorRef"], "bank_account_ref": r["BankAccountRef"],
-                "bank_account_number": r["BankAccountNumber"], "bank_account_iban": r["BankAccountIBAN"], "cash_ref": r["CashRef"], "description": r["Description"],
-            } for r in rows],
-            "daily": [{"date": _iso(r["MovementDate"]), "date_jalali": _jalali(r["MovementDate"]), "inflow_rial": _number(r["InflowRial"]), "outflow_rial": _number(r["OutflowRial"]), "net_rial": _number(r["InflowRial"]) - _number(r["OutflowRial"])} for r in daily],
-            "accounting_rules": ["Only Receipt/Payment child cash and deposit rows are counted.", "Cheque rows are excluded.", "Internal transfers are excluded from company net cash flow."],
+                        "cash_receipt_rial": _number(float(total("cash_receipt")) + float(karamad_cash_receipt)),
+                        "bank_receipt_rial": _number(float(total("bank_receipt")) + float(karamad_bank_receipt)),
+                        "cash_payment_rial": _number(float(total("cash_payment")) + float(karamad_cash_payment)),
+                        "bank_payment_rial": _number(float(total("bank_payment")) + float(karamad_bank_payment)),
+                        "bank_payment_total_rial": bank_paid_total,
+                        "bank_payment_internal_transfer_rial": bank_paid_internal,
+                        "bank_payment_excluding_transfer_rial": bank_paid_total - bank_paid_internal,
+                        "bank_payment_total_count": len(bank_paid),
+                        "bank_payment_excluding_transfer_count": sum(r["classification"] != "company_bank_transfer" for r in bank_paid),
+                        "rahkaran_inflow_rial": rahkaran_inflow, "rahkaran_outflow_rial": rahkaran_outflow,
+                        "karamad_inflow_rial": karamad_inflow, "karamad_outflow_rial": karamad_outflow,
+                        "karamad_operational_count": len(karamad_operational),
+                        "selected_branch": branch, "available_branches": available_branches,
+                        "company_bank_transfer_rial": _number(sum(float(row["amount_rial"] or 0) for row in company_transfer_rows + karamad_transfers)),
+                        "petty_cash_rial": _number(sum(float(row["amount_rial"] or 0) for row in petty_cash_rows + karamad_petty)),
+                        "source_note": "همهٔ جمع‌ها روی سبد یکپارچه محاسبه شده‌اند؛ ستون منبع فقط منشأ هر ردیف را نشان می‌دهد. انتقال داخلی و تنخواه حذف شده‌اند."},
+            "movements": page,
+            "company_bank_transfers": company_transfer_rows + karamad_transfers,
+            "petty_cash_movements": petty_cash_rows + karamad_petty,
+            "daily": [{**r, "net_rial": r["inflow_rial"] - r["outflow_rial"]} for _, r in sorted(daily_totals.items())],
+            "accounting_rules": ["Only operational Receipt/Payment child cash and deposit rows are counted.", "KarAmand rows are historical executed movements and are deduplicated by direction + transfer id before being added to actual totals.", "Cheque forecast rows are excluded; the 75% collection policy applies only to open future cheques with a due date.", "Rows whose description contains بابت انتقال or another company-transfer marker are moved to bank-to-bank transfers; rows marked تنخواه are moved to petty cash and both have zero net company effect.", "SQL Server remains read-only; KarAmand state is stored locally."],
+        }
+
+    def _movement_payload(self, row: Any) -> dict[str, Any]:
+        description = row["Description"] or ""
+        counterpart_name = row["CounterPartName"] or ""
+        source_text = f"{description} {counterpart_name}".casefold()
+        has_transfer_purpose = bool(re.search(r"بابت\s*[:\-–—]?\s*انتقال", source_text))
+        if any(marker.casefold() in source_text for marker in self.PETTY_CASH_MARKERS):
+            classification, reason = "petty_cash", "متن شرح یا طرف حساب شامل «تنخواه» است"
+        elif has_transfer_purpose or any(marker.casefold() in source_text for marker in self.COMPANY_TRANSFER_MARKERS):
+            classification, reason = "company_bank_transfer", "متن شرح یا طرف حساب شامل نشانهٔ انتقال بانک‌به‌بانک است"
+        else:
+            classification, reason = "operational", "پرداخت یا دریافت عملیاتی"
+        return {
+            "movement_type": row["MovementType"], "direction": row["Direction"], "channel": row["Channel"],
+            "movement_id": row["MovementID"], "document_id": row["DocumentID"], "document_number": row["DocumentNumber"],
+            "document_date": _iso(row["DocumentDate"]), "document_date_jalali": _jalali(row["DocumentDate"]), "approve_state": row["ApproveState"],
+            "amount_rial": _number(row["AmountRial"]), "counterpart_ref": row["CounterPartRef"], "counterpart_code": row["CounterPartCode"],
+            "counterpart_name": counterpart_name, "cash_flow_factor_ref": row["CashFlowFactorRef"], "bank_account_ref": row["BankAccountRef"],
+            "bank_account_number": row["BankAccountNumber"], "bank_account_iban": row["BankAccountIBAN"], "cash_ref": row["CashRef"], "description": description,
+            "classification": classification, "classification_reason": reason, "source_system": "rahkaran",
+        }
+
+    @staticmethod
+    def _karamad_payload(row: dict[str, Any]) -> dict[str, Any]:
+        direction = row.get("direction") or "outflow"
+        # Live SQL rows already carry canonical movement fields. Legacy Excel
+        # rows are normalized here as a compatibility fallback.
+        movement_type = row.get("movement_type") or ("bank_receipt" if direction == "inflow" else "bank_payment")
+        movement_id = row.get("movement_id") or f"karamad:{direction}:{row.get('transfer_id')}"
+        document_date = row.get("document_date")
+        date_jalali = row.get("document_date_jalali") or row.get("transfer_date_jalali") or row.get("registration_date_jalali")
+        return {
+            "movement_type": movement_type,
+            "direction": direction, "channel": row.get("channel") or ("cash" if movement_type.startswith("cash_") else "bank"),
+            "movement_id": movement_id,
+            "document_id": row.get("document_id"),
+            "document_number": row.get("document_number") or row.get("transfer_number"),
+            "document_date": document_date, "document_date_jalali": date_jalali,
+            "approve_state": row.get("confirmed", 1), "amount_rial": _number(row.get("amount_rial")), "counterpart_ref": row.get("counterpart_ref"),
+            "counterpart_code": row.get("counterpart_code"), "counterpart_name": row.get("counterpart_name") or row.get("level4_name") or row.get("level5_name") or row.get("level6_name"),
+            "cash_flow_factor_ref": row.get("cash_flow_factor_ref") or row.get("factor_ref"), "bank_account_ref": row.get("bank_account_ref"),
+            "bank_account_number": row.get("bank_account_number") or row.get("bank"),
+            "bank_account_iban": row.get("bank_account_iban"), "cash_ref": row.get("cash_ref"),
+            "description": row.get("description") or row.get("purpose"),
+            "classification": row.get("classification"), "classification_reason": row.get("classification_reason"),
+            "source_system": "karamad", "source_label": "کارآمد · Live SQL",
+            "source_kind": row.get("source_kind"), "source_kinds": row.get("source_kinds"),
+            "branch": row.get("branch"), "branch_name": row.get("branch_name") or row.get("branch"), "bank_name": row.get("bank_name") or row.get("bank"),
+            "registration_date_jalali": row.get("registration_date_jalali") or date_jalali,
+            "transfer_date_jalali": row.get("transfer_date_jalali") or date_jalali,
+            "transfer_id": row.get("transfer_id") or row.get("movement_id"), "number": row.get("transfer_number") or row.get("document_number"),
+            "date_jalali": date_jalali,
+            "payment_amount_rial": _number(row.get("amount_rial")) if direction == "outflow" else 0,
+            "receipt_amount_rial": _number(row.get("amount_rial")) if direction == "inflow" else 0,
+            "company_net_effect_rial": 0 if row.get("classification") != "operational" else None,
         }
 
     def internal_transfers(self, period: Period = "month", date_from: date | None = None, date_to: date | None = None, limit: int = 500, offset: int = 0) -> dict[str, Any]:
@@ -226,4 +349,19 @@ class CashBankMovementService:
         return {"status": "success", "report_type": "internal_transfers", "filters": {"period": period, "date_from": start.isoformat(), "date_to": end.isoformat()},
                 "pagination": {"limit": limit, "offset": offset, "returned_count": len(rows), "total_count": int(summary["TotalCount"] or 0), "has_more": offset + len(rows) < int(summary["TotalCount"] or 0)},
                 "summary": {"transfer_amount_rial": _number(summary["TotalRial"]), "company_net_effect_rial": 0},
-                "transfers": [{"transfer_type": r["TransferType"], "transfer_id": r["TransferID"], "number": r["Number"], "date": _iso(r["Date"]), "date_jalali": _jalali(r["Date"]), "state": r["State"], "description": r["Description"], "source_bank_account_ref": r["SourceBankAccountRef"], "destination_bank_account_ref": r["DestinationBankAccountRef"], "source_cash_ref": r["SourceCashRef"], "destination_cash_ref": r["DestinationCashRef"], "destination_petty_cash_ref": r["DestinationPettyCashRef"], "payment_amount_rial": _number(r["PaymentAmountRial"]), "receipt_amount_rial": _number(r["ReceiptAmountRial"]), "company_net_effect_rial": 0} for r in rows]}
+                "transfers": [{"transfer_type": r["TransferType"], "transfer_id": r["TransferID"], "number": r["Number"], "date": _iso(r["Date"]), "date_jalali": _jalali(r["Date"]), "state": r["State"], "description": r["Description"], "source_bank_account_ref": r["SourceBankAccountRef"], "destination_bank_account_ref": r["DestinationBankAccountRef"], "source_cash_ref": r["SourceCashRef"], "destination_cash_ref": r["DestinationCashRef"], "destination_petty_cash_ref": r["DestinationPettyCashRef"], "payment_amount_rial": _number(r["PaymentAmountRial"]), "receipt_amount_rial": _number(r["ReceiptAmountRial"]), "company_net_effect_rial": 0, "source_system": "rahkaran", "source_label": "راهکاران"} for r in rows]}
+
+    def petty_cash_transfers(self, period: Period = "month", date_from: date | None = None, date_to: date | None = None, limit: int = 500, offset: int = 0) -> dict[str, Any]:
+        """Transfers funded to petty cash. They are internal and never Cash Flow."""
+        report = self.internal_transfers(period, date_from, date_to, limit=5000, offset=0)
+        all_rows = [x for x in report.get("transfers", []) if x.get("destination_petty_cash_ref")]
+        page = all_rows[offset:offset + limit]
+        total = sum(float(x.get("payment_amount_rial") or 0) for x in all_rows)
+        return {
+            "status": "success", "report_type": "petty_cash_transfers",
+            "filters": report.get("filters"),
+            "pagination": {"limit": limit, "offset": offset, "returned_count": len(page), "total_count": len(all_rows), "has_more": offset + len(page) < len(all_rows)},
+            "summary": {"funded_amount_rial": total, "cashflow_included": False, "company_net_effect_rial": 0},
+            "transfers": page,
+            "rule": "تنخواه انتقال داخلی است؛ نه دریافت و نه پرداخت عملیاتی و در Cash Flow وارد نمی‌شود.",
+        }

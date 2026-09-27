@@ -1,0 +1,111 @@
+/* V36: افزایش ملایم خوانایی بدون تغییر چیدمان و ظاهر V32 */
+body,
+button,
+input,
+select,
+textarea {
+  font-size: 15px;
+}
+
+.fd-content > header h1 {
+  font-size: 29px;
+}
+
+.fd-heading h2,
+.profile-section-title h3,
+.reliability-head h3 {
+  font-size: 20px;
+}
+
+.fd-heading p,
+.profile-title p,
+.reliability-head p,
+.manager-panel > p,
+.section-agent > p {
+  font-size: 15px;
+}
+
+.fd nav button,
+.fd-list strong,
+.fd-list small,
+.decision-list li,
+.alert-enterprise p,
+.timeline-list p,
+.case-grid p,
+.rep-grid p {
+  font-size: 14px;
+}
+
+.fd-kpi small,
+.fd-kpi em,
+.agent-grid small,
+.agent-grid em,
+.section-agent small,
+.profile-section-title p,
+.profile-note,
+.reliability-note {
+  font-size: 12px;
+}
+
+.fd-kpi b {
+  font-size: 23px;
+}
+
+.fd-table table,
+.profile-cheque-table table,
+.cheque-detail-table table,
+.cashflow-table table,
+.excel-table table {
+  font-size: 13px;
+}
+
+.fd-table th,
+.fd-table td,
+.profile-cheque-table th,
+.profile-cheque-table td,
+.cheque-detail-table th,
+.cheque-detail-table td,
+.cashflow-table th,
+.cashflow-table td,
+.excel-table th,
+.excel-table td {
+  font-size: 13px;
+}
+
+.agent-visual-card > header b,
+.manager-chart-grid header b,
+.decision-forecast b,
+.scenario-strip span,
+.manager-scenarios span {
+  font-size: 14px;
+}
+
+.agent-visual-card > header small,
+.manager-chart-grid header small,
+.agent-hbar header span,
+.agent-hbar header b,
+.agent-donut-layout p,
+.agent-empty-chart {
+  font-size: 12px !important;
+}
+
+.decision-actions article p {
+  font-size: 15px !important;
+}
+
+.decision-actions article footer,
+.management-status,
+.fd-badge,
+.profile-due {
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .fd-content > header h1 {
+    font-size: 25px;
+  }
+
+  .fd-kpi b {
+    font-size: 20px;
+  }
+}

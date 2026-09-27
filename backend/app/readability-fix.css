@@ -1,0 +1,15 @@
+:root{--font-fa:"B Nazanin","Vazirmatn","IRANSansX","Segoe UI",Tahoma,Arial,sans-serif}
+html,body,.fd,button,input,select,textarea{font-family:var(--font-fa)!important}
+
+/* کارت‌های اقدام داخل پنل تیره Agent باید هویت روشن و مستقل داشته باشند. */
+.decision-actions article,.decision-actions article *{text-shadow:none}
+.decision-actions article{color:#243f4d!important;background:#fff!important;border-color:#dce7eb!important}
+.decision-actions article header{margin:0!important;align-items:flex-start}
+.decision-actions article header b{color:#173847!important;font-size:14px!important;line-height:1.75;font-weight:900}
+.decision-actions article p{color:#526b77!important;line-height:1.9!important}
+.decision-actions article footer,.decision-actions article footer span{color:#667d88!important;line-height:1.7}
+.decision-actions article footer span:first-child{color:#087b65!important;font-weight:700}
+.decision-actions article:hover{border-color:#9fcac5!important;box-shadow:0 10px 28px #17384712;transform:translateY(-1px)}
+.decision-actions article header em{color:#8b5a00!important}
+.decision-actions article header em.high{color:#a85f00!important}
+.decision-actions article header em.critical{color:#b4232c!important}

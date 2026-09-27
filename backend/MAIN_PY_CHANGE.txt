@@ -1,7 +1,0 @@
-در app/main.py این import را اضافه کن:
-
-from app.api.v1.finance_dashboard import router as finance_dashboard_router
-
-و کنار بقیه include_router ها اضافه کن:
-
-app.include_router(finance_dashboard_router, prefix="/api/v1")

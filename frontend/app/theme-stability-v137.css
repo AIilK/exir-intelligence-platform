@@ -1,0 +1,240 @@
+/* V137 — Global dark-theme consistency pass.
+   Loaded last so legacy light hover rules cannot flash white. */
+:root{
+  --v137-bg:#07131f;
+  --v137-surface:#0d1d2a;
+  --v137-surface-2:#112534;
+  --v137-surface-3:#162d3d;
+  --v137-border:#294453;
+  --v137-text:#e7f3f3;
+  --v137-muted:#91a8b2;
+  --v137-teal:#2dd4bf;
+}
+html,body{background:var(--v137-bg);}
+.fd.enterprise{background:radial-gradient(circle at 82% 2%,#123e4666,transparent 25%),linear-gradient(160deg,#07131f,#091925 52%,#07131f)!important;color:var(--v137-text);}
+
+/* Surfaces: old pages/components must remain in the same dark family. */
+.fd.enterprise .panel,
+.fd.enterprise .fd-panel,
+.fd.enterprise .fd-kpi,
+.fd.enterprise .section-agent,
+.fd.enterprise .agent-grid>article,
+.fd.enterprise .table,
+.fd.enterprise .profile-cheques,
+.fd.enterprise .profile-bottom>div:first-child,
+.fd.enterprise .customer-profile-page .profile-title,
+.fd.enterprise .customer-profile-page .unified-customer-activity,
+.fd.enterprise .sql-audit,
+.fd.enterprise .audit-identity>div,
+.fd.enterprise .audit-status-grid article,
+.fd.enterprise .cheque-flow-card,
+.fd.enterprise .cheque-back,
+.fd.enterprise .agent-visual-card,
+.fd.enterprise .decision-actions article,
+.fd.enterprise .decision-forecast>div,
+.fd.enterprise .scenario-strip>div,
+.fd.enterprise .modal,
+.fd.enterprise .modal-grid>div{
+  background:linear-gradient(145deg,var(--v137-surface-2),var(--v137-surface))!important;
+  border-color:var(--v137-border)!important;
+  color:var(--v137-text)!important;
+}
+
+/* Interactive hover/focus: never turn white. */
+.fd.enterprise button:not(.run):hover,
+.fd.enterprise button:not(.run):focus-visible,
+.fd.enterprise [role="button"]:hover,
+.fd.enterprise .drillable:hover,
+.fd.enterprise .fd-kpi:hover,
+.fd.enterprise .fd-panel:hover,
+.fd.enterprise .section-agent:hover,
+.fd.enterprise .agent-grid>article:hover,
+.fd.enterprise .cheque-flow-card:hover,
+.fd.enterprise .management-due-card:hover,
+.fd.enterprise .future-cashflow-card:hover,
+.fd.enterprise .decision-actions article:hover,
+.fd.enterprise .audit-status-grid>article:hover{
+  background:linear-gradient(145deg,#193344,#122634)!important;
+  border-color:#3b6c73!important;
+  color:var(--v137-text)!important;
+  box-shadow:0 16px 36px #0005,0 0 0 1px #2dd4bf12!important;
+}
+.fd.enterprise button:focus-visible,.fd.enterprise [role="button"]:focus-visible{outline:2px solid #2dd4bf66;outline-offset:2px;}
+
+/* Tables: legacy white row/cell hover was the main visible flash. */
+.fd.enterprise table th{background:#0b1a27!important;color:#91a8b2!important;border-color:#263e4c!important;}
+.fd.enterprise table td{background:#0f202e!important;color:#dce9ea!important;border-color:#263e4c!important;}
+.fd.enterprise table tbody tr:hover,
+.fd.enterprise table tbody tr:hover td,
+.fd.enterprise .cash-table tbody tr:hover td,
+.fd.enterprise .unified-customer-directory tbody tr:hover{
+  background:#183142!important;color:#f1fbfa!important;
+}
+.fd.enterprise table tbody tr.critical td,.fd.enterprise table tbody tr.overdue-row td{background:#321d27!important;}
+.fd.enterprise table tbody tr.danger td,.fd.enterprise table tbody tr.due-soon-row td,.fd.enterprise table tbody tr.pressure td{background:#302817!important;}
+.fd.enterprise table tbody tr.critical:hover td,.fd.enterprise table tbody tr.overdue-row:hover td{background:#432330!important;}
+.fd.enterprise table tbody tr.danger:hover td,.fd.enterprise table tbody tr.due-soon-row:hover td,.fd.enterprise table tbody tr.pressure:hover td{background:#40331b!important;}
+
+/* Inputs / filters / selects stay dark on hover, focus and open-state. */
+.fd.enterprise input,.fd.enterprise select,.fd.enterprise textarea{
+  background:#0b1b28!important;color:var(--v137-text)!important;border-color:#2a4655!important;color-scheme:dark;
+}
+.fd.enterprise input:hover,.fd.enterprise select:hover,.fd.enterprise textarea:hover,
+.fd.enterprise input:focus,.fd.enterprise select:focus,.fd.enterprise textarea:focus{
+  background:#102737!important;border-color:#2dd4bf!important;outline:none!important;box-shadow:0 0 0 3px #2dd4bf14!important;
+}
+.fd.enterprise option{background:#0d1d2a;color:#e7f3f3;}
+.fd.enterprise input::placeholder,.fd.enterprise textarea::placeholder{color:#6f8994;}
+
+/* Keep secondary controls dark; active controls retain teal emphasis. */
+.fd.enterprise .cheque-period-filter>button,
+.fd.enterprise .cash-bank-tabs button,
+.fd.enterprise .cash-bank-toolbar button,
+.fd.enterprise .cheque-back,
+.fd.enterprise .profile-close,
+.fd.enterprise .close{
+  background:#112634!important;color:#b9ccd1!important;border-color:#2b4958!important;
+}
+.fd.enterprise .cheque-period-filter>button:hover,
+.fd.enterprise .cash-bank-tabs button:hover,
+.fd.enterprise .cash-bank-toolbar button:hover,
+.fd.enterprise .cheque-back:hover,
+.fd.enterprise .profile-close:hover,
+.fd.enterprise .close:hover{background:#193747!important;color:#e9fffb!important;border-color:#2dd4bf!important;}
+.fd.enterprise .cheque-period-filter>button.active,
+.fd.enterprise .cash-bank-tabs button.active{background:linear-gradient(135deg,#4de7d2,#20cbb7)!important;color:#062622!important;border-color:#68f6e2!important;}
+
+/* Light helper blocks from older modules. */
+.fd.enterprise .flow-stats>span,
+.fd.enterprise .forecast-values div,
+.fd.enterprise .collection-progress,
+.fd.enterprise .profile-section-title,
+.fd.enterprise .agent-empty-chart,
+.fd.enterprise .profile-note{
+  background:#102331!important;border-color:#294453!important;color:#d8e7e9!important;
+}
+.fd.enterprise .profile-section-title p,
+.fd.enterprise .profile-title p,
+.fd.enterprise .cheque-flow-card header p,
+.fd.enterprise .flow-stats small,
+.fd.enterprise .agent-visual-card header small{color:var(--v137-muted)!important;}
+
+/* Preserve status semantics without white cards. */
+.fd.enterprise .profile-due.normal{background:#0b443c!important;color:#79f3df!important;}
+.fd.enterprise .profile-due.soon{background:#493815!important;color:#ffd986!important;}
+.fd.enterprise .profile-due.late{background:#4b202b!important;color:#ff9baa!important;}
+.fd.enterprise .profile-due.unknown{background:#263845!important;color:#b4c6cd!important;}
+
+@media (prefers-reduced-motion:reduce){.fd.enterprise *{scroll-behavior:auto!important;}.fd.enterprise .fd-kpi:hover,.fd.enterprise .cheque-flow-card:hover,.fd.enterprise .future-cashflow-card:hover{transform:none!important;}}
+
+/* V138 - Company payment orders */
+.company-payments-page{display:grid;gap:18px}.company-payment-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.company-payment-categories{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.company-payment-categories button{background:#102536!important;border:1px solid #28495b!important;color:#e8f4f7!important;border-radius:14px;padding:14px;text-align:right;display:grid;gap:5px}.company-payment-categories button:hover,.company-payment-categories button.active{background:#173447!important;border-color:#3a7180!important;color:#fff!important;transform:translateY(-1px)}.company-payment-categories button small{color:#9fc1ca}.company-payment-filters{display:grid;grid-template-columns:2fr repeat(3,1fr);gap:10px}.company-payment-filter-summary{display:flex;gap:18px;align-items:center;color:#b9d1d8}.payment-category-chip{display:inline-flex;padding:4px 8px;border-radius:999px;background:#183747;color:#d9f1f4;border:1px solid #315b69;white-space:nowrap}.payment-description{min-width:320px;max-width:520px;white-space:normal}.company-payment-note{color:#9fbac3;font-size:.9rem}@media(max-width:1000px){.company-payment-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.company-payment-filters{grid-template-columns:1fr 1fr}}@media(max-width:650px){.company-payment-kpis,.company-payment-filters{grid-template-columns:1fr}}
+
+/* V141 — larger payment-order controls and fully reactive filtered dashboard */
+.company-payments-page{gap:22px!important}
+.company-payments-page .section-head h2{font-size:1.65rem!important}
+.company-payments-page .section-head p{font-size:1rem!important;line-height:1.9!important}
+.company-payment-kpis{gap:16px!important}
+.company-payment-kpis .kpi,.company-payment-kpis .kpi-card{min-height:126px!important;padding:18px!important}
+.company-payment-categories{grid-template-columns:repeat(auto-fit,minmax(195px,1fr))!important;gap:13px!important}
+.company-payment-categories button{min-height:105px!important;padding:17px 18px!important;border-radius:16px!important;font-size:1rem!important}
+.company-payment-categories button span{font-size:1rem!important;font-weight:700!important}
+.company-payment-categories button b{font-size:1.35rem!important}
+.company-payment-categories button small{font-size:.9rem!important}
+.company-payment-filters{grid-template-columns:minmax(280px,2fr) repeat(6,minmax(145px,1fr))!important;gap:12px!important}
+.company-payment-filters input,.company-payment-filters select{min-height:50px!important;padding:10px 13px!important;font-size:1rem!important;border-radius:12px!important}
+.company-payment-filter-summary{min-height:52px!important;padding:12px 16px!important;border:1px solid #28495b!important;background:#102536!important;border-radius:14px!important;font-size:1rem!important}
+.company-payment-filter-summary b{font-size:1.12rem!important;color:#eefbff!important}
+.company-payments-page table th{font-size:.95rem!important;padding:14px 12px!important}
+.company-payments-page table td{font-size:.95rem!important;padding:13px 12px!important}
+@media(max-width:1450px){.company-payment-filters{grid-template-columns:repeat(4,minmax(160px,1fr))!important}.company-payment-filters input:first-child{grid-column:span 2}}
+@media(max-width:850px){.company-payment-filters{grid-template-columns:1fr 1fr!important}.company-payment-filters input:first-child{grid-column:1/-1}}
+@media(max-width:560px){.company-payment-filters{grid-template-columns:1fr!important}.company-payment-filters input:first-child{grid-column:auto}}
+
+/* V142 — Company payment page fixed layout: stable desktop composition, no oversized controls */
+.company-payments-page{width:100%!important;max-width:100%!important;min-width:0!important;overflow:hidden!important;gap:18px!important}
+.company-payments-page .section-head{min-width:0!important}
+.company-payments-page .section-head h2{font-size:1.42rem!important}
+.company-payments-page .section-head p{font-size:.94rem!important;line-height:1.75!important}
+.company-payment-kpis{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:12px!important;min-width:0!important}
+.company-payment-kpis>*,.company-payment-kpis .kpi,.company-payment-kpis .kpi-card{min-width:0!important;min-height:unset!important;padding:14px!important}
+.company-payment-categories{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:10px!important;min-width:0!important}
+.company-payment-categories button{min-width:0!important;min-height:88px!important;padding:13px 14px!important;font-size:.94rem!important;overflow:hidden!important}
+.company-payment-categories button span,.company-payment-categories button small{overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+.company-payment-categories button span{font-size:.94rem!important}.company-payment-categories button b{font-size:1.15rem!important}.company-payment-categories button small{font-size:.82rem!important}
+.company-payment-filters{display:grid!important;grid-template-columns:minmax(240px,2fr) repeat(3,minmax(135px,1fr))!important;gap:10px!important;align-items:stretch!important;min-width:0!important}
+.company-payment-filters input,.company-payment-filters select{width:100%!important;min-width:0!important;min-height:44px!important;height:44px!important;padding:8px 11px!important;font-size:.92rem!important;border-radius:10px!important;box-sizing:border-box!important}
+.company-payment-filter-summary{min-height:44px!important;padding:10px 14px!important;font-size:.94rem!important;flex-wrap:wrap!important}
+.company-payment-filter-summary b{font-size:1rem!important}
+.company-payments-page .table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;overflow-x:auto!important;overflow-y:hidden!important;-webkit-overflow-scrolling:touch!important}
+.company-payments-page table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.company-payments-page table th{font-size:.88rem!important;padding:11px 10px!important;white-space:nowrap!important}
+.company-payments-page table td{font-size:.88rem!important;padding:10px!important;white-space:nowrap!important}
+.company-payments-page table td.payment-description{min-width:280px!important;max-width:420px!important;white-space:normal!important;line-height:1.7!important}
+@media(max-width:1200px){.company-payment-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}.company-payment-categories{grid-template-columns:repeat(3,minmax(0,1fr))!important}.company-payment-filters{grid-template-columns:repeat(3,minmax(0,1fr))!important}.company-payment-filters input:first-child{grid-column:span 2!important}}
+@media(max-width:800px){.company-payment-categories{grid-template-columns:repeat(2,minmax(0,1fr))!important}.company-payment-filters{grid-template-columns:1fr 1fr!important}.company-payment-filters input:first-child{grid-column:1/-1!important}}
+@media(max-width:560px){.company-payment-kpis,.company-payment-categories,.company-payment-filters{grid-template-columns:1fr!important}.company-payment-filters input:first-child{grid-column:auto!important}}
+
+/* V143 — compact company payment page */
+.company-payments-page{gap:12px!important}
+.company-payments-page .section-head h2{font-size:1.25rem!important}
+.company-payments-page .section-head p{font-size:.86rem!important;line-height:1.55!important}
+.company-payment-kpis{grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:8px!important}
+.company-payment-kpis>*,.company-payment-kpis .kpi,.company-payment-kpis .kpi-card{padding:10px 11px!important;min-height:72px!important}
+.company-payment-kpis .kpi-value,.company-payment-kpis strong,.company-payment-kpis b{font-size:1rem!important}
+.company-payment-kpis .kpi-label,.company-payment-kpis small,.company-payment-kpis span{font-size:.78rem!important}
+.company-payment-categories{grid-template-columns:repeat(7,minmax(0,1fr))!important;gap:7px!important}
+.company-payment-categories button{min-height:66px!important;padding:8px 9px!important;font-size:.82rem!important;border-radius:10px!important}
+.company-payment-categories button span{font-size:.8rem!important}.company-payment-categories button b{font-size:.98rem!important}.company-payment-categories button small{font-size:.72rem!important}
+.company-payment-filters{grid-template-columns:minmax(210px,2fr) repeat(6,minmax(110px,1fr))!important;gap:7px!important}
+.company-payment-filters input,.company-payment-filters select{min-height:36px!important;height:36px!important;padding:5px 8px!important;font-size:.82rem!important;border-radius:8px!important}
+.company-payment-filter-summary{min-height:36px!important;padding:7px 10px!important;font-size:.84rem!important;border-radius:10px!important}
+.company-payment-filter-summary b{font-size:.9rem!important}
+.company-payments-page table th{font-size:.78rem!important;padding:8px 7px!important}
+.company-payments-page table td{font-size:.8rem!important;padding:7px!important}
+.company-payments-page table td.payment-description{min-width:220px!important;max-width:340px!important;line-height:1.5!important}
+@media(max-width:1450px){.company-payment-kpis{grid-template-columns:repeat(3,minmax(0,1fr))!important}.company-payment-categories{grid-template-columns:repeat(4,minmax(0,1fr))!important}.company-payment-filters{grid-template-columns:repeat(4,minmax(0,1fr))!important}.company-payment-filters input:first-child{grid-column:span 2!important}}
+@media(max-width:900px){.company-payment-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important}.company-payment-categories{grid-template-columns:repeat(2,minmax(0,1fr))!important}.company-payment-filters{grid-template-columns:repeat(2,minmax(0,1fr))!important}.company-payment-filters input:first-child{grid-column:1/-1!important}}
+@media(max-width:560px){.company-payment-kpis,.company-payment-categories,.company-payment-filters{grid-template-columns:1fr!important}.company-payment-filters input:first-child{grid-column:auto!important}}
+
+/* V145 — B2B customer remittances */
+.fd.enterprise .b2b-page { display:grid; gap:14px; min-width:0; overflow:hidden; }
+.fd.enterprise .b2b-kpis { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.fd.enterprise .b2b-toolbar { display:grid; grid-template-columns:minmax(240px,2fr) minmax(190px,1fr) minmax(160px,.8fr) minmax(160px,.8fr); gap:10px; align-items:end; }
+.fd.enterprise .b2b-toolbar input,.fd.enterprise .b2b-toolbar select { width:100%; min-height:38px; }
+.fd.enterprise .b2b-toolbar label { display:grid; gap:5px; font-size:.78rem; opacity:.9; }
+.fd.enterprise .b2b-table-wrap { width:100%; overflow:auto; border:1px solid rgba(148,163,184,.14); border-radius:14px; }
+.fd.enterprise .b2b-table-wrap table { width:100%; min-width:1180px; border-collapse:collapse; }
+.fd.enterprise .b2b-table-wrap th,.fd.enterprise .b2b-table-wrap td { padding:9px 10px; text-align:right; vertical-align:top; white-space:nowrap; }
+.fd.enterprise .b2b-table-wrap td small { display:block; opacity:.65; margin-top:3px; }
+.fd.enterprise .b2b-table-wrap .b2b-desc { white-space:normal; min-width:280px; max-width:420px; line-height:1.7; }
+.fd.enterprise .b2b-table-wrap tr.non-b2b { opacity:.58; }
+.fd.enterprise .b2b-category { display:inline-block; padding:4px 8px; border-radius:999px; background:rgba(45,212,191,.10); border:1px solid rgba(45,212,191,.18); font-size:.76rem; }
+.fd.enterprise .customer-b2b-detail { margin-top:16px; padding:16px; border:1px solid rgba(45,212,191,.15); border-radius:16px; background:rgba(15,23,42,.34); display:grid; gap:12px; }
+@media(max-width:1100px){.fd.enterprise .b2b-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.fd.enterprise .b2b-toolbar{grid-template-columns:1fr 1fr}}
+@media(max-width:650px){.fd.enterprise .b2b-kpis,.fd.enterprise .b2b-toolbar{grid-template-columns:1fr}}
+
+/* V147 — customer collection position */
+.customer-collection-position{margin:18px 0;padding:16px;border:1px solid rgba(91,219,199,.16);border-radius:18px;background:rgba(8,22,36,.52)}
+.collection-position-kpis{margin-top:12px}
+.collection-position-note{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.035);font-size:12px}
+.collection-position-note span{opacity:.72}
+@media(max-width:760px){.collection-position-note{align-items:flex-start;flex-direction:column}}
+
+/* V149 — dedicated customer collections module */
+.customer-collections-module{display:grid;gap:18px;min-width:0}.collection-module-kpis{grid-template-columns:repeat(5,minmax(0,1fr))}.collection-module-toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:14px;border:1px solid var(--line,#233447);border-radius:16px;background:rgba(8,19,31,.72)}.collection-module-toolbar input{min-width:280px;flex:1;max-width:520px;padding:11px 14px;border-radius:11px;border:1px solid var(--line,#2b4055);background:#081522;color:inherit}.collection-module-filters{display:flex;gap:7px;flex-wrap:wrap}.collection-module-filters button{border:1px solid var(--line,#2b4055);background:#0b1b2a;color:inherit;border-radius:999px;padding:8px 12px;cursor:pointer}.collection-module-filters button.active{background:#12364a;border-color:#2c7187}.collection-module-table{min-width:0;overflow:auto;border:1px solid var(--line,#233447);border-radius:16px;background:rgba(8,19,31,.68)}.collection-module-table table{width:100%;border-collapse:collapse;min-width:1120px}.collection-module-table th,.collection-module-table td{padding:13px 12px;text-align:right;border-bottom:1px solid rgba(94,126,151,.16);white-space:nowrap}.collection-module-table th{position:sticky;top:0;background:#0b1927;z-index:1;font-size:12px}.collection-module-table tbody tr{cursor:pointer;transition:.15s ease}.collection-module-table tbody tr:hover{background:rgba(31,91,111,.18)}.collection-module-table td small{display:block;opacity:.62;margin-top:4px;font-size:11px}.collection-account-state{display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(110,130,150,.14)}.collection-account-state.debtor{background:rgba(214,133,51,.16)}.collection-account-state.creditor,.collection-account-state.settled{background:rgba(38,156,136,.16)}@media(max-width:1200px){.collection-module-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.collection-module-kpis{grid-template-columns:1fr}.collection-module-toolbar input{min-width:100%;max-width:none}}
+
+
+/* V150 — focused customer collection detail */
+.customer-collection-detail-simple{display:grid;gap:18px;direction:rtl}
+.collection-detail-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border:1px solid var(--line,#24344a);border-radius:18px;background:rgba(9,20,34,.72)}
+.collection-detail-head h2{margin:0 0 5px;font-size:24px}.collection-detail-head p{margin:0;opacity:.7}
+.collection-detail-hero{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.collection-detail-hero article{padding:20px;border:1px solid var(--line,#24344a);border-radius:18px;background:rgba(10,24,40,.82);display:grid;gap:8px}
+.collection-detail-hero article small,.collection-detail-hero article span{opacity:.72}.collection-detail-hero article b{font-size:26px;line-height:1.25}
+.collection-last-invoice,.collection-open-cheques-simple{padding:18px 20px;border:1px solid var(--line,#24344a);border-radius:18px;background:rgba(9,20,34,.72)}
+.collection-last-invoice h3,.collection-open-cheques-simple h3{margin:0 0 4px}.last-invoice-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}
+.last-invoice-grid span{padding:14px;border-radius:14px;background:rgba(255,255,255,.035);display:grid;gap:6px}.last-invoice-grid small{opacity:.68}
+.invoice-source-pending{margin-top:14px;padding:14px 16px;border:1px dashed rgba(255,255,255,.16);border-radius:14px;opacity:.72}
+.section-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.section-title-row small{opacity:.68}
+@media(max-width:900px){.collection-detail-hero,.last-invoice-grid{grid-template-columns:1fr}.collection-detail-head{align-items:flex-start;flex-direction:column-reverse}}
