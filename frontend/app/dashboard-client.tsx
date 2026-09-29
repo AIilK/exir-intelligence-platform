@@ -3778,10 +3778,19 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
   </>;
 }
 
+// Open cheques far past due with a large amount need a closer look.
+// TEST values — production target is 90 days and 1_000_000_000 rial (100M toman).
+const REVIEW_OVERDUE_DAYS = 10;
+const REVIEW_AMOUNT_RIAL = 500_000_000;
+const needsChequeReview = (x: any) =>
+  x.return_risk?.state === "open"
+  && typeof x.days_until_due === "number" && x.days_until_due < -REVIEW_OVERDUE_DAYS
+  && Number(x.amount_rial || 0) > REVIEW_AMOUNT_RIAL;
+
 function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "branch" | "visitor"; id: number; onBack: () => void; onOpenVisitor?: (id: number) => void; backLabel: string }) {
   const [file, setFile] = useState<any>(null);
   const [error, setError] = useState("");
-  const [riskFilter, setRiskFilter] = useState<"open" | "high" | "medium" | "low" | "returned">("open");
+  const [riskFilter, setRiskFilter] = useState<"open" | "high" | "medium" | "low" | "returned" | "review">("open");
   useEffect(() => {
     let active = true;
     setFile(null); setError("");
@@ -3797,7 +3806,9 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
 
   const cy = file.current_year_label || "سال جاری", py = file.previous_year_label || "سال قبل";
   const s = file.sales_stats || {}, d = file.debt || {}, ch = file.cheques || { rows: [], summary: {} };
-  const chequeRows = (ch.rows || []).filter((x: any) => {
+  const reviewRows = (ch.rows || []).filter(needsChequeReview);
+  const reviewAmount = reviewRows.reduce((sum: number, x: any) => sum + Number(x.amount_rial || 0), 0);
+  const chequeRows = riskFilter === "review" ? reviewRows : (ch.rows || []).filter((x: any) => {
     const r = x.return_risk || {};
     return riskFilter === "open" ? r.state === "open" : riskFilter === "returned" ? r.state === "returned" : r.level === riskFilter;
   });
@@ -3865,13 +3876,19 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
           {([["open", "همه چک‌های باز"], ["high", "احتمال برگشت بالا"], ["medium", "احتمال برگشت متوسط"], ["low", "احتمال برگشت کم"], ["returned", "برگشتی"]] as const).map(([k, l]) => <button key={k} className={riskFilter === k ? "active" : ""} onClick={() => setRiskFilter(k)}>
             <small>{l}</small><b>{fa(ch.summary?.[k]?.count || 0)} فقره</b><span>{money(ch.summary?.[k]?.amount_rial || 0)} تومان</span>
           </button>)}
+          <button className={`cf-review-card${riskFilter === "review" ? " active" : ""}`} onClick={() => setRiskFilter("review")}>
+            <small>نیازمند بررسی بیشتر</small><b>{fa(reviewRows.length)} فقره</b><span>{money(reviewAmount)} تومان</span>
+          </button>
         </section>
+        {reviewRows.length > 0 && <div className="cf-review-alert">
+          ⚠ {fa(reviewRows.length)} فقره چک به مبلغ {money(reviewAmount)} تومان بیش از {fa(REVIEW_OVERDUE_DAYS)} روز از سررسیدشان گذشته و مبلغشان بالای {money(REVIEW_AMOUNT_RIAL)} تومان است؛ نیازمند بررسی بیشتر هستند.
+        </div>}
         {chequeRows.length ? <div className="cf-table"><table>
           <thead><tr><th>شماره چک</th><th>صیاد</th><th>مبلغ</th><th>تاریخ دریافت</th><th>سررسید</th><th>زمان سررسید</th><th>وضعیت</th><th>احتمال برگشت</th><th>بانک</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
-          <tbody>{chequeRows.map((x: any) => <tr key={x.cheque_id}>
+          <tbody>{chequeRows.map((x: any) => <tr key={x.cheque_id} className={needsChequeReview(x) ? "cf-review-row" : undefined}>
             <td><b>{x.cheque_number || "—"}</b></td>
             <td>{x.sayad_number || "—"}</td>
-            <td><b>{money(x.amount_rial || 0)}</b><small>تومان</small></td>
+            <td><b>{money(x.amount_rial || 0)}</b><small>تومان</small>{needsChequeReview(x) && <span className="cf-review-badge">⚠ نیازمند بررسی بیشتر</span>}</td>
             <td>{x.registration_date_jalali || "—"}</td>
             <td>{x.due_date_jalali || "—"}</td>
             <td>{typeof x.days_until_due !== "number" ? "—" : x.days_until_due < 0 ? `${fa(-x.days_until_due)} روز گذشته` : x.days_until_due === 0 ? "امروز" : `${fa(x.days_until_due)} روز مانده`}</td>

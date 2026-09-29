@@ -47,6 +47,12 @@
 .cf-risk.collected{background:rgba(38,156,136,.1);opacity:.8}
 .cf-risk.unresolved{opacity:.7}
 
+/* Cheques >90 days past due and >100M toman */
+.cf-review-alert{padding:12px 16px;border:1px solid rgba(223,98,105,.55);border-radius:14px;background:rgba(223,98,105,.1);color:#ffb3b8;font-size:13px;line-height:1.8}
+.customer-cheque-scope-cards .cf-review-card.active{border-color:#df6269;background:#fdecec;box-shadow:0 0 0 1px #df6269}
+.cf-table tr.cf-review-row td{background:rgba(223,98,105,.08)}
+.cf-review-badge{display:inline-block;margin-top:5px;padding:2px 8px;border-radius:999px;font-size:11px;background:rgba(223,98,105,.18);color:#ff9aa0}
+
 @media(max-width:720px){.cf-section{padding:14px}.cf-kpis{grid-template-columns:1fr 1fr}.cf-kpis b{font-size:18px}}
 
 .cf-clickable tbody tr{cursor:pointer;transition:background .15s ease}
