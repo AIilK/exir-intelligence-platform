@@ -781,6 +781,80 @@ function ChequeHub({
     </>
   );
 }
+// Company-wide picture of received cheques across both systems, shown before choosing a source.
+// Uses the same open portfolio as the detail pages (V117 holding filter), so totals match «همه وضعیت‌ها».
+function ReceivedChequeOverview({ rows }: { rows: TreasuryCheque[] }) {
+  const portfolio = rows.filter((x) => receivedChequeHoldingBucket(x) !== "other");
+  const systems = [["rahkaran", "راهکاران"], ["karamad", "کارآمد"]] as const;
+  const sum = (items: TreasuryCheque[]) => items.reduce((s, x) => s + (x.amount || 0), 0);
+  const bySystem = (items: TreasuryCheque[]) => systems.map(([k]) => items.filter((x) => x.source_system === k));
+  const total = sum(portfolio);
+  const isReturned = (x: TreasuryCheque) => receivedChequeHoldingBucket(x).startsWith("returned");
+
+  const overdue = portfolio.filter((x) => (daysToDue(x) ?? 0) < 0);
+  const today = portfolio.filter((x) => daysToDue(x) === 0);
+  const future = portfolio.filter((x) => (daysToDue(x) ?? -1) > 0);
+  const returned = portfolio.filter(isReturned);
+  const kpis = [
+    { label: "کل سبد چک‌های دریافتی", icon: "▣", tone: "total", items: portfolio },
+    { label: "سررسید گذشته", icon: "!", tone: "danger", items: overdue },
+    { label: "سررسید امروز", icon: "◷", tone: "warn", items: today },
+    { label: "سررسید آینده", icon: "→", tone: "ok", items: future },
+    { label: "برگشتی (نزد صندوق یا مشتری)", icon: "↺", tone: "danger", items: returned },
+  ];
+
+  const dueGroups = [
+    { title: "معوقات", items: overdue },
+    { title: "امروز", items: today },
+    { title: "آینده", items: future },
+    ...(portfolio.some((x) => daysToDue(x) === undefined) ? [{ title: "بدون سررسید", items: portfolio.filter((x) => daysToDue(x) === undefined) }] : []),
+  ];
+
+  const shareValue = (items: TreasuryCheque[]) => total ? (sum(items) / total) * 100 : 0;
+  const share = (items: TreasuryCheque[]) => total ? `${fa(Math.round(shareValue(items) * 10) / 10)}٪` : "—";
+  const splitTable = (groups: { title: string; items: TreasuryCheque[] }[], head: string) => <div className="cf-table"><table>
+    <thead><tr><th>{head}</th>{systems.map(([, l]) => <th key={l}>{l}</th>)}<th>جمع دو سیستم</th><th>سهم از مبلغ کل</th></tr></thead>
+    <tbody>
+      {groups.map((g) => <tr key={g.title}>
+        <td><b>{g.title}</b></td>
+        {bySystem(g.items).map((part, i) => <td key={i}>{fullToman(sum(part))}<small>{fa(part.length)} فقره</small></td>)}
+        <td><b>{fullToman(sum(g.items))}</b><small>{fa(g.items.length)} فقره</small></td>
+        <td>{share(g.items)}</td>
+      </tr>)}
+      <tr>
+        <td><b>جمع کل</b></td>
+        {bySystem(portfolio).map((part, i) => <td key={i}><b>{fullToman(sum(part))}</b><small>{fa(part.length)} فقره</small></td>)}
+        <td><b>{fullToman(total)}</b><small>{fa(portfolio.length)} فقره</small></td>
+        <td>{total ? "۱۰۰٪" : "—"}</td>
+      </tr>
+    </tbody>
+  </table></div>;
+
+  return <>
+    <section className="cf-section">
+      <div className="cf-title"><div><h3>گزارش کلی چک‌های دریافتی شرکت</h3><p>جمع دو سیستم راهکاران و کارآمد؛ همان سبد باز صفحات جزئیات. مبالغ به تومان و اسمی، قبل از تعدیل وصول هستند. برای ریز چک‌ها و فیلترها، یکی از دو منبع پایین را انتخاب کنید.</p></div></div>
+      <div className="rco-kpis">
+        {kpis.map((k) => <article key={k.label} className={`rco-kpi ${k.tone}`} title={`${fullToman(sum(k.items))} تومان`}>
+          <header><i aria-hidden="true">{k.icon}</i><small>{k.label}</small></header>
+          <b>{money(sum(k.items))} <em>تومان</em></b>
+          <p><span>{fa(k.items.length)} فقره</span>{k.tone !== "total" && <span>{share(k.items)} از کل</span>}</p>
+          {k.tone !== "total" && <div className="rco-bar" aria-hidden="true"><i style={{ width: `${Math.min(100, shareValue(k.items))}%` }} /></div>}
+          <dl>
+            {bySystem(k.items).map((part, i) => <div key={systems[i][0]} className={systems[i][0]}>
+              <dt>{systems[i][1]}</dt>
+              <dd><b>{money(sum(part))}</b><small>{fa(part.length)} فقره</small></dd>
+            </div>)}
+          </dl>
+        </article>)}
+      </div>
+    </section>
+    <section className="cf-section">
+      <div className="cf-title"><div><h3>تفکیک سررسید</h3><p>مبلغ کامل (تومان) و تعداد چک معوق، امروز و آینده، جدا برای هر سیستم.</p></div></div>
+      {splitTable(dueGroups, "سررسید")}
+    </section>
+  </>;
+}
+
 function ChequeSourcePage({ kind, rows, error, back, onUpdated }: {
   kind: "received" | "issued";
   rows: TreasuryCheque[];
@@ -803,8 +877,9 @@ function ChequeSourcePage({ kind, rows, error, back, onUpdated }: {
   </>;
   return <>
     <button className="cheque-back" onClick={back}>→ بازگشت به انتخاب نوع چک</button>
-    <section className="cheque-hub-intro"><div><small>چک‌های {label}</small><h2>منبع اطلاعات را انتخاب کنید</h2><p>روی هر جمع کلیک کنید تا فیلترها، آمار سررسید و ریز کامل همان منبع باز شود.</p></div></section>
     {error && <div className="profile-warning">{error}</div>}
+    {kind === "received" && <ReceivedChequeOverview rows={[...scope("rahkaran"), ...scope("karamad")]} />}
+    <section className="cheque-hub-intro"><div><small>چک‌های {label}</small><h2>منبع اطلاعات را انتخاب کنید</h2><p>روی هر جمع کلیک کنید تا فیلترها، آمار سررسید و ریز کامل همان منبع باز شود.</p></div></section>
     <section className="cheque-source-grid">
       {(["rahkaran", "karamad"] as const).map((system) => {
         const items = scope(system);
@@ -3778,13 +3853,12 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
   </>;
 }
 
-// Open cheques far past due with a large amount need a closer look.
-// TEST values — production target is 90 days and 1_000_000_000 rial (100M toman).
-const REVIEW_OVERDUE_DAYS = 10;
-const REVIEW_AMOUNT_RIAL = 500_000_000;
+// Open cheques with a long term (due more than 90 days after receipt) and a large amount need a closer look.
+const REVIEW_TERM_DAYS = 90;
+const REVIEW_AMOUNT_RIAL = 1_000_000_000; // 100M toman
 const needsChequeReview = (x: any) =>
   x.return_risk?.state === "open"
-  && typeof x.days_until_due === "number" && x.days_until_due < -REVIEW_OVERDUE_DAYS
+  && typeof x.receipt_to_due_days === "number" && x.receipt_to_due_days > REVIEW_TERM_DAYS
   && Number(x.amount_rial || 0) > REVIEW_AMOUNT_RIAL;
 
 function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "branch" | "visitor"; id: number; onBack: () => void; onOpenVisitor?: (id: number) => void; backLabel: string }) {
@@ -3881,7 +3955,7 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
           </button>
         </section>
         {reviewRows.length > 0 && <div className="cf-review-alert">
-          ⚠ {fa(reviewRows.length)} فقره چک به مبلغ {money(reviewAmount)} تومان بیش از {fa(REVIEW_OVERDUE_DAYS)} روز از سررسیدشان گذشته و مبلغشان بالای {money(REVIEW_AMOUNT_RIAL)} تومان است؛ نیازمند بررسی بیشتر هستند.
+          ⚠ {fa(reviewRows.length)} فقره چک به مبلغ {money(reviewAmount)} تومان سررسیدشان بیش از {fa(REVIEW_TERM_DAYS)} روز بعد از تاریخ دریافت است و مبلغشان بالای {money(REVIEW_AMOUNT_RIAL)} تومان است؛ نیازمند بررسی بیشتر هستند.
         </div>}
         {chequeRows.length ? <div className="cf-table"><table>
           <thead><tr><th>شماره چک</th><th>صیاد</th><th>مبلغ</th><th>تاریخ دریافت</th><th>سررسید</th><th>زمان سررسید</th><th>وضعیت</th><th>احتمال برگشت</th><th>بانک</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
@@ -5898,9 +5972,11 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
   }));
   const karamadReceived: any[] = (kdetail.received_cheques || []).map((x: any) => ({ ...x, activity_type: "چک دریافتی" }));
   const karamadIssued: any[] = (kdetail.issued_cheques || []).map((x: any) => ({ ...x, activity_type: "چک پرداختی" }));
-  const chequeRows = [...rahkaranChecks, ...rahkaranReturned, ...karamadReceived, ...karamadIssued].sort((a, b) =>
-    String(b.due_date_jalali || b.registration_date_jalali || "").localeCompare(String(a.due_date_jalali || a.registration_date_jalali || ""), "fa"),
-  );
+  // Oldest due date first; rows without any date go last.
+  const chequeRows = [...rahkaranChecks, ...rahkaranReturned, ...karamadReceived, ...karamadIssued].sort((a, b) => {
+    const da = String(a.due_date_jalali || a.registration_date_jalali || ""), db = String(b.due_date_jalali || b.registration_date_jalali || "");
+    return !da ? (db ? 1 : 0) : !db ? -1 : da.localeCompare(db, "fa");
+  });
   const transferRows = [
     ...(kdetail.received_transfers || []).map((x: any) => ({ ...x, activity_type: "حواله دریافتی" })),
     ...(kdetail.paid_transfers || []).map((x: any) => ({ ...x, activity_type: "حواله پرداختی" })),
@@ -5918,7 +5994,10 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
   const isCollectedCheque = (x: any) => collectedRows.includes(x);
   const futureRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d >= 0; });
   const overdueRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d < 0; });
-  const scopeRows = chequeScope === "collected" ? collectedRows : chequeScope === "returned" ? returnedRows : chequeScope === "future" ? futureRows : chequeScope === "overdue" ? overdueRows : chequeScope === "risk" ? riskRows : chequeRows;
+  // Rahkaran cheques with status «وصول شده» are hidden from «کل چک‌ها»; they stay reachable via the «وصول‌شده» card.
+  const isRahkaranCollected = (x: any) => x.source_system === "rahkaran" && (x.master_state === 3 || /^وصول[‌\s]?شده$/.test(String(x.cheque_status || "").trim()));
+  const visibleChequeRows = chequeRows.filter((x: any) => !isRahkaranCollected(x));
+  const scopeRows = chequeScope === "collected" ? collectedRows : chequeScope === "returned" ? returnedRows : chequeScope === "future" ? futureRows : chequeScope === "overdue" ? overdueRows : chequeScope === "risk" ? riskRows : visibleChequeRows;
   const q = activitySearch.trim().toLocaleLowerCase("fa-IR");
   const filteredChequeRows = !q ? scopeRows : scopeRows.filter((x: any) => [x.cheque_number, x.sayad_number, x.cheque_status, x.state_label, x.bank, x.bank_name, x.branch, x.description, x.return_reason, x.amount_rial].filter(Boolean).some((v) => String(v).toLocaleLowerCase("fa-IR").includes(q)));
   const filteredChequeAmount = filteredChequeRows.reduce((sum: number, x: any) => sum + Number(x.amount_rial || x.amount || 0), 0);
@@ -5946,7 +6025,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
       </div>
       <section className="customer-cheque-scope-cards">
         {[
-          ["all", "کل چک‌ها", chequeRows],
+          ["all", "کل چک‌ها", visibleChequeRows],
           ["collected", "وصول‌شده", collectedRows],
           ["returned", "برگشتی / واخواست", returnedRows],
           ["future", "آینده", futureRows],

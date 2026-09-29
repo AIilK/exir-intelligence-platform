@@ -506,6 +506,7 @@ class KaramadSalesNetworkService:
         cheques = []
         for r in rows:
             due = _as_date(r["DueDate"])
+            booked = _as_date(r["BookDate"])
             cheques.append({
                 "cheque_id": int(r["inx"]),
                 "cheque_number": _text(r["Serial"]),
@@ -514,6 +515,7 @@ class KaramadSalesNetworkService:
                 "registration_date_jalali": format_jalali_date(r["BookDate"]),
                 "due_date_jalali": format_jalali_date(due),
                 "days_until_due": (due - today).days if due else None,
+                "receipt_to_due_days": (due - booked).days if due and booked else None,
                 "cheque_status": _text(r["StatusName"]),
                 "bank": _text(r["BankName"]),
                 "visitor_name": _text(r["VisitorName"]),
