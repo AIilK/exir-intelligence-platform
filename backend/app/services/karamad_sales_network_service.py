@@ -9,8 +9,10 @@
 مطالبات: «مانده» فاکتورهای قدیمی در کارآمد به فاکتور تخصیص داده نشده (جمع UnPaid همه سال‌ها
 چند برابر مانده دفتر کل است)، بنابراین بدهی شعبه/ویزیتور از مانده دفتر کل مشتریانش خوانده می‌شود:
 - شعبه: مشتریانی که شعبه اصلی‌شان همین شعبه است (tblCustomer.BranchRef).
-- ویزیتور: مشتریانی که آخرین فاکتورشان را همین ویزیتور زده است (هر مشتری فقط یک‌بار شمرده می‌شود).
-نام مشتری در هیچ خروجی این سرویس برنمی‌گردد.
+- ویزیتور: FIFO — پرداخت‌ها اول قدیمی‌ترین فاکتورهای مشتری را تسویه می‌کنند، پس مانده بدهی
+  مال جدیدترین فاکتورهاست و هر بخش به ویزیتورِ همان فاکتور می‌رسد (هر ریال فقط یک‌بار شمرده می‌شود).
+  چک برگشتیِ تسویه‌نشده بدهی قطعی است و به ویزیتورِ فاکتورِ همان چک می‌رسد.
+نام مشتری فقط در «جزئیات مانده بدهی» (debt_detail) برمی‌گردد؛ پرونده‌ها و فهرست شبکه نام مشتری ندارند.
 """
 
 from __future__ import annotations
@@ -35,6 +37,12 @@ from app.utils.jalali import format_jalali_date
 OPEN_CHEQUE_STATUSES = (1, 2, 3, 6, 7, 10)
 COLLECTED_CHEQUE_STATUS = 4
 RETURNED_CHEQUE_STATUSES = (6, 7, 8, 10)
+OPEN_RETURNED_CHEQUE_STATUSES = (6, 7, 10)  # returned and not yet settled (8 = returned, then collected)
+# Customer scopes (fixed internal SQL returning tblCustomer.ID; :sid is the branch/visitor id).
+VISITOR_CUSTOMERS = "SELECT [CustomerRef] FROM dbo.[tblFactorF] WHERE [VisitorRef] = :sid"
+BRANCH_VISITOR_CUSTOMERS = """SELECT x.[CustomerRef] FROM dbo.[tblFactorF] x
+    INNER JOIN dbo.[tblVisitor] xv ON xv.[ID] = x.[VisitorRef] WHERE xv.[BranchRef] = :sid"""
+BRANCH_MAIN_CUSTOMERS = "SELECT [ID] FROM dbo.[tblCustomer] WHERE [BranchRef] = :sid"
 LEDGER_CACHE_SECONDS = 600
 FILE_CACHE_SECONDS = 300
 # Leavers are recorded in Karamad personnel (tblPR_Employee.LeaveDate); Karamad itself
@@ -95,6 +103,108 @@ def _debt(dl_refs: list[int], positions: dict[int, dict[str, Any]]) -> dict[str,
         "debtor_customer_count": sum(1 for b in balances if b > 0),
         "customer_count": len(set(dl_refs)),
     }
+
+
+# Sales are reported like the finance team's Karamad sales report: returns (tblFactorB) are
+# subtracted in the year they were booked.
+#   ناخالص (gross) = جمع قبل تخفیف (FactorPrice) of sales − returns
+#   خالص (net)     = قابل پرداخت (FactorPriceP: after discounts, incl. VAT) of sales − returns
+SALES_SOURCE = """(
+    SELECT [ID], [BranchRef], [VisitorRef], [FiscalYear], [DateE], [FactorPrice], [FactorPriceP], 0 AS [is_return]
+    FROM dbo.[tblFactorF]
+    UNION ALL
+    SELECT [ID], [BranchRef], [VisitorRef], [FiscalYear], [DateE], -[FactorPrice], -[FactorPriceP], 1
+    FROM dbo.[tblFactorB]
+)"""
+SALES_COLUMNS = """SUM(CASE WHEN f.[is_return] = 0 THEN 1 ELSE 0 END) AS invoice_count,
+                   SUM(f.[FactorPrice]) AS gross_amount, SUM(f.[FactorPriceP]) AS net_amount"""
+
+
+def _sales_fields(cur: Any, prev: Any) -> dict[str, Any]:
+    """Current/previous-year sales fields from two SALES_COLUMNS rows (net is the headline figure)."""
+    return {
+        "current_year_invoice_count": int(cur.get("invoice_count") or 0),
+        "current_year_sales_rial": _num(cur.get("net_amount")),
+        "current_year_gross_sales_rial": _num(cur.get("gross_amount")),
+        "previous_year_invoice_count": int(prev.get("invoice_count") or 0),
+        "previous_year_sales_rial": _num(prev.get("net_amount")),
+        "previous_year_gross_sales_rial": _num(prev.get("gross_amount")),
+    }
+
+
+def _group_by_customer(invoices, returned) -> tuple[dict[int, list], dict[int, list]]:
+    """Invoice rows (DLRef, VisitorRef, FactorPriceP, DateE; newest first per customer) and open
+    returned-cheque rows (DLRef, VisitorRef, Price, DueDate) keyed by customer DL."""
+    by_invoice: dict[int, list] = {}
+    for r in invoices:
+        by_invoice.setdefault(int(r["DLRef"]), []).append(
+            (int(r["VisitorRef"]) if r["VisitorRef"] is not None else None, float(r["FactorPriceP"] or 0), _as_date(r["DateE"])))
+    by_returned: dict[int, list] = {}
+    for r in returned:
+        by_returned.setdefault(int(r["DLRef"]), []).append(
+            (int(r["VisitorRef"]) if r["VisitorRef"] is not None else None, float(r["Price"] or 0), _as_date(r["DueDate"])))
+    return by_invoice, by_returned
+
+
+def _allocate_debt(balance: float, invoices: list, returned: list) -> list[dict[str, Any]]:
+    """Split one customer's ledger debt into slices, each owned by a visitor.
+
+    An open returned cheque is debt the customer certainly still owes, so it is taken first
+    and goes to the visitor of the invoice it paid. The rest follows FIFO: payments settle the
+    oldest invoices first, so what is still owed belongs to the newest invoices (``invoices`` is
+    newest first). A balance larger than all of that (e.g. an opening balance) is "unmatched" and
+    goes to the visitor of the customer's latest invoice.
+    """
+    latest = next((v for v, _, _ in invoices if v is not None), None)
+    slices: list[dict[str, Any]] = []
+    remaining = balance
+    for kind, rows in (("returned_cheque", returned), ("invoice", invoices)):
+        for visitor_id, amount, when in rows:
+            if remaining <= 0:
+                return slices
+            share = min(remaining, max(amount, 0.0))
+            if share > 0:
+                remaining -= share
+                slices.append({"visitor_id": visitor_id if visitor_id is not None else latest,
+                               "kind": kind, "date": when, "amount": share})
+    if remaining > 0:
+        slices.append({"visitor_id": latest, "kind": "unmatched", "date": None, "amount": remaining})
+    return slices
+
+
+def _visitor_debts(invoices, returned, positions: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Box-1 debt per visitor (see ``_allocate_debt``); credit balances follow the latest invoice."""
+    by_invoice, by_returned = _group_by_customer(invoices, returned)
+    result: dict[int, dict[str, Any]] = {}
+
+    def slot(visitor_id: int) -> dict[str, Any]:
+        return result.setdefault(visitor_id, {"receivable": 0.0, "credit": 0.0, "debtors": set(), "customers": set()})
+
+    for dl, rows in by_invoice.items():
+        for visitor_id, _, _ in rows:
+            if visitor_id is not None:
+                slot(visitor_id)["customers"].add(dl)
+        latest = next((v for v, _, _ in rows if v is not None), None)
+        balance = float(positions.get(dl, {}).get("balance_rial") or 0)
+        if balance < 0 and latest is not None:
+            slot(latest)["credit"] += -balance
+        for s in _allocate_debt(balance, rows, by_returned.get(dl, [])):
+            if s["visitor_id"] is not None:
+                slot(s["visitor_id"])["receivable"] += s["amount"]
+                slot(s["visitor_id"])["debtors"].add(dl)
+
+    return {
+        visitor_id: {
+            "open_account_receivable_rial": _num(s["receivable"]),
+            "customer_credit_rial": _num(s["credit"]),
+            "debtor_customer_count": len(s["debtors"]),
+            "customer_count": len(s["customers"]),
+        }
+        for visitor_id, s in result.items()
+    }
+
+
+_EMPTY_DEBT = {"open_account_receivable_rial": 0.0, "customer_credit_rial": 0.0, "debtor_customer_count": 0, "customer_count": 0}
 
 
 class KaramadSalesNetworkService:
@@ -181,9 +291,9 @@ class KaramadSalesNetworkService:
             ), params).mappings()}
             sales: dict[tuple[int, Any], Any] = {
                 (int(r["BranchRef"]), r["FiscalYear"]): r for r in connection.execute(expand(
-                    """
-                    SELECT [BranchRef], [FiscalYear], COUNT_BIG(*) AS invoice_count, SUM([FactorPriceP]) AS amount
-                    FROM dbo.[tblFactorF]
+                    f"""
+                    SELECT [BranchRef], [FiscalYear], {SALES_COLUMNS}
+                    FROM {SALES_SOURCE} f
                     WHERE [BranchRef] IN :branches AND [FiscalYear] IN (:cur, :prev)
                     GROUP BY [BranchRef], [FiscalYear]
                     """
@@ -213,10 +323,7 @@ class KaramadSalesNetworkService:
                 "hybrids": hybrids.get(bid, []),
                 "active_supervisor_count": supervisors.get(bid, 0),
                 "active_visitor_count": visitors.get(bid, 0),
-                "current_year_invoice_count": int(cur.get("invoice_count") or 0),
-                "current_year_sales_rial": _num(cur.get("amount")),
-                "previous_year_invoice_count": int(prev.get("invoice_count") or 0),
-                "previous_year_sales_rial": _num(prev.get("amount")),
+                **_sales_fields(cur, prev),
                 "debt": _debt(customers.get(bid, []), positions),
                 "open_cheque_count": int((cheques.get(bid) or {}).get("n") or 0),
                 "open_cheque_amount_rial": _num((cheques.get(bid) or {}).get("amount")),
@@ -231,8 +338,9 @@ class KaramadSalesNetworkService:
                 "hybrid_count": sum(len(r["hybrids"]) for r in rows),
                 "branch_count": len(rows),
                 "active_visitor_count": sum(r["active_visitor_count"] for r in rows),
-                "current_year_sales_rial": _num(sum(r["current_year_sales_rial"] for r in rows)),
-                "previous_year_sales_rial": _num(sum(r["previous_year_sales_rial"] for r in rows)),
+                **{key: _num(sum(r[key] for r in rows)) for key in (
+                    "current_year_sales_rial", "current_year_gross_sales_rial",
+                    "previous_year_sales_rial", "previous_year_gross_sales_rial")},
                 "open_account_receivable_rial": _num(sum(r["debt"]["open_account_receivable_rial"] for r in rows)),
             },
             "debt_note": "بدهی از مانده دفتر کل مشتریان شعبه (شعبه اصلی مشتری) محاسبه شده است.",
@@ -340,44 +448,64 @@ class KaramadSalesNetworkService:
             "hybrids": self._hybrids_by_branch(connection, [int(branch_id)]).get(int(branch_id), []) if branch_id is not None else [],
         }
 
-    def _visitor_core(self, connection, fy: dict[str, Any], visitor_id: int) -> dict[str, Any]:
-        # Debt attribution: customers whose latest invoice belongs to this visitor.
-        dl_refs = [int(r[0]) for r in connection.execute(text(
+    @staticmethod
+    def _customer_invoices(connection, customer_scope: str, params: dict[str, Any]):
+        """Every invoice (all visitors, all years) of the customers in ``customer_scope``
+        (a fixed internal SQL fragment), ordered for ``_group_by_customer``."""
+        return connection.execute(text(
+            f"""
+            SELECT cu.[DLRef], f.[VisitorRef], f.[FactorPriceP], f.[DateE]
+            FROM dbo.[tblFactorF] f INNER JOIN dbo.[tblCustomer] cu ON cu.[ID] = f.[CustomerRef]
+            WHERE cu.[DLRef] IS NOT NULL AND f.[CustomerRef] IN ({customer_scope})
+            ORDER BY cu.[DLRef], f.[DateE] DESC, f.[ID] DESC
             """
-            WITH latest AS (
-                SELECT f.[CustomerRef], f.[VisitorRef],
-                       ROW_NUMBER() OVER (PARTITION BY f.[CustomerRef] ORDER BY f.[DateE] DESC, f.[ID] DESC) AS rn
-                FROM dbo.[tblFactorF] f
-                WHERE f.[CustomerRef] IN (SELECT [CustomerRef] FROM dbo.[tblFactorF] WHERE [VisitorRef] = :vid)
-            )
-            SELECT cu.[DLRef]
-            FROM latest l INNER JOIN dbo.[tblCustomer] cu ON cu.[ID] = l.[CustomerRef]
-            WHERE l.rn = 1 AND l.[VisitorRef] = :vid AND cu.[DLRef] IS NOT NULL
-            """
-        ), {"vid": visitor_id}).all()]
-        return self._file(connection, fy, "f.[VisitorRef] = :scope_id", visitor_id, dl_refs)
+        ), params).mappings().all()
 
-    def _file(self, connection, fy: dict[str, Any], invoice_scope: str, scope_id: int, dl_refs: list[int]) -> dict[str, Any]:
+    @staticmethod
+    def _customer_returned_cheques(connection, customer_scope: str, params: dict[str, Any]):
+        """Open (not yet settled) returned cheques of the customers in ``customer_scope``."""
+        statuses = ",".join(str(s) for s in OPEN_RETURNED_CHEQUE_STATUSES)
+        return connection.execute(text(
+            f"""
+            SELECT d.[DLRef], fx.[VisitorRef], d.[Price], d.[DueDate]
+            FROM dbo.[tblChequeD] d LEFT JOIN dbo.[tblFactorF] fx ON fx.[ID] = d.[FactorRef]
+            WHERE d.[StatusRef] IN ({statuses})
+              AND d.[DLRef] IN (SELECT cu.[DLRef] FROM dbo.[tblCustomer] cu WHERE cu.[ID] IN ({customer_scope}))
+            ORDER BY d.[DLRef], d.[DueDate] DESC
+            """
+        ), params).mappings().all()
+
+    def _visitor_core(self, connection, fy: dict[str, Any], visitor_id: int) -> dict[str, Any]:
+        # Debt attribution: returned cheques + FIFO over the invoices of every customer this visitor sold to.
+        scope, params = VISITOR_CUSTOMERS, {"sid": visitor_id}
+        debt = _visitor_debts(
+            self._customer_invoices(connection, scope, params),
+            self._customer_returned_cheques(connection, scope, params),
+            ledger_positions(),
+        ).get(visitor_id, _EMPTY_DEBT)
+        return self._file(connection, fy, "f.[VisitorRef] = :scope_id", visitor_id, [], debt=debt)
+
+    def _file(self, connection, fy: dict[str, Any], invoice_scope: str, scope_id: int, dl_refs: list[int],
+              debt: dict[str, Any] | None = None) -> dict[str, Any]:
         # invoice_scope (like cheque_scope in _cheques) is a fixed internal SQL fragment, never user input.
         params = {"scope_id": scope_id, "cur": fy["current_id"], "prev": fy["previous_id"]}
         by_year = connection.execute(text(
             f"""
-            SELECT f.[FiscalYear], COUNT_BIG(*) AS invoice_count, SUM(f.[FactorPriceP]) AS amount,
-                   MIN(f.[DateE]) AS first_date, MAX(f.[DateE]) AS last_date
-            FROM dbo.[tblFactorF] f WHERE {invoice_scope} GROUP BY f.[FiscalYear]
+            SELECT f.[FiscalYear], {SALES_COLUMNS},
+                   MIN(CASE WHEN f.[is_return] = 0 THEN f.[DateE] END) AS first_date,
+                   MAX(CASE WHEN f.[is_return] = 0 THEN f.[DateE] END) AS last_date
+            FROM {SALES_SOURCE} f WHERE {invoice_scope} GROUP BY f.[FiscalYear]
             """
         ), params).mappings().all()
         year = {r["FiscalYear"]: r for r in by_year}
         cur, prev = year.get(fy["current_id"], {}), year.get(fy["previous_id"], {})
         stats = {
-            "invoice_count": int(sum(r["invoice_count"] for r in by_year)),
-            "sales_amount_rial": _num(sum(float(r["amount"] or 0) for r in by_year)),
-            "current_year_invoice_count": int(cur.get("invoice_count") or 0),
-            "current_year_sales_rial": _num(cur.get("amount")),
-            "previous_year_invoice_count": int(prev.get("invoice_count") or 0),
-            "previous_year_sales_rial": _num(prev.get("amount")),
-            "first_invoice_date_jalali": format_jalali_date(min((r["first_date"] for r in by_year), default=None)),
-            "last_invoice_date_jalali": format_jalali_date(max((r["last_date"] for r in by_year), default=None)),
+            "invoice_count": int(sum(r["invoice_count"] or 0 for r in by_year)),
+            "sales_amount_rial": _num(sum(float(r["net_amount"] or 0) for r in by_year)),
+            "gross_sales_amount_rial": _num(sum(float(r["gross_amount"] or 0) for r in by_year)),
+            **_sales_fields(cur, prev),
+            "first_invoice_date_jalali": format_jalali_date(min((r["first_date"] for r in by_year if r["first_date"]), default=None)),
+            "last_invoice_date_jalali": format_jalali_date(max((r["last_date"] for r in by_year if r["last_date"]), default=None)),
         }
 
         last = [
@@ -413,7 +541,7 @@ class KaramadSalesNetworkService:
             "sales_stats": stats,
             "last_invoices": karamad_invoice_settlements(connection, last),
             "debt": {
-                **_debt(dl_refs, ledger_positions()),
+                **(debt if debt is not None else _debt(dl_refs, ledger_positions())),
                 "current_year_unpaid_invoice_rial": _num(current_unpaid["unpaid"]),
                 "current_year_unpaid_invoice_count": int(current_unpaid["unpaid_count"] or 0),
             },
@@ -424,9 +552,7 @@ class KaramadSalesNetworkService:
         rows = connection.execute(text(
             f"""
             SELECT v.[ID], v.[Name], v.[Status], s.[Name] AS SupervisorName,
-                   SUM(CASE WHEN f.[FiscalYear] = :cur THEN f.[FactorPriceP] ELSE 0 END) AS cur_amount,
                    SUM(CASE WHEN f.[FiscalYear] = :cur THEN 1 ELSE 0 END) AS cur_count,
-                   SUM(CASE WHEN f.[FiscalYear] = :prev THEN f.[FactorPriceP] ELSE 0 END) AS prev_amount,
                    SUM(CASE WHEN f.[FiscalYear] = :prev THEN 1 ELSE 0 END) AS prev_count,
                    MAX(f.[DateE]) AS last_date,
                    MAX(CASE WHEN f.[DateE] = lastf.[DateE] THEN f.[SupervisorRef] END) AS last_supervisor_ref
@@ -439,32 +565,29 @@ class KaramadSalesNetworkService:
             GROUP BY v.[ID], v.[Name], v.[Status], s.[Name]
             """
         ), params).mappings().all()
+        sales: dict[tuple[int, Any], Any] = {
+            (int(s["VisitorRef"]), s["FiscalYear"]): s for s in connection.execute(text(
+                f"""
+                SELECT f.[VisitorRef], f.[FiscalYear], {SALES_COLUMNS}
+                FROM {SALES_SOURCE} f INNER JOIN dbo.[tblVisitor] v ON v.[ID] = f.[VisitorRef]
+                WHERE v.[BranchRef] = :bid AND f.[FiscalYear] IN (:cur, :prev)
+                GROUP BY f.[VisitorRef], f.[FiscalYear]
+                """
+            ), params).mappings()
+        }
         sup_ids = sorted({int(r["last_supervisor_ref"]) for r in rows if r["last_supervisor_ref"] is not None and not r["SupervisorName"]})
         sup_names = {
             int(r["ID"]): _text(r["Name"]) for r in connection.execute(text(
                 f"SELECT s.[ID], s.[Name] FROM dbo.[tblSupervisor] s WHERE s.[ID] IN :ids AND NOT {SUPERVISOR_LEFT}"
             ).bindparams(bindparam("ids", expanding=True)), {"ids": sup_ids or [-1]}).mappings()
         }
-        # Debt per visitor: customers whose latest invoice belongs to that visitor.
-        attributed: dict[int, list[int]] = {}
-        for r in connection.execute(text(
-            """
-            WITH latest AS (
-                SELECT f.[CustomerRef], f.[VisitorRef],
-                       ROW_NUMBER() OVER (PARTITION BY f.[CustomerRef] ORDER BY f.[DateE] DESC, f.[ID] DESC) AS rn
-                FROM dbo.[tblFactorF] f
-                WHERE f.[CustomerRef] IN (SELECT DISTINCT x.[CustomerRef] FROM dbo.[tblFactorF] x
-                                          INNER JOIN dbo.[tblVisitor] xv ON xv.[ID] = x.[VisitorRef]
-                                          WHERE xv.[BranchRef] = :bid)
-            )
-            SELECT l.[VisitorRef], cu.[DLRef]
-            FROM latest l INNER JOIN dbo.[tblCustomer] cu ON cu.[ID] = l.[CustomerRef]
-            WHERE l.rn = 1 AND cu.[DLRef] IS NOT NULL
-            """
-        ), {"bid": branch_id}).mappings():
-            if r["VisitorRef"] is not None:
-                attributed.setdefault(int(r["VisitorRef"]), []).append(int(r["DLRef"]))
-        positions = ledger_positions()
+        # Debt per visitor: same attribution as the visitor file, over every customer the branch's visitors sold to.
+        scope, scope_params = BRANCH_VISITOR_CUSTOMERS, {"sid": branch_id}
+        debts = _visitor_debts(
+            self._customer_invoices(connection, scope, scope_params),
+            self._customer_returned_cheques(connection, scope, scope_params),
+            ledger_positions(),
+        )
 
         result = []
         for r in rows:
@@ -476,15 +599,130 @@ class KaramadSalesNetworkService:
                 "visitor_name": _text(r["Name"]),
                 "active": active,
                 "supervisor": _text(r["SupervisorName"]) or sup_names.get(int(r["last_supervisor_ref"] or -1), ""),
-                "current_year_invoice_count": int(r["cur_count"] or 0),
-                "current_year_sales_rial": _num(r["cur_amount"]),
-                "previous_year_invoice_count": int(r["prev_count"] or 0),
-                "previous_year_sales_rial": _num(r["prev_amount"]),
+                **_sales_fields(sales.get((int(r["ID"]), fy["current_id"]), {}), sales.get((int(r["ID"]), fy["previous_id"]), {})),
                 "last_invoice_date_jalali": format_jalali_date(r["last_date"]),
-                "debt": _debt(attributed.get(int(r["ID"]), []), positions),
+                "debt": debts.get(int(r["ID"]), _EMPTY_DEBT),
             })
         result.sort(key=lambda x: (x["current_year_sales_rial"], x["previous_year_sales_rial"]), reverse=True)
         return result
+
+    # ------------------------------------------------------------ debt detail
+    def debt_detail(self, kind: str, scope_id: int) -> dict[str, Any]:
+        """Breakdown of box 1 (مانده بدهی مشتریان): age, origin, visitors and debtor customers."""
+        return self._cached((f"debt_{kind}", int(scope_id)), lambda: self._debt_detail(kind, int(scope_id)))
+
+    def _debt_detail(self, kind: str, scope_id: int) -> dict[str, Any]:
+        # Same customers as box 1: a branch file shows its main-branch customers, a visitor
+        # file shows the visitor's slices of every customer they sold to.
+        scope = BRANCH_MAIN_CUSTOMERS if kind == "branch" else VISITOR_CUSTOMERS
+        params = {"sid": scope_id}
+        positions = ledger_positions()
+        with self.engine.connect() as connection:
+            customers = {int(r["DLRef"]): r for r in connection.execute(text(
+                f"SELECT [DLRef], [Name], [Code] FROM dbo.[tblCustomer] WHERE [DLRef] IS NOT NULL AND [ID] IN ({scope})"
+            ), params).mappings()}
+            by_invoice, by_returned = _group_by_customer(
+                self._customer_invoices(connection, scope, params),
+                self._customer_returned_cheques(connection, scope, params))
+
+            today = date.today()
+            aging = [["زیر ۳۰ روز", 30], ["۳۱ تا ۹۰ روز", 90], ["۹۱ تا ۱۸۰ روز", 180], ["۱۸۱ تا ۳۶۵ روز", 365], ["بیش از یک سال", None]]
+            aging_rows = [{"label": label, "amount_rial": 0.0, "customers": set()} for label, _ in aging]
+            origin = {"invoice": 0.0, "returned_cheque": 0.0, "unmatched": 0.0}
+            by_visitor: dict[int | None, dict[str, Any]] = {}
+            debtors = []
+            for dl, row in customers.items():
+                balance = float(positions.get(dl, {}).get("balance_rial") or 0)
+                if balance <= 0:
+                    continue
+                slices = _allocate_debt(balance, by_invoice.get(dl, []), by_returned.get(dl, []))
+                if kind == "visitor":
+                    slices = [s for s in slices if s["visitor_id"] == scope_id]
+                if not slices:
+                    continue
+                for s in slices:
+                    origin[s["kind"]] += s["amount"]
+                    v = by_visitor.setdefault(s["visitor_id"], {"amount_rial": 0.0, "customers": set()})
+                    v["amount_rial"] += s["amount"]
+                    v["customers"].add(dl)
+                    if s["kind"] == "invoice":
+                        age = (today - s["date"]).days if s["date"] else None
+                        bucket = next(i for i, (_, limit) in enumerate(aging) if limit is None or (age is not None and age <= limit))
+                        aging_rows[bucket]["amount_rial"] += s["amount"]
+                        aging_rows[bucket]["customers"].add(dl)
+                invoice_dates = [s["date"] for s in slices if s["kind"] == "invoice" and s["date"]]
+                visitor_totals: dict[int | None, float] = {}
+                for s in slices:
+                    visitor_totals[s["visitor_id"]] = visitor_totals.get(s["visitor_id"], 0.0) + s["amount"]
+                debtors.append({
+                    "dl_ref": dl,
+                    "customer_name": _text(row["Name"]),
+                    "customer_code": _text(row["Code"]),
+                    "debt_rial": _num(sum(s["amount"] for s in slices)),
+                    "returned_cheque_rial": _num(sum(s["amount"] for s in slices if s["kind"] == "returned_cheque")),
+                    "oldest_unpaid_invoice_date_jalali": format_jalali_date(min(invoice_dates)) if invoice_dates else "",
+                    "_visitors": visitor_totals,
+                })
+
+            visitor_ids = sorted(v for v in by_visitor if v is not None)
+            names = {int(r["ID"]): _text(r["Name"]) for r in connection.execute(text(
+                "SELECT [ID], [Name] FROM dbo.[tblVisitor] WHERE [ID] IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)), {"ids": visitor_ids or [-1]}).mappings()}
+            last_payment = self._last_payment_dates(connection, scope, params)
+
+        visitor_name = lambda vid: names.get(vid, "") if vid is not None else "نامشخص"  # noqa: E731
+        debtors.sort(key=lambda d: d["debt_rial"], reverse=True)
+        for d in debtors:
+            d["visitors"] = [{"visitor_name": visitor_name(vid), "amount_rial": _num(amount)}
+                             for vid, amount in sorted(d.pop("_visitors").items(), key=lambda x: -x[1])]
+            d["last_payment_date_jalali"] = format_jalali_date(last_payment.get(d["dl_ref"]))
+        return {
+            "status": "success",
+            "scope": kind,
+            "total_debt_rial": _num(sum(d["debt_rial"] for d in debtors)),
+            "debtor_customer_count": len(debtors),
+            "aging": [{"label": r["label"], "amount_rial": _num(r["amount_rial"]), "customer_count": len(r["customers"])} for r in aging_rows],
+            "origin": {key: _num(value) for key, value in origin.items()},
+            "visitors": sorted(
+                ({"visitor_name": visitor_name(vid), "amount_rial": _num(v["amount_rial"]), "customer_count": len(v["customers"])}
+                 for vid, v in by_visitor.items()),
+                key=lambda x: -x["amount_rial"]),
+            "customers": debtors,
+        }
+
+    @staticmethod
+    def _last_payment_dates(connection, customer_scope: str, params: dict[str, Any]) -> dict[int, Any]:
+        """Latest date each customer's receivable account was credited this fiscal year (a payment,
+        cheque or return), from the same ledger lines box 1 reads."""
+        from app.services.karamad_customer_account_service import _RECEIVABLE_SL_CODES
+        codes = ", ".join(f"N'{code}'" for code in _RECEIVABLE_SL_CODES)
+        dls = f"SELECT cu.[DLRef] FROM dbo.[tblCustomer] cu WHERE cu.[ID] IN ({customer_scope})"
+        rows = connection.execute(text(
+            f"""
+            WITH fy AS (
+                SELECT TOP (1) [ID] FROM dbo.[tblFiscalYear]
+                WHERE CAST(GETDATE() AS date) BETWEEN [DateStart] AND [DateEnd] ORDER BY [DateStart] DESC
+            ),
+            credit AS (
+                SELECT vl.[DLRef] AS dl, vl.[VoucherRef] FROM dbo.[tblVoucherLines] vl
+                    JOIN dbo.[tblSL] sl ON sl.[ID] = vl.[SLRef]
+                    WHERE sl.[Code] IN ({codes}) AND vl.[Creditor] > 0 AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL) AND vl.[DLRef] IN ({dls})
+                UNION ALL
+                SELECT vl.[DL2Ref], vl.[VoucherRef] FROM dbo.[tblVoucherLines] vl
+                    JOIN dbo.[tblSL] sl ON sl.[ID] = vl.[SLRef]
+                    WHERE sl.[Code] IN ({codes}) AND vl.[Creditor] > 0 AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL) AND vl.[DL2Ref] IN ({dls})
+                UNION ALL
+                SELECT vl.[DL3Ref], vl.[VoucherRef] FROM dbo.[tblVoucherLines] vl
+                    JOIN dbo.[tblSL] sl ON sl.[ID] = vl.[SLRef]
+                    WHERE sl.[Code] IN ({codes}) AND vl.[Creditor] > 0 AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL) AND vl.[DL3Ref] IN ({dls})
+            )
+            SELECT c.dl, MAX(v.[DateE]) AS last_date
+            FROM credit c JOIN dbo.[tblVoucher] v ON v.[ID] = c.[VoucherRef] CROSS JOIN fy
+            WHERE v.[FiscalYear] = fy.[ID]
+            GROUP BY c.dl
+            """
+        ), params).mappings().all()
+        return {int(r["dl"]): r["last_date"] for r in rows}
 
     def _cheques(self, connection, cheque_scope: str, scope_id: int) -> dict[str, Any]:
         statuses = ",".join(str(s) for s in OPEN_CHEQUE_STATUSES)
@@ -506,6 +744,7 @@ class KaramadSalesNetworkService:
         cheques = []
         for r in rows:
             due = _as_date(r["DueDate"])
+            booked = _as_date(r["BookDate"])
             cheques.append({
                 "cheque_id": int(r["inx"]),
                 "cheque_number": _text(r["Serial"]),
@@ -514,6 +753,7 @@ class KaramadSalesNetworkService:
                 "registration_date_jalali": format_jalali_date(r["BookDate"]),
                 "due_date_jalali": format_jalali_date(due),
                 "days_until_due": (due - today).days if due else None,
+                "receipt_to_due_days": (due - booked).days if due and booked else None,
                 "cheque_status": _text(r["StatusName"]),
                 "bank": _text(r["BankName"]),
                 "visitor_name": _text(r["VisitorName"]),

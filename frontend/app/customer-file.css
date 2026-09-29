@@ -48,6 +48,18 @@
 .cf-risk.unresolved{opacity:.7}
 
 /* Cheques >90 days past due and >100M toman */
+/* Box 1 (مانده بدهی مشتریان) opens its debt detail */
+.cf-kpis .cf-kpi-clickable{cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.cf-kpis .cf-kpi-clickable:hover,.cf-kpis .cf-kpi-clickable.active{border-color:rgba(223,98,105,.8);background:rgba(223,98,105,.14)}
+.cf-kpis .cf-kpi-clickable em{font-style:normal;font-size:11px;color:#ff9aa0}
+.cf-debt-detail{display:grid;gap:18px;padding-top:4px}
+.cf-debt-detail h4{margin:0 0 4px;font-size:15px}
+.cf-debt-detail p{margin:0 0 10px;font-size:12px;opacity:.68;line-height:1.7}
+.cf-debt-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+.cf-debt-detail-grid .cf-table table{min-width:0}
+.cf-debt-customers{max-height:520px;overflow-y:auto}
+.cf-debt-customers th{position:sticky;top:0;z-index:1}
+
 .cf-review-alert{padding:12px 16px;border:1px solid rgba(223,98,105,.55);border-radius:14px;background:rgba(223,98,105,.1);color:#ffb3b8;font-size:13px;line-height:1.8}
 .customer-cheque-scope-cards .cf-review-card.active{border-color:#df6269;background:#fdecec;box-shadow:0 0 0 1px #df6269}
 .cf-table tr.cf-review-row td{background:rgba(223,98,105,.08)}

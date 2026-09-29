@@ -21,8 +21,17 @@ MEDIUM_THRESHOLD = 0.18
 
 
 STALE_AFTER_DAYS = 30
-RAHKARAN_COLLECTED_STATE = 3
-RAHKARAN_RETURNED_STATE = 4
+# Rahkaran RPA3.ReceivableNote.State (SYS3.Lookup NoteState). Only a cheque still held by the
+# company, its bank or its collector can bounce, so only those states get a probability.
+RAHKARAN_OPEN_STATES = {1, 2, 16, 29}          # نزد صندوق، نزد بانک، نزد مأمور وصول
+RAHKARAN_COLLECTED_STATES = {3, 30, 32, 33}    # وصول شده، نقد شده توسط مأمور وصول، نقد شده حقوقی، تسویه شده
+RAHKARAN_RETURNED_STATES = {4, 10, 17, 26}     # واخواست شده، مسترد شده، حقوقی شده، مسترد شده نزد صندوق
+# Any other Rahkaran state (e.g. 6 واگذار شده به غیر، 34 سوخت شده) left the company's hands: closed.
+
+
+def _rahkaran_state(row: dict[str, Any]) -> int | None:
+    state = row.get("master_state")
+    return int(state) if isinstance(state, int) and state else None
 
 
 def _status(row: dict[str, Any]) -> str:
@@ -31,9 +40,17 @@ def _status(row: dict[str, Any]) -> str:
 
 
 def is_returned(row: dict[str, Any]) -> bool:
-    if row.get("master_state") == RAHKARAN_RETURNED_STATE:
-        return True
+    state = _rahkaran_state(row)
+    if state is not None:
+        return state in RAHKARAN_RETURNED_STATES
     return any(t in _status(row) for t in ("برگشت", "واخواست", "مسترد"))
+
+
+def is_closed(row: dict[str, Any]) -> bool:
+    """A Rahkaran cheque that is neither open, collected nor returned (spent, voided, ...)."""
+    state = _rahkaran_state(row)
+    return state is not None and state not in (
+        RAHKARAN_OPEN_STATES | RAHKARAN_COLLECTED_STATES | RAHKARAN_RETURNED_STATES)
 
 
 def is_collected(row: dict[str, Any]) -> bool:
@@ -45,8 +62,9 @@ def is_collected(row: dict[str, Any]) -> bool:
     """
     if is_returned(row):
         return False
-    if row.get("master_state") == RAHKARAN_COLLECTED_STATE:
-        return True
+    state = _rahkaran_state(row)
+    if state is not None:
+        return state in RAHKARAN_COLLECTED_STATES
     status = _status(row)
     if any(t in status for t in ("وصول شده", "نقد شده")):
         return True
@@ -69,8 +87,9 @@ def _days(row: dict[str, Any]) -> int | None:
 def attach_return_risk(cheques: list[dict[str, Any]], history: dict[str, Any] | None = None) -> dict[str, Any]:
     """Adds ``return_risk`` to every row in-place and returns a customer summary.
 
-    Returned cheques get ``state="returned"``, collected ones ``state="collected"``;
-    only still-open cheques get a probability.
+    Returned cheques get ``state="returned"``, collected ones ``state="collected"``, Rahkaran
+    cheques that otherwise left the company ``state="closed"``; only still-open cheques get a
+    probability.
 
     ``history`` ({"collected_count", "returned_count", "average_amount_rial"}) overrides
     the base rate when ``cheques`` is not the full history (Karamad's live feed only
@@ -78,7 +97,8 @@ def attach_return_risk(cheques: list[dict[str, Any]], history: dict[str, Any] | 
     """
     returned = [r for r in cheques if is_returned(r)]
     collected = [r for r in cheques if is_collected(r)]
-    unresolved = [r for r in cheques if not is_returned(r) and not is_collected(r)]
+    closed = [r for r in cheques if is_closed(r)]
+    unresolved = [r for r in cheques if not is_returned(r) and not is_collected(r) and not is_closed(r)]
     # Long past due with no final state: history we cannot classify, not a live cheque.
     stale = [r for r in unresolved if (_days(r) is not None and _days(r) < -STALE_AFTER_DAYS)]
     open_rows = [r for r in unresolved if r not in stale]
@@ -107,6 +127,8 @@ def attach_return_risk(cheques: list[dict[str, Any]], history: dict[str, Any] | 
         row["return_risk"] = {"state": "returned", "label": "برگشت خورده"}
     for row in collected:
         row["return_risk"] = {"state": "collected", "label": "وصول شده"}
+    for row in closed:
+        row["return_risk"] = {"state": "closed", "label": str(row.get("state_label") or "تعیین‌تکلیف‌شده")}
     for row in stale:
         row["return_risk"] = {"state": "unresolved", "label": "وضعیت نهایی نامشخص"}
 
