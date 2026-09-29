@@ -628,7 +628,7 @@ const chequeInsightRows = (rows: TreasuryCheque[]): InsightRecord[] =>
       timing: remainingLabel(x),
     }));
 const fullToman = (rial: number = 0) =>
-  new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 }).format(rial / 10);
+  new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 }).format(rial / 10);
 
 function RahkaranChequeTotals({ rows, kind }: { rows: TreasuryCheque[]; kind: "received" | "issued" }) {
   const selected = rows.filter((x) => x.source_system === "rahkaran");
@@ -3827,8 +3827,8 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
         <div className="cf-kpis cf-directory-kpis">
           <article><small>هیبرید من</small><b>{fa(sm.hybrid_count || 0)}</b><span>در {fa(sm.branch_count || 0)} شعبه</span></article>
           <article><small>ویزیتور فعال</small><b>{fa(sm.active_visitor_count || 0)}</b><span>نفر</span></article>
-          <article><small>فروش {cy}</small><b>{money(sm.current_year_sales_rial || 0)}</b><span>تومان</span></article>
-          <article><small>فروش {py}</small><b>{money(sm.previous_year_sales_rial || 0)}</b><span>تومان</span></article>
+          <article><small>فروش خالص {cy}</small><b>{fullToman(sm.current_year_sales_rial || 0)}</b><span>ناخالص: {fullToman(sm.current_year_gross_sales_rial || 0)} تومان</span></article>
+          <article><small>فروش خالص {py}</small><b>{fullToman(sm.previous_year_sales_rial || 0)}</b><span>ناخالص: {fullToman(sm.previous_year_gross_sales_rial || 0)} تومان</span></article>
           <article className="cf-accent-red"><small>مطالبات مشتریان شعب</small><b>{money(sm.open_account_receivable_rial || 0)}</b><span>تومان • مانده دفتر کل</span></article>
         </div>
         <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar">
@@ -3836,13 +3836,13 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
           <small>{fa(rows.length)} شعبه</small>
         </section>
         <div className="cf-table cf-clickable"><table>
-          <thead><tr><th>هیبرید من</th><th>شعبه</th><th>ویزیتور فعال</th><th>فروش {cy}</th><th>فروش {py}</th><th>مطالبات</th><th>چک باز</th></tr></thead>
+          <thead><tr><th>هیبرید من</th><th>شعبه</th><th>ویزیتور فعال</th><th>فروش {cy} (خالص / ناخالص)</th><th>فروش {py} (خالص / ناخالص)</th><th>مطالبات</th><th>چک باز</th></tr></thead>
           <tbody>{rows.map((b) => <tr key={b.branch_id} onClick={() => setBranchId(b.branch_id)}>
             <td className="cf-wrap"><b>{(b.hybrids || []).join("، ") || "—"}</b></td>
             <td>{b.branch_name}</td>
             <td>{fa(b.active_visitor_count || 0)}<small>{fa(b.active_supervisor_count || 0)} سرپرست</small></td>
-            <td><b>{money(b.current_year_sales_rial || 0)}</b><small>{fa(b.current_year_invoice_count || 0)} فاکتور</small></td>
-            <td><b>{money(b.previous_year_sales_rial || 0)}</b><small>{fa(b.previous_year_invoice_count || 0)} فاکتور</small></td>
+            <SalesCell net={b.current_year_sales_rial} gross={b.current_year_gross_sales_rial} count={b.current_year_invoice_count} />
+            <SalesCell net={b.previous_year_sales_rial} gross={b.previous_year_gross_sales_rial} count={b.previous_year_invoice_count} />
             <td className="cf-debt">{money(b.debt?.open_account_receivable_rial || 0)}<small>{fa(b.debt?.debtor_customer_count || 0)} مشتری بدهکار</small></td>
             <td>{money(b.open_cheque_amount_rial || 0)}<small>{fa(b.open_cheque_count || 0)} فقره</small></td>
           </tr>)}</tbody>
@@ -3853,11 +3853,98 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
   </>;
 }
 
-// Open cheques with a long term (due more than 90 days after receipt) and a large amount need a closer look.
+// Karamad sales, as in the finance sales report: خالص = قابل پرداخت − برگشتی، ناخالص = جمع قبل تخفیف − برگشتی.
+function SalesCell({ net, gross, count }: { net?: number; gross?: number; count?: number }) {
+  return <td><b>خالص {fullToman(net || 0)}</b><small>ناخالص {fullToman(gross || 0)}</small><small>تومان</small><small>{fa(count || 0)} فاکتور</small></td>;
+}
+
+// Breakdown of box 1 (مانده بدهی مشتریان), loaded when the box is opened.
+function DebtDetail({ kind, id }: { kind: "branch" | "visitor"; id: number }) {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    let active = true;
+    setData(null); setError("");
+    request(`/sales-network/${kind === "branch" ? "branches" : "visitors"}/${id}/debt-detail`)
+      .then((d) => { if (active) setData(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت جزئیات بدهی ناموفق بود"); });
+    return () => { active = false; };
+  }, [kind, id]);
+  if (error) return <div className="profile-warning">{error}</div>;
+  if (!data) return <div className="profile-loading">در حال محاسبه جزئیات بدهی...</div>;
+
+  const total = data.total_debt_rial || 0;
+  const share = (v: number) => total ? `${fa(Math.round((v / total) * 100))}٪` : "—";
+  const origin = data.origin || {};
+  const q = search.trim().toLocaleLowerCase("fa-IR");
+  const customers = (data.customers || []).filter((c: any) => !q
+    || `${c.customer_name} ${c.customer_code}`.toLocaleLowerCase("fa-IR").includes(q));
+  return <div className="cf-debt-detail">
+    <div className="cf-debt-detail-grid">
+      <div>
+        <h4>۱. سن بدهی</h4>
+        <p>تاریخ فاکتورهایی که هنوز پرداخت نشده‌اند (FIFO: پرداخت‌ها اول قدیمی‌ترین فاکتورها را تسویه می‌کنند). چک برگشتی جداگانه در بخش ۲ است.</p>
+        <div className="cf-table"><table>
+          <thead><tr><th>سن</th><th>مبلغ (تومان)</th><th>سهم</th><th>مشتری</th></tr></thead>
+          <tbody>{(data.aging || []).map((a: any) => <tr key={a.label}>
+            <td>{a.label}</td><td><b>{fullToman(a.amount_rial)}</b></td><td>{share(a.amount_rial)}</td><td>{fa(a.customer_count)}</td>
+          </tr>)}</tbody>
+        </table></div>
+      </div>
+      <div>
+        <h4>۲. منشأ بدهی</h4>
+        <p>بدهی از فاکتور پرداخت‌نشده آمده یا از چکی که برگشت خورده و هنوز تسویه نشده است.</p>
+        <div className="cf-table"><table>
+          <thead><tr><th>منشأ</th><th>مبلغ (تومان)</th><th>سهم</th></tr></thead>
+          <tbody>
+            <tr><td>فاکتور پرداخت‌نشده</td><td><b>{fullToman(origin.invoice)}</b></td><td>{share(origin.invoice)}</td></tr>
+            <tr><td>چک برگشتی تسویه‌نشده</td><td className="cf-debt"><b>{fullToman(origin.returned_cheque)}</b></td><td>{share(origin.returned_cheque)}</td></tr>
+            {origin.unmatched > 0 && <tr><td>مانده قدیمی‌تر از فاکتورهای ثبت‌شده</td><td><b>{fullToman(origin.unmatched)}</b></td><td>{share(origin.unmatched)}</td></tr>}
+            <tr><th>جمع</th><th>{fullToman(total)}</th><th>{fa(data.debtor_customer_count || 0)} مشتری</th></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    {kind === "branch" && <div>
+      <h4>۳. سهم هر ویزیتور</h4>
+      <p>چک برگشتی به ویزیتورِ فاکتورِ همان چک و بقیه بدهی با FIFO به ویزیتورِ فاکتورهای پرداخت‌نشده می‌رسد.</p>
+      <div className="cf-table"><table>
+        <thead><tr><th>ویزیتور</th><th>مبلغ (تومان)</th><th>سهم</th><th>مشتری بدهکار</th></tr></thead>
+        <tbody>{(data.visitors || []).map((v: any) => <tr key={v.visitor_name}>
+          <td>{v.visitor_name}</td><td><b>{fullToman(v.amount_rial)}</b></td><td>{share(v.amount_rial)}</td><td>{fa(v.customer_count)}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </div>}
+
+    <div>
+      <h4>{kind === "branch" ? "۴" : "۳"}. مشتریان بدهکار</h4>
+      <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar">
+        <div><b>جستجوی نام یا کد مشتری</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="نام یا کد..." /></div>
+        <small>{fa(customers.length)} مشتری</small>
+      </section>
+      <div className="cf-table cf-debt-customers"><table>
+        <thead><tr><th>مشتری</th><th>بدهی (تومان)</th><th>از چک برگشتی</th><th>قدیمی‌ترین فاکتور پرداخت‌نشده</th><th>آخرین پرداخت {"(سال جاری)"}</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
+        <tbody>{customers.map((c: any) => <tr key={c.dl_ref}>
+          <td className="cf-wrap"><b>{c.customer_name || "—"}</b><small>کد {c.customer_code || "—"}</small></td>
+          <td className="cf-debt">{fullToman(c.debt_rial)}</td>
+          <td>{c.returned_cheque_rial > 0 ? fullToman(c.returned_cheque_rial) : "—"}</td>
+          <td>{c.oldest_unpaid_invoice_date_jalali || "—"}</td>
+          <td>{c.last_payment_date_jalali || "—"}</td>
+          {kind === "branch" && <td className="cf-wrap">{(c.visitors || []).map((v: any) => <small key={v.visitor_name}>{v.visitor_name}: {fullToman(v.amount_rial)}</small>)}</td>}
+        </tr>)}</tbody>
+      </table></div>
+    </div>
+  </div>;
+}
+
+// Uncollected cheques with a long term (due more than 90 days after receipt) and a large amount need a closer look.
+// Cheques over 30 days past due are "unresolved" (not "open") but still uncollected, so both states count.
 const REVIEW_TERM_DAYS = 90;
 const REVIEW_AMOUNT_RIAL = 1_000_000_000; // 100M toman
 const needsChequeReview = (x: any) =>
-  x.return_risk?.state === "open"
+  (x.return_risk?.state === "open" || x.return_risk?.state === "unresolved")
   && typeof x.receipt_to_due_days === "number" && x.receipt_to_due_days > REVIEW_TERM_DAYS
   && Number(x.amount_rial || 0) > REVIEW_AMOUNT_RIAL;
 
@@ -3865,9 +3952,10 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
   const [file, setFile] = useState<any>(null);
   const [error, setError] = useState("");
   const [riskFilter, setRiskFilter] = useState<"open" | "high" | "medium" | "low" | "returned" | "review">("open");
+  const [showDebt, setShowDebt] = useState(false);
   useEffect(() => {
     let active = true;
-    setFile(null); setError("");
+    setFile(null); setError(""); setShowDebt(false);
     request(`/sales-network/${kind === "branch" ? "branches" : "visitors"}/${id}`)
       .then((d) => { if (active) setFile(d); })
       .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت پرونده ناموفق بود"); });
@@ -3903,26 +3991,28 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
 
       <section className="cf-section">
         <div className="cf-title">
-          <div><h3>فروش</h3><p>{kind === "branch" ? "همه فاکتورهای فروش این شعبه" : "فاکتورهای فروشی که این ویزیتور زده است"}</p></div>
+          <div><h3>فروش</h3><p>{kind === "branch" ? "همه فاکتورهای فروش این شعبه" : "فاکتورهای فروشی که این ویزیتور زده است"}؛ برگشت از فروش کم شده است. ناخالص = جمع قبل تخفیف، خالص = قابل پرداخت (بعد از تخفیف، با ارزش افزوده).</p></div>
           {s.last_invoice_date_jalali && <small>آخرین فاکتور: {s.last_invoice_date_jalali}</small>}
         </div>
         <div className="cf-kpis">
           <article><small>تعداد کل فاکتور فروش</small><b>{fa(s.invoice_count || 0)}</b><span>از {s.first_invoice_date_jalali || "—"}</span></article>
-          <article><small>کل مبلغ فروش تا امروز</small><b>{money(s.sales_amount_rial || 0)}</b><span>تومان</span></article>
-          <article><small>فروش {cy}</small><b>{money(s.current_year_sales_rial || 0)}</b><span>{fa(s.current_year_invoice_count || 0)} فاکتور</span></article>
-          <article><small>فروش {py}</small><b>{money(s.previous_year_sales_rial || 0)}</b><span>{fa(s.previous_year_invoice_count || 0)} فاکتور</span></article>
+          <article><small>فروش ناخالص {cy}</small><b>{fullToman(s.current_year_gross_sales_rial || 0)}</b><span>تومان · {fa(s.current_year_invoice_count || 0)} فاکتور</span></article>
+          <article><small>فروش خالص {cy}</small><b>{fullToman(s.current_year_sales_rial || 0)}</b><span>تومان</span></article>
+          <article><small>فروش ناخالص {py}</small><b>{fullToman(s.previous_year_gross_sales_rial || 0)}</b><span>تومان · {fa(s.previous_year_invoice_count || 0)} فاکتور</span></article>
+          <article><small>فروش خالص {py}</small><b>{fullToman(s.previous_year_sales_rial || 0)}</b><span>تومان</span></article>
+          <article><small>کل فروش خالص تا امروز</small><b>{fullToman(s.sales_amount_rial || 0)}</b><span>ناخالص: {fullToman(s.gross_sales_amount_rial || 0)} تومان</span></article>
         </div>
       </section>
 
       {kind === "branch" && <section className="cf-section">
         <div className="cf-title"><div><h3>ویزیتورها</h3><p>ویزیتورهای فعال و ویزیتورهایی که در {cy} یا {py} فروش داشته‌اند؛ برای پرونده ویزیتور کلیک کنید.</p></div></div>
         {(file.visitors || []).length ? <div className="cf-table cf-clickable"><table>
-          <thead><tr><th>ویزیتور</th><th>سرپرست</th><th>فروش {cy}</th><th>فروش {py}</th><th>مطالبات مشتریانش</th><th>آخرین فاکتور</th></tr></thead>
+          <thead><tr><th>ویزیتور</th><th>سرپرست</th><th>فروش {cy} (خالص / ناخالص)</th><th>فروش {py} (خالص / ناخالص)</th><th>مطالبات مشتریانش</th><th>آخرین فاکتور</th></tr></thead>
           <tbody>{file.visitors.map((v: any) => <tr key={v.visitor_id} onClick={() => onOpenVisitor?.(v.visitor_id)}>
             <td><b>{v.visitor_name}</b>{!v.active && <small className="cf-muted">غیرفعال</small>}</td>
             <td>{v.supervisor || "—"}</td>
-            <td><b>{money(v.current_year_sales_rial || 0)}</b><small>{fa(v.current_year_invoice_count || 0)} فاکتور</small></td>
-            <td><b>{money(v.previous_year_sales_rial || 0)}</b><small>{fa(v.previous_year_invoice_count || 0)} فاکتور</small></td>
+            <SalesCell net={v.current_year_sales_rial} gross={v.current_year_gross_sales_rial} count={v.current_year_invoice_count} />
+            <SalesCell net={v.previous_year_sales_rial} gross={v.previous_year_gross_sales_rial} count={v.previous_year_invoice_count} />
             <td className="cf-debt">{money(v.debt?.open_account_receivable_rial || 0)}<small>{fa(v.debt?.debtor_customer_count || 0)} مشتری بدهکار</small></td>
             <td>{v.last_invoice_date_jalali || "—"}</td>
           </tr>)}</tbody>
@@ -3935,13 +4025,18 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
       </section>
 
       <section className="cf-section">
-        <div className="cf-title"><div><h3>مطالبات</h3><p>{kind === "branch" ? "مانده دفتر کل مشتریانی که شعبه اصلی‌شان همین شعبه است." : "مانده دفتر کل مشتریانی که آخرین فاکتورشان را همین ویزیتور زده است (هر مشتری فقط یک‌بار شمرده می‌شود)."}</p></div></div>
+        <div className="cf-title"><div><h3>مطالبات</h3><p>{kind === "branch" ? "مانده دفتر کل مشتریانی که شعبه اصلی‌شان همین شعبه است." : "مانده دفتر کل مشتریان: چک برگشتیِ تسویه‌نشده به ویزیتورِ فاکتورِ همان چک می‌رسد و بقیه به روش FIFO — پرداخت‌ها اول قدیمی‌ترین فاکتورها را تسویه می‌کنند، پس بدهی باقی‌مانده مال جدیدترین فاکتورهاست و به ویزیتوری می‌رسد که همان فاکتورها را زده است. بستانکاری مشتری به ویزیتور آخرین فاکتورش می‌رسد."} برای جزئیات، روی «مانده بدهی مشتریان» کلیک کنید.</p></div></div>
         <div className="cf-kpis">
-          <article className="cf-accent-red"><small>مانده بدهی مشتریان</small><b>{money(d.open_account_receivable_rial || 0)}</b><span>{fa(d.debtor_customer_count || 0)} مشتری بدهکار از {fa(d.customer_count || 0)}</span></article>
+          <article className={`cf-accent-red cf-kpi-clickable${showDebt ? " active" : ""}`} role="button" tabIndex={0}
+            onClick={() => setShowDebt((v) => !v)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setShowDebt((v) => !v); } }}>
+            <small>مانده بدهی مشتریان</small><b>{money(d.open_account_receivable_rial || 0)}</b><span>{fa(d.debtor_customer_count || 0)} مشتری بدهکار از {fa(d.customer_count || 0)}</span>
+            <em>{showDebt ? "بستن جزئیات ▲" : "مشاهده جزئیات ▼"}</em>
+          </article>
           <article><small>بستانکاری مشتریان</small><b>{money(d.customer_credit_rial || 0)}</b><span>تومان</span></article>
           <article><small>مانده تسویه‌نشده فاکتورهای {cy}</small><b>{money(d.current_year_unpaid_invoice_rial || 0)}</b><span>{fa(d.current_year_unpaid_invoice_count || 0)} فاکتور</span></article>
           <article><small>چک باز در دست شرکت</small><b>{money(ch.summary?.open?.amount_rial || 0)}</b><span>{fa(ch.summary?.open?.count || 0)} فقره</span></article>
         </div>
+        {showDebt && <DebtDetail kind={kind} id={id} />}
       </section>
 
       <section className="cf-section">
@@ -5994,8 +6089,13 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
   const isCollectedCheque = (x: any) => collectedRows.includes(x);
   const futureRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d >= 0; });
   const overdueRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d < 0; });
+<<<<<<< HEAD
   // Rahkaran cheques with status «وصول شده» are hidden from «کل چک‌ها»; they stay reachable via the «وصول‌شده» card.
   const isRahkaranCollected = (x: any) => x.source_system === "rahkaran" && (x.master_state === 3 || /^وصول[‌\s]?شده$/.test(String(x.cheque_status || "").trim()));
+=======
+  // Rahkaran collected cheques (3 «وصول شده», 30 «نقد شده توسط مأمور وصول») are hidden from «کل چک‌ها»; they stay reachable via the «وصول‌شده» card.
+  const isRahkaranCollected = (x: any) => x.source_system === "rahkaran" && (x.master_state === 3 || x.master_state === 30 || /^وصول[‌\s]?شده$/.test(String(x.cheque_status || "").trim()));
+>>>>>>> main
   const visibleChequeRows = chequeRows.filter((x: any) => !isRahkaranCollected(x));
   const scopeRows = chequeScope === "collected" ? collectedRows : chequeScope === "returned" ? returnedRows : chequeScope === "future" ? futureRows : chequeScope === "overdue" ? overdueRows : chequeScope === "risk" ? riskRows : visibleChequeRows;
   const q = activitySearch.trim().toLocaleLowerCase("fa-IR");

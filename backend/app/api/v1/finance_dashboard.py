@@ -509,6 +509,18 @@ def sales_network_visitor(visitor_id: int):
     return result
 
 
+@router.get("/sales-network/{kind}/{scope_id}/debt-detail", summary="جزئیات مانده بدهی مشتریان یک شعبه یا ویزیتور")
+def sales_network_debt_detail(kind: str, scope_id: int):
+    from app.services.karamad_sales_network_service import KaramadSalesNetworkService
+    scope = {"branches": "branch", "visitors": "visitor"}.get(kind)
+    if scope is None:
+        raise HTTPException(status_code=404, detail="نوع پرونده نامعتبر است.")
+    try:
+        return KaramadSalesNetworkService().debt_detail(scope, scope_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت جزئیات بدهی با خطا مواجه شد: {exc}") from exc
+
+
 @router.get("/customer-intelligence/{counterpart_ref}", summary="تحلیل انسانی رفتار یک مشتری")
 def customer_intelligence_detail(
     counterpart_ref: int,

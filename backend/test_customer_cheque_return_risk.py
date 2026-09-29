@@ -50,6 +50,24 @@ def test_in_collection_is_open_and_old_karamad_bank_cheque_is_collected():
     assert summary["unresolved_cheque_count"] == 1
 
 
+def test_rahkaran_state_code_decides_and_only_held_cheques_get_a_probability():
+    def rahkaran(state, label, days=20):
+        return {"master_state": state, "state_label": label, "amount": 100, "days_to_due": days}
+
+    rows = [
+        rahkaran(30, "نقد شده توسط مأمور وصول"),
+        rahkaran(33, "تسویه شده"),
+        rahkaran(10, "مسترد شده به مشتری"),
+        rahkaran(6, "واگذار شده به غیر"),
+        rahkaran(2, "نزد بانک"),
+        rahkaran(29, "نزد مأمور وصول"),
+    ]
+    attach_return_risk(rows)
+    assert [r["return_risk"]["state"] for r in rows] == ["collected", "collected", "returned", "closed", "open", "open"]
+    assert rows[3]["return_risk"]["label"] == "واگذار شده به غیر"
+    assert all("probability_percent" not in r["return_risk"] for r in rows[:4])
+
+
 def test_external_history_sets_base_rate_when_feed_has_only_open_cheques():
     rows = [_cheque("برگشتی نزد مشتری", days=-60) for _ in range(4)] + [_cheque("واگذار شده", days=20)]
     summary = attach_return_risk(rows, {"collected_count": 200, "returned_count": 4, "average_amount_rial": 100})

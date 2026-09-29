@@ -21,6 +21,24 @@ from app.services.received_cheque_current_status import (
 from app.services.customer_cheque_behavior_engine import CustomerChequeBehaviorEngine
 from app.services.payment_commitment_service import PaymentCommitmentService
 
+# Rahkaran's own names for RPA3.ReceivableNote.State (SYS3.Lookup, Type = 'NoteState').
+RAHKARAN_NOTE_STATE_LABELS = {
+    1: "نزد صندوق",
+    2: "نزد بانک",
+    3: "وصول‌شده",
+    4: "برگشتی / واخواست‌شده",
+    6: "واگذار شده به غیر",
+    10: "مسترد شده به مشتری",
+    16: "نزد مأمور وصول",
+    17: "حقوقی شده",
+    26: "مسترد شده نزد صندوق",
+    29: "نزد مأمور وصول",
+    30: "نقد شده توسط مأمور وصول",
+    32: "نقد شده حقوقی",
+    33: "تسویه شده",
+    34: "سوخت شده",
+}
+
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, float(value)))
@@ -471,7 +489,7 @@ class FinancePredictionService:
             elif master_state in (1, 2):
                 label = current_received_holding_label(effective, row.get("CurrentStatusDescription")) or "باز / در جریان"
             else:
-                label = row.get("CurrentStatusDescription") or f"وضعیت {master_state}"
+                label = RAHKARAN_NOTE_STATE_LABELS.get(master_state) or row.get("CurrentStatusDescription") or f"وضعیت {master_state}"
             result.append({
                 "cheque_id": int(row["ChequeID"]),
                 "serial_number": str(row["SerialNumber"]) if row.get("SerialNumber") else None,
