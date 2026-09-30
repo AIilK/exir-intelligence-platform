@@ -19,7 +19,18 @@ from app.services.received_cheque_current_status import (
     received_cheque_is_approved_open_holding,
 )
 from app.services.customer_cheque_behavior_engine import CustomerChequeBehaviorEngine
+from app.services.customer_cheque_return_risk import (
+    RAHKARAN_COLLECTED_STATES,
+    RAHKARAN_OPEN_STATES,
+    RAHKARAN_RETURNED_STATES,
+)
 from app.services.payment_commitment_service import PaymentCommitmentService
+
+# Customer cheque history: every Rahkaran state that means collected / returned / still open
+# (same sets as the customer file), not just 3 / 4 / (1, 2).
+_COLLECTED = ", ".join(str(s) for s in sorted(RAHKARAN_COLLECTED_STATES))
+_RETURNED = ", ".join(str(s) for s in sorted(RAHKARAN_RETURNED_STATES))
+_OPEN = ", ".join(str(s) for s in sorted(RAHKARAN_OPEN_STATES))
 
 # Rahkaran's own names for RPA3.ReceivableNote.State (SYS3.Lookup, Type = 'NoteState').
 RAHKARAN_NOTE_STATE_LABELS = {
@@ -52,6 +63,79 @@ def _money(value: Any) -> float:
     if value is None:
         return 0.0
     return float(value)
+
+
+def cheque_reliance_rules(
+    customer: dict[str, Any] | None,
+    amount: float,
+    term_days: int | None,
+    allowed_term_days: int,
+) -> dict[str, Any]:
+    """Cheque-level return probability and reliance on top of the customer's history.
+
+    ``customer`` is a customer prediction (``CustomerChequeBehaviorEngine`` output plus
+    ``historical_average_cheque_amount`` and ``current_overdue_open_ratio_percent``).
+    Shared by Rahkaran (``cheque_return_predictions``) and the Karamad liquidity section,
+    so both systems apply exactly the same rules.
+    """
+    customer = customer or {}
+    base = customer.get("cheque_return_probability", {}).get("value", 10.0) / 100.0
+    avg_amount = max(float(customer.get("historical_average_cheque_amount", 0) or 0), 1.0)
+    amount_ratio = _money(amount) / avg_amount
+
+    adjustment = 0.0
+    reasons: list[str] = []
+    if term_days is not None and term_days > allowed_term_days:
+        adjustment += min(0.15, (term_days - allowed_term_days) / 365.0)
+        reasons.append(f"سررسید {term_days} روزه از سقف {allowed_term_days} روز بیشتر است.")
+    if amount_ratio >= 2.0:
+        adjustment += 0.08
+        reasons.append("مبلغ چک حداقل دو برابر میانگین تاریخی چک‌های این مشتری است.")
+    elif amount_ratio >= 1.5:
+        adjustment += 0.04
+        reasons.append("مبلغ چک به‌طور محسوسی از میانگین تاریخی مشتری بالاتر است.")
+    if customer and customer.get("current_overdue_open_ratio_percent", 0) >= 25:
+        adjustment += 0.08
+        reasons.append("بخش قابل توجهی از چک‌های باز فعلی مشتری سررسیدگذشته است.")
+
+    probability = _clamp(base + adjustment, 0.01, 0.95)
+    level = "high" if probability >= 0.35 else "medium" if probability >= 0.18 else "low"
+    customer_reliance = _money(customer.get("credit_decision", {}).get("recommended_reliance_percent", 50))
+    cheque_reliance = customer_reliance
+    deductions: list[dict[str, Any]] = []
+    reliance_reasons = [f"درصد اتکای پایه مشتری براساس سابقه تعیین‌تکلیف‌شده {customer_reliance:.1f}٪ است."]
+    if term_days is not None and term_days > allowed_term_days:
+        cheque_reliance -= 10
+        deductions.append({"code": "over_term_policy", "deduction_percent": 10, "reason": f"مدت چک از سقف {allowed_term_days} روز بیشتر است."})
+        reliance_reasons.append("۱۰ واحد درصد به علت عبور از سقف سررسید کسر شد.")
+    if amount_ratio >= 2.0:
+        cheque_reliance -= 15
+        deductions.append({"code": "unusual_amount", "deduction_percent": 15, "reason": "مبلغ چک حداقل دو برابر میانگین تاریخی مشتری است."})
+        reliance_reasons.append("۱۵ واحد درصد به علت مبلغ غیرعادی چک کسر شد.")
+    elif amount_ratio >= 1.5:
+        cheque_reliance -= 7
+        deductions.append({"code": "above_average_amount", "deduction_percent": 7, "reason": "مبلغ چک بالاتر از رفتار معمول مشتری است."})
+        reliance_reasons.append("۷ واحد درصد به علت مبلغ بالاتر از سابقه کسر شد.")
+    overdue_ratio = _money(customer.get("current_overdue_open_ratio_percent"))
+    if overdue_ratio >= 50:
+        cheque_reliance -= 20
+        deductions.append({"code": "high_overdue_exposure", "deduction_percent": 20, "reason": "حداقل نیمی از چک‌های باز مشتری سررسیدگذشته است."})
+        reliance_reasons.append("۲۰ واحد درصد به علت مانده باز سررسیدگذشته بالا کسر شد.")
+    elif overdue_ratio >= 25:
+        cheque_reliance -= 10
+        deductions.append({"code": "overdue_exposure", "deduction_percent": 10, "reason": "بخشی از چک‌های باز مشتری سررسیدگذشته است."})
+        reliance_reasons.append("۱۰ واحد درصد به علت مانده باز سررسیدگذشته کسر شد.")
+    cheque_reliance = max(5.0, min(cheque_reliance, (1.0 - probability) * 100.0, 95.0))
+    return {
+        "probability": probability,
+        "level": level,
+        "reasons": reasons,
+        "amount_ratio": amount_ratio,
+        "customer_reliance": customer_reliance,
+        "cheque_reliance": cheque_reliance,
+        "deductions": deductions,
+        "reliance_reasons": reliance_reasons,
+    }
 
 
 class FinancePredictionService:
@@ -693,79 +777,27 @@ class FinancePredictionService:
         for row in rows:
             ref = int(row["CounterPartRef"])
             customer = by_ref.get(ref)
-            base = (customer or {}).get("cheque_return_probability", {}).get("value", 10.0) / 100.0
-            avg_amount = max(float((customer or {}).get("historical_average_cheque_amount", 0) or 0), 1.0)
-            amount_ratio = _money(row["Amount"]) / avg_amount
             term_days = row["TermDays"]
             days_to_due = row["DaysToDue"]
-
-            adjustment = 0.0
-            reasons: list[str] = []
-            if term_days is not None and term_days > self.allowed_term_days:
-                adjustment += min(0.15, (term_days - self.allowed_term_days) / 365.0)
-                reasons.append(
-                    f"سررسید {term_days} روزه از سقف {self.allowed_term_days} روز بیشتر است."
-                )
-            if amount_ratio >= 2.0:
-                adjustment += 0.08
-                reasons.append("مبلغ چک حداقل دو برابر میانگین تاریخی چک‌های این مشتری است.")
-            elif amount_ratio >= 1.5:
-                adjustment += 0.04
-                reasons.append("مبلغ چک به‌طور محسوسی از میانگین تاریخی مشتری بالاتر است.")
-            if customer and customer.get("current_overdue_open_ratio_percent", 0) >= 25:
-                adjustment += 0.08
-                reasons.append("بخش قابل توجهی از چک‌های باز فعلی مشتری سررسیدگذشته است.")
-
-            probability = _clamp(base + adjustment, 0.01, 0.95)
-            level = "high" if probability >= 0.35 else "medium" if probability >= 0.18 else "low"
-            customer_reliance = _money(
-                (customer or {}).get("credit_decision", {}).get(
-                    "recommended_reliance_percent",
-                    50,
-                )
-            )
-            cheque_reliance = customer_reliance
-            reliance_deductions: list[dict[str, Any]] = []
-            reliance_reasons = [
-                f"درصد اتکای پایه مشتری براساس سابقه تعیین‌تکلیف‌شده {customer_reliance:.1f}٪ است."
-            ]
-            if term_days is not None and term_days > self.allowed_term_days:
-                cheque_reliance -= 10
-                reliance_deductions.append({"code": "over_term_policy", "deduction_percent": 10, "reason": f"مدت چک از سقف {self.allowed_term_days} روز بیشتر است."})
-                reliance_reasons.append("۱۰ واحد درصد به علت عبور از سقف سررسید کسر شد.")
-            if amount_ratio >= 2.0:
-                cheque_reliance -= 15
-                reliance_deductions.append({"code": "unusual_amount", "deduction_percent": 15, "reason": "مبلغ چک حداقل دو برابر میانگین تاریخی مشتری است."})
-                reliance_reasons.append("۱۵ واحد درصد به علت مبلغ غیرعادی چک کسر شد.")
-            elif amount_ratio >= 1.5:
-                cheque_reliance -= 7
-                reliance_deductions.append({"code": "above_average_amount", "deduction_percent": 7, "reason": "مبلغ چک بالاتر از رفتار معمول مشتری است."})
-                reliance_reasons.append("۷ واحد درصد به علت مبلغ بالاتر از سابقه کسر شد.")
-            overdue_ratio = _money(
-                (customer or {}).get("current_overdue_open_ratio_percent")
-            )
-            if overdue_ratio >= 50:
-                cheque_reliance -= 20
-                reliance_deductions.append({"code": "high_overdue_exposure", "deduction_percent": 20, "reason": "حداقل نیمی از چک‌های باز مشتری سررسیدگذشته است."})
-                reliance_reasons.append("۲۰ واحد درصد به علت مانده باز سررسیدگذشته بالا کسر شد.")
-            elif overdue_ratio >= 25:
-                cheque_reliance -= 10
-                reliance_deductions.append({"code": "overdue_exposure", "deduction_percent": 10, "reason": "بخشی از چک‌های باز مشتری سررسیدگذشته است."})
-                reliance_reasons.append("۱۰ واحد درصد به علت مانده باز سررسیدگذشته کسر شد.")
-            cheque_reliance = max(
-                5.0,
-                min(
-                    cheque_reliance,
-                    (1.0 - probability) * 100.0,
-                    95.0,
-                ),
-            )
+            rules = cheque_reliance_rules(customer, _money(row["Amount"]), term_days, self.allowed_term_days)
+            probability = rules["probability"]
+            level = rules["level"]
+            reasons = rules["reasons"]
+            amount_ratio = rules["amount_ratio"]
+            customer_reliance = rules["customer_reliance"]
+            cheque_reliance = rules["cheque_reliance"]
+            reliance_deductions = rules["deductions"]
+            reliance_reasons = rules["reliance_reasons"]
             predictions.append(
                 {
                     "cheque_id": row["ChequeID"],
                     "counterpart_ref": ref,
                     "counterpart_code": row["CounterPartCode"],
                     "counterpart_name": row["CounterPartName"],
+                    "master_state": row["MasterState"],
+                    "current_status_description": row["CurrentStatusDescription"],
+                    "holding_label": current_received_holding_label(row["State"], row["CurrentStatusDescription"]),
+                    "serial_number": row["SerialNumber"],
                     "amount": _as_number(row["Amount"]),
                     "due_date": str(row["DueDate"]),
                     "due_date_jalali": _as_jalali_date(row["DueDate"]),
@@ -779,6 +811,7 @@ class FinancePredictionService:
                     "historical_collection_rate_percent": (customer or {}).get("customer_behavior", {}).get("historical_collection_rate_percent", 0),
                     "historical_return_rate_percent": (customer or {}).get("customer_behavior", {}).get("historical_return_rate_percent", 0),
                     "customer_base_reliance_percent": round(customer_reliance, 2),
+                    "resolved_history_count": (customer or {}).get("customer_behavior", {}).get("resolved_cheque_count"),
                     "recommended_reliance_percent": round(cheque_reliance, 2),
                     "risk_adjusted_collectible_amount_rial": round(
                         _money(row["Amount"]) * cheque_reliance / 100.0,
@@ -1210,7 +1243,7 @@ class FinancePredictionService:
     # ------------------------------------------------------------------
     def _customer_behavior_rows(self):
         query = text(
-            """
+            f"""
             SELECT
                 note.[CounterPartRef],
                 counterpart.[Code] AS [CounterPartCode],
@@ -1219,31 +1252,31 @@ class FinancePredictionService:
                 COUNT_BIG(DISTINCT master_note.[ReceivableNoteID]) AS [DistinctChequeCount],
                 COUNT_BIG(*) - COUNT_BIG(DISTINCT master_note.[ReceivableNoteID]) AS [RepeatedSourceRowCount],
                 COALESCE(SUM(note.[Amount]), 0) AS [TotalAmount],
-                COALESCE(SUM(CASE WHEN master_note.[State] = 3 THEN 1 ELSE 0 END), 0) AS [CollectedCount],
-                COALESCE(SUM(CASE WHEN master_note.[State] = 3 THEN note.[Amount] ELSE 0 END), 0) AS [CollectedAmount],
-                COALESCE(SUM(CASE WHEN master_note.[State] = 4 THEN 1 ELSE 0 END), 0) AS [ReturnedCount],
-                COALESCE(SUM(CASE WHEN master_note.[State] IN (1,2) THEN 1 ELSE 0 END), 0) AS [OpenCount],
-                COALESCE(SUM(CASE WHEN master_note.[State] IN (1,2) THEN note.[Amount] ELSE 0 END), 0) AS [OpenAmount],
+                COALESCE(SUM(CASE WHEN master_note.[State] IN ({_COLLECTED}) THEN 1 ELSE 0 END), 0) AS [CollectedCount],
+                COALESCE(SUM(CASE WHEN master_note.[State] IN ({_COLLECTED}) THEN note.[Amount] ELSE 0 END), 0) AS [CollectedAmount],
+                COALESCE(SUM(CASE WHEN master_note.[State] IN ({_RETURNED}) THEN 1 ELSE 0 END), 0) AS [ReturnedCount],
+                COALESCE(SUM(CASE WHEN master_note.[State] IN ({_OPEN}) THEN 1 ELSE 0 END), 0) AS [OpenCount],
+                COALESCE(SUM(CASE WHEN master_note.[State] IN ({_OPEN}) THEN note.[Amount] ELSE 0 END), 0) AS [OpenAmount],
                 COALESCE(SUM(CASE
-                    WHEN master_note.[State] IN (1,2) AND note.[DueDate] < CAST(GETDATE() AS date)
+                    WHEN master_note.[State] IN ({_OPEN}) AND note.[DueDate] < CAST(GETDATE() AS date)
                     THEN 1 ELSE 0 END), 0) AS [OverdueOpenCount],
                 COALESCE(SUM(CASE
-                    WHEN master_note.[State] IN (1,2) AND note.[DueDate] < CAST(GETDATE() AS date)
+                    WHEN master_note.[State] IN ({_OPEN}) AND note.[DueDate] < CAST(GETDATE() AS date)
                     THEN note.[Amount] ELSE 0 END), 0) AS [OverdueOpenAmount],
                 COALESCE(SUM(CASE
-                    WHEN master_note.[State] IN (1,2) AND note.[DueDate] >= CAST(GETDATE() AS date)
+                    WHEN master_note.[State] IN ({_OPEN}) AND note.[DueDate] >= CAST(GETDATE() AS date)
                     THEN 1 ELSE 0 END), 0) AS [FutureOpenCount],
                 COALESCE(SUM(CASE
-                    WHEN master_note.[State] IN (1,2) AND note.[DueDate] >= CAST(GETDATE() AS date)
+                    WHEN master_note.[State] IN ({_OPEN}) AND note.[DueDate] >= CAST(GETDATE() AS date)
                     THEN note.[Amount] ELSE 0 END), 0) AS [FutureOpenAmount],
                 COALESCE(SUM(CASE
-                    WHEN master_note.[State] IN (1,2)
+                    WHEN master_note.[State] IN ({_OPEN})
                      AND note.[DueDate] >= CAST(GETDATE() AS date)
                      AND note.[DueDate] < DATEADD(day, :forecast_days + 1, CAST(GETDATE() AS date))
                     THEN note.[Amount] ELSE 0 END), 0) AS [UpcomingOpenAmount],
-                COALESCE(SUM(CASE WHEN master_note.[State] = 4 THEN note.[Amount] ELSE 0 END), 0) AS [ReturnedAmount],
-                COALESCE(SUM(CASE WHEN master_note.[State] NOT IN (1,2,3,4) THEN 1 ELSE 0 END), 0) AS [OtherStateCount],
-                COALESCE(SUM(CASE WHEN master_note.[State] NOT IN (1,2,3,4) THEN note.[Amount] ELSE 0 END), 0) AS [OtherStateAmount],
+                COALESCE(SUM(CASE WHEN master_note.[State] IN ({_RETURNED}) THEN note.[Amount] ELSE 0 END), 0) AS [ReturnedAmount],
+                COALESCE(SUM(CASE WHEN master_note.[State] NOT IN ({_OPEN}, {_COLLECTED}, {_RETURNED}) THEN 1 ELSE 0 END), 0) AS [OtherStateCount],
+                COALESCE(SUM(CASE WHEN master_note.[State] NOT IN ({_OPEN}, {_COLLECTED}, {_RETURNED}) THEN note.[Amount] ELSE 0 END), 0) AS [OtherStateAmount],
                 AVG(CAST(note.[Amount] AS float)) AS [AverageChequeAmount],
                 AVG(CASE WHEN note.[DueDate] IS NOT NULL AND receipt.[Date] IS NOT NULL
                     THEN CAST(DATEDIFF(day, CAST(receipt.[Date] AS date), CAST(note.[DueDate] AS date)) AS float)

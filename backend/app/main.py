@@ -8,6 +8,7 @@ from app.api.v1.datasource import router as datasource_router
 from app.api.v1.query import router as query_router
 from app.api.v1.finance_dashboard import router as finance_dashboard_router
 from app.api.v1.finance_operations import router as finance_operations_router
+from app.api.v1.liquidity import router as liquidity_router
 
 
 @asynccontextmanager
@@ -51,6 +52,7 @@ app.include_router(query_router, prefix="/api/v1")
 app.include_router(finance_dashboard_router, prefix="/api/v1")
 app.include_router(finance_operations_router, prefix="/api/v1")
 app.include_router(treasury_router, prefix="/api/v1")
+app.include_router(liquidity_router, prefix="/api/v1")
 
 from app.api.v1.finance_agent import router as finance_agent_router
 

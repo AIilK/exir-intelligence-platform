@@ -21,6 +21,7 @@ import "./ui-polish-v69.css";
 import "./management-v109.css";
 import "./theme-stability-v137.css";
 import "./customer-file.css";
+import LiquidityPage from "./liquidity/liquidity-page";
 
 type View =
   | "management"
@@ -29,6 +30,7 @@ type View =
   | "receivedCheques"
   | "issuedCheques"
   | "cashflow"
+  | "liquidity"
   | "cashBank"
   | "companyPayments"
   | "b2bRemittances"
@@ -1483,6 +1485,7 @@ const menu: [View, string, string][] = [
   ["cashBank", "⇄", "نقد و حواله"],
   ["companyPayments", "↗", "حواله‌های پرداختی شرکت"],
   ["b2bRemittances", "⇢", "حواله‌های مشتریان B2B"],
+  ["liquidity", "₪", "نقدینگی (جدید)"],
   ["cashflow", "⌁", "پیش‌بینی نقدینگی"],
   ["monthlyExcel", "▥", "Cash Flow روزانه"],
   ["collections", "✓", "مرکز عملیات وصول"],
@@ -1860,6 +1863,7 @@ export default function Page() {
         {view === "cashflow" && (
           <Cashflow cash={cash} agent={pack?.agents?.cashflow} openAgent={(key) => { setAgentFocus(key); setView("agents"); }} />
         )}
+        {view === "liquidity" && <LiquidityPage />}
         {view === "cashBank" && (
           <CashBankMovements agent={pack?.agents?.cash_bank_movement} />
         )}
@@ -3853,99 +3857,13 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
   </>;
 }
 
-// Karamad sales, as in the finance sales report: خالص = قابل پرداخت − برگشتی، ناخالص = جمع قبل تخفیف − برگشتی.
-function SalesCell({ net, gross, count }: { net?: number; gross?: number; count?: number }) {
-  return <td><b>خالص {fullToman(net || 0)}</b><small>ناخالص {fullToman(gross || 0)}</small><small>تومان</small><small>{fa(count || 0)} فاکتور</small></td>;
-}
-
-// Breakdown of box 1 (مانده بدهی مشتریان), loaded when the box is opened.
-function DebtDetail({ kind, id }: { kind: "branch" | "visitor"; id: number }) {
-  const [data, setData] = useState<any>(null);
-  const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  useEffect(() => {
-    let active = true;
-    setData(null); setError("");
-    request(`/sales-network/${kind === "branch" ? "branches" : "visitors"}/${id}/debt-detail`)
-      .then((d) => { if (active) setData(d); })
-      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت جزئیات بدهی ناموفق بود"); });
-    return () => { active = false; };
-  }, [kind, id]);
-  if (error) return <div className="profile-warning">{error}</div>;
-  if (!data) return <div className="profile-loading">در حال محاسبه جزئیات بدهی...</div>;
-
-  const total = data.total_debt_rial || 0;
-  const share = (v: number) => total ? `${fa(Math.round((v / total) * 100))}٪` : "—";
-  const origin = data.origin || {};
-  const q = search.trim().toLocaleLowerCase("fa-IR");
-  const customers = (data.customers || []).filter((c: any) => !q
-    || `${c.customer_name} ${c.customer_code}`.toLocaleLowerCase("fa-IR").includes(q));
-  return <div className="cf-debt-detail">
-    <div className="cf-debt-detail-grid">
-      <div>
-        <h4>۱. سن بدهی</h4>
-        <p>تاریخ فاکتورهایی که هنوز پرداخت نشده‌اند (FIFO: پرداخت‌ها اول قدیمی‌ترین فاکتورها را تسویه می‌کنند). چک برگشتی جداگانه در بخش ۲ است.</p>
-        <div className="cf-table"><table>
-          <thead><tr><th>سن</th><th>مبلغ (تومان)</th><th>سهم</th><th>مشتری</th></tr></thead>
-          <tbody>{(data.aging || []).map((a: any) => <tr key={a.label}>
-            <td>{a.label}</td><td><b>{fullToman(a.amount_rial)}</b></td><td>{share(a.amount_rial)}</td><td>{fa(a.customer_count)}</td>
-          </tr>)}</tbody>
-        </table></div>
-      </div>
-      <div>
-        <h4>۲. منشأ بدهی</h4>
-        <p>بدهی از فاکتور پرداخت‌نشده آمده یا از چکی که برگشت خورده و هنوز تسویه نشده است.</p>
-        <div className="cf-table"><table>
-          <thead><tr><th>منشأ</th><th>مبلغ (تومان)</th><th>سهم</th></tr></thead>
-          <tbody>
-            <tr><td>فاکتور پرداخت‌نشده</td><td><b>{fullToman(origin.invoice)}</b></td><td>{share(origin.invoice)}</td></tr>
-            <tr><td>چک برگشتی تسویه‌نشده</td><td className="cf-debt"><b>{fullToman(origin.returned_cheque)}</b></td><td>{share(origin.returned_cheque)}</td></tr>
-            {origin.unmatched > 0 && <tr><td>مانده قدیمی‌تر از فاکتورهای ثبت‌شده</td><td><b>{fullToman(origin.unmatched)}</b></td><td>{share(origin.unmatched)}</td></tr>}
-            <tr><th>جمع</th><th>{fullToman(total)}</th><th>{fa(data.debtor_customer_count || 0)} مشتری</th></tr>
-          </tbody>
-        </table></div>
-      </div>
-    </div>
-
-    {kind === "branch" && <div>
-      <h4>۳. سهم هر ویزیتور</h4>
-      <p>چک برگشتی به ویزیتورِ فاکتورِ همان چک و بقیه بدهی با FIFO به ویزیتورِ فاکتورهای پرداخت‌نشده می‌رسد.</p>
-      <div className="cf-table"><table>
-        <thead><tr><th>ویزیتور</th><th>مبلغ (تومان)</th><th>سهم</th><th>مشتری بدهکار</th></tr></thead>
-        <tbody>{(data.visitors || []).map((v: any) => <tr key={v.visitor_name}>
-          <td>{v.visitor_name}</td><td><b>{fullToman(v.amount_rial)}</b></td><td>{share(v.amount_rial)}</td><td>{fa(v.customer_count)}</td>
-        </tr>)}</tbody>
-      </table></div>
-    </div>}
-
-    <div>
-      <h4>{kind === "branch" ? "۴" : "۳"}. مشتریان بدهکار</h4>
-      <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar">
-        <div><b>جستجوی نام یا کد مشتری</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="نام یا کد..." /></div>
-        <small>{fa(customers.length)} مشتری</small>
-      </section>
-      <div className="cf-table cf-debt-customers"><table>
-        <thead><tr><th>مشتری</th><th>بدهی (تومان)</th><th>از چک برگشتی</th><th>قدیمی‌ترین فاکتور پرداخت‌نشده</th><th>آخرین پرداخت {"(سال جاری)"}</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
-        <tbody>{customers.map((c: any) => <tr key={c.dl_ref}>
-          <td className="cf-wrap"><b>{c.customer_name || "—"}</b><small>کد {c.customer_code || "—"}</small></td>
-          <td className="cf-debt">{fullToman(c.debt_rial)}</td>
-          <td>{c.returned_cheque_rial > 0 ? fullToman(c.returned_cheque_rial) : "—"}</td>
-          <td>{c.oldest_unpaid_invoice_date_jalali || "—"}</td>
-          <td>{c.last_payment_date_jalali || "—"}</td>
-          {kind === "branch" && <td className="cf-wrap">{(c.visitors || []).map((v: any) => <small key={v.visitor_name}>{v.visitor_name}: {fullToman(v.amount_rial)}</small>)}</td>}
-        </tr>)}</tbody>
-      </table></div>
-    </div>
-  </div>;
-}
-
-// Uncollected cheques with a long term (due more than 90 days after receipt) and a large amount need a closer look.
-// Cheques over 30 days past due are "unresolved" (not "open") but still uncollected, so both states count.
-const REVIEW_TERM_DAYS = 90;
-const REVIEW_AMOUNT_RIAL = 1_000_000_000; // 100M toman
+// Open cheques far past due with a large amount need a closer look.
+// TEST values — production target is 90 days and 1_000_000_000 rial (100M toman).
+const REVIEW_OVERDUE_DAYS = 10;
+const REVIEW_AMOUNT_RIAL = 500_000_000;
 const needsChequeReview = (x: any) =>
-  (x.return_risk?.state === "open" || x.return_risk?.state === "unresolved")
-  && typeof x.receipt_to_due_days === "number" && x.receipt_to_due_days > REVIEW_TERM_DAYS
+  x.return_risk?.state === "open"
+  && typeof x.days_until_due === "number" && x.days_until_due < -REVIEW_OVERDUE_DAYS
   && Number(x.amount_rial || 0) > REVIEW_AMOUNT_RIAL;
 
 function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "branch" | "visitor"; id: number; onBack: () => void; onOpenVisitor?: (id: number) => void; backLabel: string }) {
@@ -6089,15 +6007,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
   const isCollectedCheque = (x: any) => collectedRows.includes(x);
   const futureRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d >= 0; });
   const overdueRows = chequeRows.filter((x: any) => { const d = chequeDay(x); return !isReturnedCheque(x) && !isCollectedCheque(x) && d !== undefined && d < 0; });
-<<<<<<< HEAD
-  // Rahkaran cheques with status «وصول شده» are hidden from «کل چک‌ها»; they stay reachable via the «وصول‌شده» card.
-  const isRahkaranCollected = (x: any) => x.source_system === "rahkaran" && (x.master_state === 3 || /^وصول[‌\s]?شده$/.test(String(x.cheque_status || "").trim()));
-=======
-  // Rahkaran collected cheques (3 «وصول شده», 30 «نقد شده توسط مأمور وصول») are hidden from «کل چک‌ها»; they stay reachable via the «وصول‌شده» card.
-  const isRahkaranCollected = (x: any) => x.source_system === "rahkaran" && (x.master_state === 3 || x.master_state === 30 || /^وصول[‌\s]?شده$/.test(String(x.cheque_status || "").trim()));
->>>>>>> main
-  const visibleChequeRows = chequeRows.filter((x: any) => !isRahkaranCollected(x));
-  const scopeRows = chequeScope === "collected" ? collectedRows : chequeScope === "returned" ? returnedRows : chequeScope === "future" ? futureRows : chequeScope === "overdue" ? overdueRows : chequeScope === "risk" ? riskRows : visibleChequeRows;
+  const scopeRows = chequeScope === "collected" ? collectedRows : chequeScope === "returned" ? returnedRows : chequeScope === "future" ? futureRows : chequeScope === "overdue" ? overdueRows : chequeScope === "risk" ? riskRows : chequeRows;
   const q = activitySearch.trim().toLocaleLowerCase("fa-IR");
   const filteredChequeRows = !q ? scopeRows : scopeRows.filter((x: any) => [x.cheque_number, x.sayad_number, x.cheque_status, x.state_label, x.bank, x.bank_name, x.branch, x.description, x.return_reason, x.amount_rial].filter(Boolean).some((v) => String(v).toLocaleLowerCase("fa-IR").includes(q)));
   const filteredChequeAmount = filteredChequeRows.reduce((sum: number, x: any) => sum + Number(x.amount_rial || x.amount || 0), 0);
