@@ -521,6 +521,26 @@ def sales_network_debt_detail(kind: str, scope_id: int):
         raise HTTPException(status_code=500, detail=f"دریافت جزئیات بدهی با خطا مواجه شد: {exc}") from exc
 
 
+@router.get("/distribution", summary="توزیع بار کارآمد: فاکتورهای توزیع‌نشده، حواله‌های باز، سرعت خروج و موزعان")
+def distribution_overview():
+    from app.services.karamad_distribution_service import KaramadDistributionService
+    try:
+        return KaramadDistributionService().overview()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت اطلاعات توزیع بار با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/distribution/monthly", summary="توزیع و وصول فاکتورهای یک ماه هیبریدها (مثل گزارش واحد مالی)")
+def distribution_monthly(year: int, month: int):
+    from app.services.karamad_distribution_service import KaramadDistributionService
+    if not (1 <= month <= 12):
+        raise HTTPException(status_code=400, detail="ماه نامعتبر است.")
+    try:
+        return KaramadDistributionService().monthly(year, month)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت گزارش توزیع و وصول با خطا مواجه شد: {exc}") from exc
+
+
 @router.get("/customer-intelligence/{counterpart_ref}", summary="تحلیل انسانی رفتار یک مشتری")
 def customer_intelligence_detail(
     counterpart_ref: int,

@@ -18,7 +18,7 @@
 .cash-bank-toolbar b {
   display: block;
   width: 100%;
-  font-size: 12px;
+  font-size: 13px;
   color: #9fb1bd;
   margin-bottom: 4px;
 }
@@ -52,7 +52,7 @@
   display: grid;
   gap: 4px;
   color: #9fb1bd;
-  font-size: 11px;
+  font-size: 12.5px;
 }
 .custom-dates input {
   color-scheme: dark;
@@ -85,7 +85,7 @@
   border-radius: 12px;
   background: #10212d;
 }
-.karamad-folder-box span { color: #92aab6; font-size: 12px; }
+.karamad-folder-box span { color: #92aab6; font-size: 13px; }
 .karamad-folder-box b { color: #e9f5f7; overflow-wrap: anywhere; }
 .karamad-folder-box button {
   border: 0;
@@ -117,7 +117,7 @@
   display: grid;
   gap: 6px;
   color: #9fb4be;
-  font-size: 12px;
+  font-size: 13px;
 }
 .karamad-upload input,
 .karamad-filters input,
@@ -163,7 +163,7 @@
   border-radius: 12px;
   background: #122230;
 }
-.karamad-summary span { color: #9fb4be; font-size: 12px; }
+.karamad-summary span { color: #9fb4be; font-size: 13px; }
 .karamad-summary b { color: #f2fafb; font-size: 16px; }
 .karamad-rule {
   padding: 10px 12px;
@@ -179,7 +179,7 @@
   justify-content: center;
   padding: 5px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 800;
   white-space: nowrap;
   color: #b9d9e3;
@@ -255,7 +255,7 @@
   padding: 4px 8px;
   border-radius: 99px;
   border: 1px solid #566b77;
-  font-size: 11px;
+  font-size: 12.5px;
 }
 .review-status.paid { color: #50ead4; border-color: #287e71; background: #13372f; }
 .review-status.cancelled { color: #aabdc8; background: #1a2934; }
@@ -318,7 +318,7 @@
   display: inline-flex;
   padding: 5px 9px;
   border-radius: 99px;
-  font-size: 11px;
+  font-size: 12.5px;
   border: 1px solid;
 }
 .movement-kind.inflow {

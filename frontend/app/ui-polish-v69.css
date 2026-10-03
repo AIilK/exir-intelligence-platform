@@ -16,7 +16,7 @@ body { background: var(--polish-bg); }
     radial-gradient(circle at 78% -8%, rgba(31, 116, 122, .16), transparent 30%),
     radial-gradient(circle at 6% 88%, rgba(31, 72, 112, .13), transparent 34%),
     var(--polish-bg);
-  font-family: "B Nazanin", "Vazirmatn", Tahoma, "Segoe UI", Arial, sans-serif;
+  font-family: "Vazirmatn", Tahoma, "Segoe UI", Arial, sans-serif;
 }
 
 .fd.enterprise:before,
@@ -514,7 +514,7 @@ body { background: var(--polish-bg); }
 }
 .fd.enterprise .karamad-cheque-update small { color:#5eead4; font-weight:800; }
 .fd.enterprise .karamad-cheque-update h3 { margin:5px 0; color:#eefbfa; font-size:15px; }
-.fd.enterprise .karamad-cheque-update p { margin:0; color:#9eb5bd; font-size:11px; line-height:1.8; }
+.fd.enterprise .karamad-cheque-update p { margin:0; color:#9eb5bd; font-size:12.5px; line-height:1.8; }
 .fd.enterprise .karamad-cheque-update label {
   position:relative; display:flex; align-items:center; justify-content:center; min-height:46px;
   padding:10px 14px; border:1px dashed #3f7580; border-radius:12px; color:#b9d2d6;
@@ -527,15 +527,15 @@ body { background: var(--polish-bg); }
   color:#06212a; font-weight:900; cursor:pointer; min-height:46px;
 }
 .fd.enterprise .karamad-cheque-update button:disabled { opacity:.45; cursor:not-allowed; }
-.fd.enterprise .karamad-cheque-update em { grid-column:1/-1; font-style:normal; color:#b8f7e9; font-size:11px; }
+.fd.enterprise .karamad-cheque-update em { grid-column:1/-1; font-style:normal; color:#b8f7e9; font-size:12.5px; }
 .fd.enterprise .karamad-status-mini { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0 2px; }
-.fd.enterprise .karamad-status-mini span { padding:5px 8px; border-radius:999px; background:rgba(45,212,191,.1); border:1px solid rgba(45,212,191,.2); color:#a7f3d0; font-size:10px; }
+.fd.enterprise .karamad-status-mini span { padding:5px 8px; border-radius:999px; background:rgba(45,212,191,.1); border:1px solid rgba(45,212,191,.2); color:#a7f3d0; font-size:12px; }
 .fd.enterprise .cheque-business-status { display:inline-flex; flex-direction:column; gap:3px; align-items:flex-start; }
-.fd.enterprise .cheque-business-status small { color:inherit; opacity:.72; font-size:8px; }
+.fd.enterprise .cheque-business-status small { color:inherit; opacity:.72; font-size:11px; }
 @media(max-width:900px){.fd.enterprise .karamad-cheque-update{grid-template-columns:1fr}.fd.enterprise .karamad-cheque-update em{grid-column:auto}}
 
 /* V98 — KarAmand full received-cheque history */
-.karamad-portfolio-timing{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 17px}.karamad-timing-card{padding:16px 18px;border:1px solid #29485a;border-radius:16px;background:linear-gradient(145deg,#102330,#0d1b28);box-shadow:0 12px 30px #0003;display:grid;gap:6px}.karamad-timing-card small{color:#8ba8b3}.karamad-timing-card strong{color:#eefafa;font-size:18px}.karamad-timing-card span{color:#9fb4bd;font-size:11px}.karamad-timing-card.overdue{border-color:#7f3d49}.karamad-timing-card.overdue strong{color:#fda4af}.karamad-timing-card.today{border-color:#80642a}.karamad-timing-card.today strong{color:#fde68a}.karamad-timing-card.future{border-color:#1c7569}.karamad-timing-card.future strong{color:#5eead4}.karamad-timing-card.total{border-color:#315f84}.karamad-timing-card.total strong{color:#93c5fd}.cheque-business-status small{display:block;margin-top:4px;font-size:8px;opacity:.78}.karamad-summary>div.overdue b{color:#be123c}.karamad-summary>div.today b{color:#b45309}.karamad-summary>div.future b{color:#0f766e}@media(max-width:900px){.karamad-portfolio-timing{grid-template-columns:1fr 1fr}}@media(max-width:520px){.karamad-portfolio-timing{grid-template-columns:1fr}}
+.karamad-portfolio-timing{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 17px}.karamad-timing-card{padding:16px 18px;border:1px solid #29485a;border-radius:16px;background:linear-gradient(145deg,#102330,#0d1b28);box-shadow:0 12px 30px #0003;display:grid;gap:6px}.karamad-timing-card small{color:#8ba8b3}.karamad-timing-card strong{color:#eefafa;font-size:18px}.karamad-timing-card span{color:#9fb4bd;font-size:12.5px}.karamad-timing-card.overdue{border-color:#7f3d49}.karamad-timing-card.overdue strong{color:#fda4af}.karamad-timing-card.today{border-color:#80642a}.karamad-timing-card.today strong{color:#fde68a}.karamad-timing-card.future{border-color:#1c7569}.karamad-timing-card.future strong{color:#5eead4}.karamad-timing-card.total{border-color:#315f84}.karamad-timing-card.total strong{color:#93c5fd}.cheque-business-status small{display:block;margin-top:4px;font-size:11px;opacity:.78}.karamad-summary>div.overdue b{color:#be123c}.karamad-summary>div.today b{color:#b45309}.karamad-summary>div.future b{color:#0f766e}@media(max-width:900px){.karamad-portfolio-timing{grid-template-columns:1fr 1fr}}@media(max-width:520px){.karamad-portfolio-timing{grid-template-columns:1fr}}
 
 /* V101 — management due-date navigation */
 .management-due-board {
@@ -661,7 +661,7 @@ body { background: var(--polish-bg); }
   max-width: 118px;
   padding-left: 8px;
   padding-right: 8px;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -683,13 +683,13 @@ body { background: var(--polish-bg); }
 .future-cashflow-executive:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 88% 0%,rgba(45,212,191,.08),transparent 38%);pointer-events:none}
 .future-cashflow-head{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:18px}
 .future-cashflow-head small{color:#5eead4;font-weight:800}.future-cashflow-head h2{margin:4px 0 3px;font-size:22px}.future-cashflow-head p{margin:0;color:#94a3b8;font-size:13px}
-.future-cashflow-head>span{border-radius:999px;padding:7px 12px;font-size:12px;font-weight:900;white-space:nowrap}.future-cashflow-head>span.positive{background:rgba(16,185,129,.14);color:#6ee7b7;border:1px solid rgba(16,185,129,.24)}.future-cashflow-head>span.negative{background:rgba(239,68,68,.13);color:#fca5a5;border:1px solid rgba(239,68,68,.22)}
+.future-cashflow-head>span{border-radius:999px;padding:7px 12px;font-size:13px;font-weight:900;white-space:nowrap}.future-cashflow-head>span.positive{background:rgba(16,185,129,.14);color:#6ee7b7;border:1px solid rgba(16,185,129,.24)}.future-cashflow-head>span.negative{background:rgba(239,68,68,.13);color:#fca5a5;border:1px solid rgba(239,68,68,.22)}
 .future-cashflow-cards{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.future-cashflow-card{text-align:right;border-radius:17px;padding:17px;border:1px solid rgba(148,163,184,.12);background:rgba(10,26,38,.84);color:#e2e8f0;cursor:pointer;transition:.18s ease;min-height:176px}.future-cashflow-card:hover{transform:translateY(-3px);border-color:rgba(45,212,191,.42);box-shadow:0 16px 35px rgba(0,0,0,.2)}
-.future-cashflow-card small{display:block;color:#cbd5e1;font-weight:800;margin-bottom:8px}.future-cashflow-card strong{display:block;font-size:25px;line-height:1.25;color:#f8fafc}.future-cashflow-card strong em{font-size:11px;font-style:normal;color:#94a3b8;font-weight:700}.future-cashflow-card>p{font-size:12px;color:#94a3b8;min-height:38px;margin:10px 0}.future-cashflow-card>span{display:block;font-size:11px;font-weight:900;color:#5eead4}.future-cashflow-card>b{display:inline-block;margin-top:6px;font-size:11px;border-radius:999px;padding:3px 8px}
+.future-cashflow-card small{display:block;color:#cbd5e1;font-weight:800;margin-bottom:8px}.future-cashflow-card strong{display:block;font-size:25px;line-height:1.25;color:#f8fafc}.future-cashflow-card strong em{font-size:12.5px;font-style:normal;color:#94a3b8;font-weight:700}.future-cashflow-card>p{font-size:13px;color:#94a3b8;min-height:38px;margin:10px 0}.future-cashflow-card>span{display:block;font-size:12.5px;font-weight:900;color:#5eead4}.future-cashflow-card>b{display:inline-block;margin-top:6px;font-size:12.5px;border-radius:999px;padding:3px 8px}
 .future-cashflow-card.inflow{box-shadow:inset 0 3px 0 rgba(16,185,129,.65)}.future-cashflow-card.outflow{box-shadow:inset 0 3px 0 rgba(245,158,11,.7)}.future-cashflow-card.net-positive{box-shadow:inset 0 3px 0 rgba(45,212,191,.75)}.future-cashflow-card.net-negative{box-shadow:inset 0 3px 0 rgba(239,68,68,.75)}.future-cashflow-card.net-positive>b{color:#6ee7b7;background:rgba(16,185,129,.12)}.future-cashflow-card.net-negative>b{color:#fca5a5;background:rgba(239,68,68,.12)}
-.future-cashflow-rule{position:relative;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(15,23,42,.46);display:flex;gap:10px;align-items:flex-start}.future-cashflow-rule span{color:#5eead4;font-size:11px;font-weight:900;white-space:nowrap}.future-cashflow-rule p{margin:0;color:#94a3b8;font-size:11px;line-height:1.8}
+.future-cashflow-rule{position:relative;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(15,23,42,.46);display:flex;gap:10px;align-items:flex-start}.future-cashflow-rule span{color:#5eead4;font-size:12.5px;font-weight:900;white-space:nowrap}.future-cashflow-rule p{margin:0;color:#94a3b8;font-size:12.5px;line-height:1.8}
 .future-cashflow-executive.compact{margin-top:14px}.future-cashflow-executive.compact .future-cashflow-head{margin-bottom:12px}.future-cashflow-executive.compact .future-cashflow-card{min-height:150px;padding:14px}.future-cashflow-executive.compact .future-cashflow-card strong{font-size:21px}
-.agent-focus-note{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:14px 0 10px;padding:10px 14px;border-radius:13px;background:rgba(45,212,191,.09);border:1px solid rgba(45,212,191,.25)}.agent-focus-note span{font-size:12px;color:#99f6e4}.agent-focus-note b{font-size:13px;color:#f8fafc}.agent-focused-wrap{border-radius:18px;outline:2px solid rgba(45,212,191,.5);box-shadow:0 0 0 5px rgba(45,212,191,.06),0 18px 40px rgba(0,0,0,.24)}
+.agent-focus-note{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:14px 0 10px;padding:10px 14px;border-radius:13px;background:rgba(45,212,191,.09);border:1px solid rgba(45,212,191,.25)}.agent-focus-note span{font-size:13px;color:#99f6e4}.agent-focus-note b{font-size:13px;color:#f8fafc}.agent-focused-wrap{border-radius:18px;outline:2px solid rgba(45,212,191,.5);box-shadow:0 0 0 5px rgba(45,212,191,.06),0 18px 40px rgba(0,0,0,.24)}
 @media(max-width:980px){.future-cashflow-cards{grid-template-columns:1fr}.future-cashflow-card{min-height:auto}.future-cashflow-head{flex-direction:column}}
 
 /* V107 — clean management report + unified cheque portfolio */

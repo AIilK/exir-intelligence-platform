@@ -1,4 +1,4 @@
-:root{--font-fa:"B Nazanin","Vazirmatn","IRANSansX","Segoe UI",Tahoma,Arial,sans-serif}
+:root{--font-fa:"Vazirmatn","IRANSansX",Tahoma,"Segoe UI",Arial,sans-serif}
 html,body,.fd,button,input,select,textarea{font-family:var(--font-fa)!important}
 
 /* کارت‌های اقدام داخل پنل تیره Agent باید هویت روشن و مستقل داشته باشند. */

@@ -13,7 +13,12 @@ had zero activity this fiscal year and were excluded.
 
 Ledger tables: dbo.tblVoucherLines (Debtor/Creditor/SLRef/DLRef/DL2Ref/DL3Ref)
 joined to dbo.tblVoucher (for FiscalYear) and dbo.tblSL (SLRef -> .ID, same
-ID-not-Code convention already confirmed for tblSL/tblDL elsewhere).
+ID-not-Code convention already confirmed for tblSL/tblDL elsewhere), PLUS
+dbo.tblVoucherLinesTemp: Karamad's simulated lines for documents accounting has
+not posted yet (invoices, returns, receipts…). Without them the balance missed
+~200bn toman of unposted invoices; with them it matches the finance team's
+«مانده حساب‌های هیبرید مشتریان» report exactly (verified 1405/07/08:
+11,836 of 11,884 customers identical, Isfahan 28,944,375,952 toman).
 A customer's DL id can appear at any of the three DL levels on a voucher
 line, so all three (DLRef/DL2Ref/DL3Ref) are matched, mirroring Rahkaran's
 DLLevel4/5/6 OR-match.
@@ -28,6 +33,27 @@ from sqlalchemy import text
 from app.database.karamad_sqlserver import get_karamad_sqlserver_engine
 
 _RECEIVABLE_SL_CODES = ("1313", "1319", "1320")
+# Ledger reads run while Karamad users post documents (tblVoucherLinesTemp is rewritten
+# constantly); reading without shared locks keeps these report queries from blocking Karamad
+# or being chosen as deadlock victims. A report-grade read, not a transactional one.
+LEDGER_READ_ISOLATION = "READ UNCOMMITTED"
+
+# Current-fiscal-year ledger lines: posted vouchers + Karamad's simulated lines for documents not
+# posted yet (tblVoucherLinesTemp). Expects an ``active_fy`` CTE; a fixed internal SQL fragment.
+_LEDGER_LINES = """
+    SELECT vl.[SLRef], vl.[DLRef], vl.[DL2Ref], vl.[DL3Ref], vl.[Debtor], vl.[Creditor],
+           v.[DateE], v.[BranchRef], vl.[Description], vl.[VoucherRef], CAST(0 AS bit) AS IsTemp
+    FROM dbo.[tblVoucherLines] vl
+    JOIN dbo.[tblVoucher] v ON v.[ID] = vl.[VoucherRef]
+    CROSS JOIN active_fy fy
+    WHERE v.[FiscalYear] = fy.[FiscalYearRef] AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL)
+    UNION ALL
+    SELECT t.[SLRef], t.[DLRef], t.[DL2Ref], t.[DL3Ref], t.[Debtor], t.[Creditor],
+           t.[DateE], t.[BranchRef], t.[Description], NULL, CAST(1 AS bit)
+    FROM dbo.[tblVoucherLinesTemp] t
+    CROSS JOIN active_fy fy
+    WHERE t.[FiscalYear] = fy.[FiscalYearRef] AND (t.[isDeleted] = 0 OR t.[isDeleted] IS NULL)
+"""
 
 
 def _money(value: Any) -> float:
@@ -67,39 +93,22 @@ class KaramadCustomerAccountService:
             receivable_sl AS (
                 SELECT [ID] FROM dbo.[tblSL] WHERE [Code] IN ({in_clause})
             ),
+            ledger AS ({_LEDGER_LINES}),
             customer_lines AS (
-                SELECT vl.[DLRef] AS EffectiveDLRef, vl.[Debtor], vl.[Creditor]
-                FROM dbo.[tblVoucherLines] vl
-                JOIN receivable_sl sl ON sl.[ID] = vl.[SLRef]
-                JOIN dbo.[tblVoucher] v ON v.[ID] = vl.[VoucherRef]
-                CROSS JOIN active_fy fy
-                WHERE v.[FiscalYear] = fy.[FiscalYearRef]
-                  AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL)
-                  AND vl.[DLRef] IS NOT NULL
+                SELECT l.[DLRef] AS EffectiveDLRef, l.[Debtor], l.[Creditor]
+                FROM ledger l JOIN receivable_sl sl ON sl.[ID] = l.[SLRef] WHERE l.[DLRef] IS NOT NULL
                 UNION ALL
-                SELECT vl.[DL2Ref], vl.[Debtor], vl.[Creditor]
-                FROM dbo.[tblVoucherLines] vl
-                JOIN receivable_sl sl ON sl.[ID] = vl.[SLRef]
-                JOIN dbo.[tblVoucher] v ON v.[ID] = vl.[VoucherRef]
-                CROSS JOIN active_fy fy
-                WHERE v.[FiscalYear] = fy.[FiscalYearRef]
-                  AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL)
-                  AND vl.[DL2Ref] IS NOT NULL
+                SELECT l.[DL2Ref], l.[Debtor], l.[Creditor]
+                FROM ledger l JOIN receivable_sl sl ON sl.[ID] = l.[SLRef] WHERE l.[DL2Ref] IS NOT NULL
                 UNION ALL
-                SELECT vl.[DL3Ref], vl.[Debtor], vl.[Creditor]
-                FROM dbo.[tblVoucherLines] vl
-                JOIN receivable_sl sl ON sl.[ID] = vl.[SLRef]
-                JOIN dbo.[tblVoucher] v ON v.[ID] = vl.[VoucherRef]
-                CROSS JOIN active_fy fy
-                WHERE v.[FiscalYear] = fy.[FiscalYearRef]
-                  AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL)
-                  AND vl.[DL3Ref] IS NOT NULL
+                SELECT l.[DL3Ref], l.[Debtor], l.[Creditor]
+                FROM ledger l JOIN receivable_sl sl ON sl.[ID] = l.[SLRef] WHERE l.[DL3Ref] IS NOT NULL
             )
             SELECT EffectiveDLRef AS DLRef, SUM(Debtor) AS DebtorAmount, SUM(Creditor) AS CreditorAmount
             FROM customer_lines
             GROUP BY EffectiveDLRef
         """)
-        with self.engine.connect() as conn:
+        with self.engine.connect().execution_options(isolation_level=LEDGER_READ_ISOLATION) as conn:
             rows = conn.execute(query).mappings().all()
 
         result: dict[int, dict[str, Any]] = {}
@@ -131,33 +140,29 @@ class KaramadCustomerAccountService:
             ),
             receivable_sl AS (
                 SELECT [ID], [Code], [Name] FROM dbo.[tblSL] WHERE [Code] IN ({in_clause})
-            )
+            ),
+            ledger AS ({_LEDGER_LINES})
             SELECT
                 dl.[ID] AS DLID, dl.[Name] AS DLName,
                 fy.[FiscalYearRef], fy.[DateStart], fy.[DateEnd],
                 sl.[ID] AS SLID, sl.[Code] AS SLCode, sl.[Name] AS SLName,
-                COALESCE(SUM(vl.[Debtor]), 0) AS DebtorAmount,
-                COALESCE(SUM(vl.[Creditor]), 0) AS CreditorAmount,
-                COALESCE(SUM(vl.[Debtor] - vl.[Creditor]), 0) AS NetAmount,
-                COUNT(vl.[VoucherRef]) AS TransactionCount
+                COALESCE(SUM(l.[Debtor]), 0) AS DebtorAmount,
+                COALESCE(SUM(l.[Creditor]), 0) AS CreditorAmount,
+                COALESCE(SUM(l.[Debtor] - l.[Creditor]), 0) AS NetAmount,
+                COUNT(l.[SLRef]) AS TransactionCount
             FROM dbo.[tblDL] dl
             CROSS JOIN active_fy fy
             CROSS JOIN receivable_sl sl
-            LEFT JOIN dbo.[tblVoucherLines] vl
-                ON vl.[SLRef] = sl.[ID]
-               AND (vl.[DLRef] = dl.[ID] OR vl.[DL2Ref] = dl.[ID] OR vl.[DL3Ref] = dl.[ID])
-               AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL)
-            LEFT JOIN dbo.[tblVoucher] v
-                ON v.[ID] = vl.[VoucherRef]
-               AND v.[FiscalYear] = fy.[FiscalYearRef]
+            LEFT JOIN ledger l
+                ON l.[SLRef] = sl.[ID]
+               AND (l.[DLRef] = dl.[ID] OR l.[DL2Ref] = dl.[ID] OR l.[DL3Ref] = dl.[ID])
             WHERE dl.[ID] = :dl_ref
-              AND (vl.[VoucherRef] IS NULL OR v.[ID] IS NOT NULL)
             GROUP BY dl.[ID], dl.[Name], fy.[FiscalYearRef], fy.[DateStart], fy.[DateEnd],
                      sl.[ID], sl.[Code], sl.[Name]
             ORDER BY sl.[Code]
         """)
 
-        with self.engine.connect() as conn:
+        with self.engine.connect().execution_options(isolation_level=LEDGER_READ_ISOLATION) as conn:
             rows = conn.execute(query, {"dl_ref": int(dl_ref)}).mappings().all()
 
         if not rows:
@@ -199,7 +204,7 @@ class KaramadCustomerAccountService:
             "open_account_receivable_rial": max(balance, 0.0),
             "customer_credit_rial": max(-balance, 0.0),
             "balance_status": "debtor" if balance > 0 else "creditor" if balance < 0 else "settled",
-            "accounting_note": "مانده مشتری از گردش دفتر کل کارآمد (tblVoucherLines) سال مالی جاری روی تفصیلی مشتری و معین‌های ۱۳۱۳/۱۳۱۹/۱۳۲۰ محاسبه می‌شود.",
+            "accounting_note": "مانده مشتری از گردش دفتر کل کارآمد سال مالی جاری (اسناد قطعی به‌علاوه اسناد هنوز صادرنشده) روی تفصیلی مشتری و معین‌های ۱۳۱۳/۱۳۱۹/۱۳۲۰ محاسبه می‌شود.",
         }
 
     def ledger_entries(self, dl_ref: int, limit: int = 500) -> list[dict[str, Any]]:
@@ -214,23 +219,20 @@ class KaramadCustomerAccountService:
                 WHERE CAST(GETDATE() AS date) BETWEEN [DateStart] AND [DateEnd]
                 ORDER BY [DateStart] DESC
             )
+            ,ledger AS ({_LEDGER_LINES})
             SELECT TOP (:limit)
-                v.[DateE] AS VoucherDate, v.[BranchRef] AS BranchRef, br.[Name] AS BranchName,
+                l.[DateE] AS VoucherDate, l.[BranchRef] AS BranchRef, br.[Name] AS BranchName,
                 sl.[Name] AS SLName, dl.[Name] AS DLName,
-                vl.[Debtor], vl.[Creditor], vl.[Description], vl.[VoucherRef]
-            FROM dbo.[tblVoucherLines] vl
-            JOIN dbo.[tblSL] sl ON sl.[ID] = vl.[SLRef]
-            JOIN dbo.[tblVoucher] v ON v.[ID] = vl.[VoucherRef]
-            CROSS JOIN active_fy fy
-            LEFT JOIN dbo.[tblDL] dl ON dl.[ID] = vl.[DLRef]
-            LEFT JOIN dbo.[tblBranch] br ON br.[Code] = v.[BranchRef]
-            WHERE (vl.[DLRef] = :dl_ref OR vl.[DL2Ref] = :dl_ref OR vl.[DL3Ref] = :dl_ref)
+                l.[Debtor], l.[Creditor], l.[Description], l.[VoucherRef], l.[IsTemp]
+            FROM ledger l
+            JOIN dbo.[tblSL] sl ON sl.[ID] = l.[SLRef]
+            LEFT JOIN dbo.[tblDL] dl ON dl.[ID] = l.[DLRef]
+            LEFT JOIN dbo.[tblBranch] br ON br.[Code] = l.[BranchRef]
+            WHERE (l.[DLRef] = :dl_ref OR l.[DL2Ref] = :dl_ref OR l.[DL3Ref] = :dl_ref)
               AND sl.[Code] IN ({in_clause})
-              AND v.[FiscalYear] = fy.[FiscalYearRef]
-              AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL)
-            ORDER BY v.[DateE] ASC
+            ORDER BY l.[DateE] ASC
         """)
-        with self.engine.connect() as conn:
+        with self.engine.connect().execution_options(isolation_level=LEDGER_READ_ISOLATION) as conn:
             rows = conn.execute(query, {"dl_ref": int(dl_ref), "limit": int(limit)}).mappings().all()
 
         entries: list[dict[str, Any]] = []
@@ -254,6 +256,7 @@ class KaramadCustomerAccountService:
                 "running_balance_rial": running,
                 "description": r.get("Description"),
                 "voucher_ref": r.get("VoucherRef"),
+                "is_unposted": bool(r.get("IsTemp")),
             })
         entries.reverse()  # جدیدترین بالا، برای نمایش؛ مانده تجمعی همچنان درست محاسبه شده
         return entries

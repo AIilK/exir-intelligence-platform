@@ -214,7 +214,29 @@ class CustomerFileService:
             if len(last_invoices) == LAST_INVOICE_COUNT:
                 break
 
+        # Every invoice (any year) still carrying part of the balance under the same FIFO rule,
+        # newest first; the UI flags the old ones.
+        open_invoices = []
+        remaining_balance = open_balance
+        for invoice in final:
+            if remaining_balance is None or remaining_balance <= 0:
+                break
+            if invoice["amount_rial"] < MIN_LAST_INVOICE_AMOUNT_RIAL:
+                continue
+            remaining = min(invoice["amount_rial"], remaining_balance)
+            remaining_balance -= remaining
+            issued = invoice["date"].date() if isinstance(invoice["date"], datetime) else invoice["date"]
+            open_invoices.append({
+                "invoice_id": invoice["invoice_id"],
+                "number": invoice["number"],
+                "date_jalali": format_jalali_date(invoice["date"]),
+                "age_days": (today - issued).days if issued else None,
+                "amount_rial": invoice["amount_rial"],
+                "remaining_rial": _num(remaining),
+            })
+
         return {
+            "open_invoices": open_invoices,
             "status": "success",
             "source": "rahkaran",
             "counterpart_ref": int(counterpart_ref),
@@ -281,9 +303,33 @@ class CustomerFileService:
             last_invoices = karamad_invoice_settlements(connection, last)
             network = self._karamad_sales_network(connection, rows, current_id, previous_id)
 
+        # Same FIFO rule as Rahkaran: the customer's ledger balance (posted + not yet posted)
+        # belongs to the newest invoices, so an old invoice is open only if the balance reaches it.
+        from app.services.karamad_sales_network_service import ledger_positions
+        positions = ledger_positions()
+        remaining_balance = sum(float(positions.get(d, {}).get("balance_rial") or 0) for d in dl_refs)
+        open_invoices = []
+        for invoice in rows:
+            if remaining_balance <= 0:
+                break
+            if invoice["amount_rial"] < MIN_LAST_INVOICE_AMOUNT_RIAL:
+                continue
+            remaining = min(invoice["amount_rial"], remaining_balance)
+            remaining_balance -= remaining
+            issued = invoice["date"].date() if isinstance(invoice["date"], datetime) else invoice["date"]
+            open_invoices.append({
+                "invoice_id": invoice["invoice_id"],
+                "number": invoice["number"],
+                "date_jalali": format_jalali_date(invoice["date"]),
+                "age_days": (today - issued).days if issued else None,
+                "amount_rial": invoice["amount_rial"],
+                "remaining_rial": _num(remaining),
+            })
+
         return {
             "status": "success",
             "source": "karamad",
+            "open_invoices": open_invoices,
             "found": bool(rows),
             "dl_refs": dl_refs,
             "current_year_label": str(current["Name"]) if current else "",

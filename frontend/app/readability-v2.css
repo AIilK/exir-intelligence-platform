@@ -1,0 +1,8 @@
+/* Persian readability (loaded last): comfortable line height, crisp rendering, readable tables. */
+html,body{line-height:1.8;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
+p,li,td,th,small,span,label{line-height:1.75}
+th{font-weight:700}
+.cf-table td,.cf-table th,.fd-table td,.fd-table th{font-size:13.5px}
+.cf-table td small,.cf-table th small{font-size:12px}
+input,select,textarea,button{font-size:13.5px}
+b,strong{font-weight:700}

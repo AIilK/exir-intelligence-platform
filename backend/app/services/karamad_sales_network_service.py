@@ -37,6 +37,7 @@ from app.utils.jalali import format_jalali_date
 OPEN_CHEQUE_STATUSES = (1, 2, 3, 6, 7, 10)
 COLLECTED_CHEQUE_STATUS = 4
 RETURNED_CHEQUE_STATUSES = (6, 7, 8, 10)
+JALALI_MONTHS = ("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
 OPEN_RETURNED_CHEQUE_STATUSES = (6, 7, 10)  # returned and not yet settled (8 = returned, then collected)
 # Customer scopes (fixed internal SQL returning tblCustomer.ID; :sid is the branch/visitor id).
 VISITOR_CUSTOMERS = "SELECT [CustomerRef] FROM dbo.[tblFactorF] WHERE [VisitorRef] = :sid"
@@ -617,7 +618,8 @@ class KaramadSalesNetworkService:
         scope = BRANCH_MAIN_CUSTOMERS if kind == "branch" else VISITOR_CUSTOMERS
         params = {"sid": scope_id}
         positions = ledger_positions()
-        with self.engine.connect() as connection:
+        from app.services.karamad_customer_account_service import LEDGER_READ_ISOLATION
+        with self.engine.connect().execution_options(isolation_level=LEDGER_READ_ISOLATION) as connection:
             customers = {int(r["DLRef"]): r for r in connection.execute(text(
                 f"SELECT [DLRef], [Name], [Code] FROM dbo.[tblCustomer] WHERE [DLRef] IS NOT NULL AND [ID] IN ({scope})"
             ), params).mappings()}
@@ -661,6 +663,7 @@ class KaramadSalesNetworkService:
                     "debt_rial": _num(sum(s["amount"] for s in slices)),
                     "returned_cheque_rial": _num(sum(s["amount"] for s in slices if s["kind"] == "returned_cheque")),
                     "oldest_unpaid_invoice_date_jalali": format_jalali_date(min(invoice_dates)) if invoice_dates else "",
+                    "last_invoice_date_jalali": format_jalali_date(max((d for _, _, d in by_invoice.get(dl, []) if d), default=None)),
                     "_visitors": visitor_totals,
                 })
 
@@ -669,13 +672,20 @@ class KaramadSalesNetworkService:
                 "SELECT [ID], [Name] FROM dbo.[tblVisitor] WHERE [ID] IN :ids"
             ).bindparams(bindparam("ids", expanding=True)), {"ids": visitor_ids or [-1]}).mappings()}
             last_payment = self._last_payment_dates(connection, scope, params)
+            monthly = self._monthly_debt(connection, scope, params, {d["dl_ref"]: d["debt_rial"] for d in debtors}) if kind == "branch" else {}
 
         visitor_name = lambda vid: names.get(vid, "") if vid is not None else "نامشخص"  # noqa: E731
         debtors.sort(key=lambda d: d["debt_rial"], reverse=True)
+        month_totals: dict[int, float] = {}
         for d in debtors:
             d["visitors"] = [{"visitor_name": visitor_name(vid), "amount_rial": _num(amount)}
                              for vid, amount in sorted(d.pop("_visitors").items(), key=lambda x: -x[1])]
             d["last_payment_date_jalali"] = format_jalali_date(last_payment.get(d["dl_ref"]))
+            if kind == "branch":
+                months = monthly.get(d["dl_ref"], {})
+                d["months"] = {str(m): _num(v) for m, v in months.items()}
+                for m, v in months.items():
+                    month_totals[m] = month_totals.get(m, 0.0) + v
         return {
             "status": "success",
             "scope": kind,
@@ -688,38 +698,81 @@ class KaramadSalesNetworkService:
                  for vid, v in by_visitor.items()),
                 key=lambda x: -x["amount_rial"]),
             "customers": debtors,
+            # Branch only: debt aged by Jalali month of the ledger debit, like the finance team's
+            # «مانده حساب‌های هیبرید مشتریان» report (months present, 1 = فروردین).
+            "months": [{"month": m, "label": JALALI_MONTHS[m - 1], "amount_rial": _num(v)} for m, v in sorted(month_totals.items())],
         }
 
     @staticmethod
-    def _last_payment_dates(connection, customer_scope: str, params: dict[str, Any]) -> dict[int, Any]:
-        """Latest date each customer's receivable account was credited this fiscal year (a payment,
-        cheque or return), from the same ledger lines box 1 reads."""
-        from app.services.karamad_customer_account_service import _RECEIVABLE_SL_CODES
+    def _monthly_debt(connection, customer_scope: str, params: dict[str, Any], balances: dict[int, float]) -> dict[int, dict[int, float]]:
+        """Each customer's debt by Jalali month, the same way the finance report ages it: credits
+        settle the oldest debit lines first, so what is still owed sits on the newest debit lines
+        (posted + not yet posted ledger), each counted in the month of its date."""
+        from app.services.karamad_customer_account_service import _LEDGER_LINES, _RECEIVABLE_SL_CODES
         codes = ", ".join(f"N'{code}'" for code in _RECEIVABLE_SL_CODES)
         dls = f"SELECT cu.[DLRef] FROM dbo.[tblCustomer] cu WHERE cu.[ID] IN ({customer_scope})"
         rows = connection.execute(text(
             f"""
-            WITH fy AS (
-                SELECT TOP (1) [ID] FROM dbo.[tblFiscalYear]
+            WITH active_fy AS (
+                SELECT TOP (1) [ID] AS FiscalYearRef FROM dbo.[tblFiscalYear]
                 WHERE CAST(GETDATE() AS date) BETWEEN [DateStart] AND [DateEnd] ORDER BY [DateStart] DESC
             ),
-            credit AS (
-                SELECT vl.[DLRef] AS dl, vl.[VoucherRef] FROM dbo.[tblVoucherLines] vl
-                    JOIN dbo.[tblSL] sl ON sl.[ID] = vl.[SLRef]
-                    WHERE sl.[Code] IN ({codes}) AND vl.[Creditor] > 0 AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL) AND vl.[DLRef] IN ({dls})
-                UNION ALL
-                SELECT vl.[DL2Ref], vl.[VoucherRef] FROM dbo.[tblVoucherLines] vl
-                    JOIN dbo.[tblSL] sl ON sl.[ID] = vl.[SLRef]
-                    WHERE sl.[Code] IN ({codes}) AND vl.[Creditor] > 0 AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL) AND vl.[DL2Ref] IN ({dls})
-                UNION ALL
-                SELECT vl.[DL3Ref], vl.[VoucherRef] FROM dbo.[tblVoucherLines] vl
-                    JOIN dbo.[tblSL] sl ON sl.[ID] = vl.[SLRef]
-                    WHERE sl.[Code] IN ({codes}) AND vl.[Creditor] > 0 AND (vl.[isDeleted] = 0 OR vl.[isDeleted] IS NULL) AND vl.[DL3Ref] IN ({dls})
+            ledger AS ({_LEDGER_LINES}),
+            debit AS (
+                SELECT l.[DateE], l.[Debtor], l.[DLRef], l.[DL2Ref], l.[DL3Ref] FROM ledger l JOIN dbo.[tblSL] sl ON sl.[ID] = l.[SLRef]
+                WHERE sl.[Code] IN ({codes}) AND l.[Debtor] > 0
+            ),
+            by_dl AS (
+                SELECT [DLRef] AS dl, [DateE], [Debtor] FROM debit WHERE [DLRef] IN ({dls})
+                UNION ALL SELECT [DL2Ref], [DateE], [Debtor] FROM debit WHERE [DL2Ref] IN ({dls})
+                UNION ALL SELECT [DL3Ref], [DateE], [Debtor] FROM debit WHERE [DL3Ref] IN ({dls})
             )
-            SELECT c.dl, MAX(v.[DateE]) AS last_date
-            FROM credit c JOIN dbo.[tblVoucher] v ON v.[ID] = c.[VoucherRef] CROSS JOIN fy
-            WHERE v.[FiscalYear] = fy.[ID]
-            GROUP BY c.dl
+            SELECT dl, [DateE], SUM([Debtor]) AS amount FROM by_dl GROUP BY dl, [DateE] ORDER BY dl, [DateE] DESC
+            """
+        ), params).mappings().all()
+        lines: dict[int, list[tuple[Any, float]]] = {}
+        for r in rows:
+            lines.setdefault(int(r["dl"]), []).append((r["DateE"], float(r["amount"] or 0)))
+        result: dict[int, dict[int, float]] = {}
+        for dl, balance in balances.items():
+            remaining, months = float(balance), {}
+            for when, amount in lines.get(dl, []):  # newest first
+                if remaining <= 0:
+                    break
+                share = min(remaining, amount)
+                remaining -= share
+                jalali = format_jalali_date(when)
+                month = int(jalali[5:7]) if jalali and len(jalali) >= 7 else 1
+                months[month] = months.get(month, 0.0) + share
+            if remaining > 0:
+                months[1] = months.get(1, 0.0) + remaining
+            result[dl] = months
+        return result
+
+    @staticmethod
+    def _last_payment_dates(connection, customer_scope: str, params: dict[str, Any]) -> dict[int, Any]:
+        """Latest date each customer's receivable account was credited this fiscal year (a payment,
+        cheque or return), from the same ledger lines box 1 reads (posted + not yet posted)."""
+        from app.services.karamad_customer_account_service import _LEDGER_LINES, _RECEIVABLE_SL_CODES
+        codes = ", ".join(f"N'{code}'" for code in _RECEIVABLE_SL_CODES)
+        dls = f"SELECT cu.[DLRef] FROM dbo.[tblCustomer] cu WHERE cu.[ID] IN ({customer_scope})"
+        rows = connection.execute(text(
+            f"""
+            WITH active_fy AS (
+                SELECT TOP (1) [ID] AS FiscalYearRef FROM dbo.[tblFiscalYear]
+                WHERE CAST(GETDATE() AS date) BETWEEN [DateStart] AND [DateEnd] ORDER BY [DateStart] DESC
+            ),
+            ledger AS ({_LEDGER_LINES}),
+            credit AS (
+                SELECT l.[DateE], l.[DLRef], l.[DL2Ref], l.[DL3Ref] FROM ledger l JOIN dbo.[tblSL] sl ON sl.[ID] = l.[SLRef]
+                WHERE sl.[Code] IN ({codes}) AND l.[Creditor] > 0
+            ),
+            by_dl AS (
+                SELECT [DLRef] AS dl, [DateE] FROM credit WHERE [DLRef] IN ({dls})
+                UNION ALL SELECT [DL2Ref], [DateE] FROM credit WHERE [DL2Ref] IN ({dls})
+                UNION ALL SELECT [DL3Ref], [DateE] FROM credit WHERE [DL3Ref] IN ({dls})
+            )
+            SELECT dl, MAX([DateE]) AS last_date FROM by_dl GROUP BY dl
             """
         ), params).mappings().all()
         return {int(r["dl"]): r["last_date"] for r in rows}
