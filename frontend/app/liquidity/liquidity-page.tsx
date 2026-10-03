@@ -539,36 +539,57 @@ function WeekdayBars({ items }: { items: any[] }) {
 
 function PayrollSection({ reloadKey }: { reloadKey: number }) {
   const { data, error, loading } = useLiquidity(`/payroll`, reloadKey);
+  const [selected, setSelected] = useState("zarin");
   const d = data?.data;
+  const companies: any[] = d?.companies || [];
+  const company = companies.find((c) => c.key === selected) || companies[0];
+  const latestRow = d?.by_company_monthly?.[d.by_company_monthly.length - 1];
+  const isZarin = company?.key === "zarin";
   return (
     <State loading={loading && !d} error={error}>
       <Warnings items={data?.warnings} />
       {d && d.kpis && <>
-        <div className="fd-kpis">
-          <Kpi label={`جمع کل حقوق ${d.latest_month.month}`} value={`${toman(d.kpis.total_rial)} تومان`} note={`${pct(d.kpis.total_change_percent)} نسبت به ماه قبل`} tone="red" />
-          <Kpi label="خالص پرداختی" value={`${toman(d.kpis.net_pay_rial)} تومان`} />
-          <Kpi label="بیمه و مالیات" value={`${toman(d.kpis.insurance_and_tax_rial)} تومان`} tone="amber" />
-          <Kpi label="نفرات" value={fa(d.kpis.headcount)} note={d.kpis.headcount_change != null ? `${d.kpis.headcount_change >= 0 ? "+" : ""}${fa(d.kpis.headcount_change)} نفر` : undefined} tone="blue" />
+        <div className="fd-kpis lq-kpis">
+          {latestRow && <Kpi label={`جمع کل گروه ${latestRow.month}`} value={`${toman(latestRow.total_rial)} تومان`}
+            note={`${fa(latestRow.headcount)} نفر · راهکاران + زرین`} tone="red" />}
+          {companies.map((c) => c.latest_month && (
+            <button key={c.key} className={`fd-kpi lq-kpi-btn ${c.key === company?.key ? "teal" : "blue"}`} onClick={() => setSelected(c.key)}>
+              <small>{c.label} · {c.latest_month.month}</small>
+              <b>{toman(c.latest_month.total_rial)} تومان</b>
+              <em>{fa(c.latest_month.headcount)} نفر · {pct(c.total_change_percent)} نسبت به ماه قبل</em>
+            </button>
+          ))}
         </div>
-        <div className="fd-grid">
+
+        <section className="fd-panel">
+          <div className="fd-heading"><h2>حقوق ماه‌به‌ماه به تفکیک شرکت</h2><p>جمع کل هر شرکت (خالص + بیمه سهم کارمند و کارفرما + مالیات). {d.rule}</p></div>
+          <div className="fd-table"><table>
+            <thead><tr><th>ماه</th>{companies.map((c) => <th key={c.key}>{c.label}</th>)}<th>جمع گروه</th></tr></thead>
+            <tbody>{[...d.by_company_monthly].reverse().map((row: any) => (
+              <tr key={row.month}><td>{row.month}</td>
+                {companies.map((c) => <td key={c.key}>{row.companies[c.key] == null ? "—" : toman(row.companies[c.key])}</td>)}
+                <td><b>{toman(row.total_rial)}</b></td></tr>
+            ))}</tbody>
+          </table></div>
+        </section>
+
+        {company && (
           <section className="fd-panel">
-            <div className="fd-heading"><h2>پرداخت‌های پیش رو</h2><p>{d.pay_day.rule} روز معمول: {fa(d.pay_day.usual_day_of_month || 0)} هر ماه.</p></div>
-            <table className="lq-table"><tbody>
-              {d.forecast.map((f: any) => <tr key={f.date}><td>{f.date_jalali} (حقوق {f.payroll_month})</td><td className="num neg">{toman(f.amount_rial)}</td></tr>)}
-            </tbody></table>
-            {d.in_progress_months.length > 0 && <p className="lq-rule">در حال محاسبه: {d.in_progress_months.map((m: any) => `${m.month} (${fa(m.headcount)} نفر)`).join("، ")}</p>}
-          </section>
-          <section className="fd-panel">
-            <div className="fd-heading"><h2>روند ماهانه</h2><p>{d.rule}</p></div>
-            <table className="lq-table">
-              <thead><tr><th>ماه</th><th>نفرات</th><th>خالص</th><th>بیمه</th><th>مالیات</th><th>جمع کل</th></tr></thead>
-              <tbody>{[...d.monthly_trend].reverse().map((m: any) => (
-                <tr key={m.month}><td>{m.month}</td><td className="num">{fa(m.headcount)}</td><td className="num">{toman(m.net_pay_rial)}</td>
-                  <td className="num">{toman(m.insurance_rial)}</td><td className="num">{toman(m.tax_rial)}</td><td className="num"><b>{toman(m.total_rial)}</b></td></tr>
+            <div className="lq-panel-head">
+              <div className="fd-heading"><h2>جزئیات ماهانه: {company.label}</h2>
+                <p>{isZarin ? "از حقوق کارآمد. پورسانت = «اضافات» فیش حقوق هر ماه (عمدتاً ویزیتورها و سرپرستان فروش)؛ حقوق پایه ثابت است و نوسان از پورسانت می‌آید." : "از راهکاران، به تفکیک کارگاه بیمه هر کارمند در همان ماه."}</p></div>
+              <div className="lq-seg">{companies.map((c) => <button key={c.key} className={c.key === company.key ? "active" : ""} onClick={() => setSelected(c.key)}>{c.label}</button>)}</div>
+            </div>
+            <div className="fd-table"><table>
+              <thead><tr><th>ماه</th><th>نفرات</th>{isZarin && <><th>حقوق پایه</th><th>پورسانت (اضافات)</th></>}<th>خالص پرداختی</th><th>بیمه</th><th>مالیات</th><th>جمع کل</th></tr></thead>
+              <tbody>{[...company.monthly_trend].reverse().map((m: any) => (
+                <tr key={m.month}><td>{m.month}</td><td>{fa(m.headcount)}</td>
+                  {isZarin && <><td>{toman(m.base_pay_rial)}</td><td className="pos">{toman(m.commission_rial)}</td></>}
+                  <td>{toman(m.net_pay_rial)}</td><td>{toman(m.insurance_rial)}</td><td>{toman(m.tax_rial)}</td><td><b>{toman(m.total_rial)}</b></td></tr>
               ))}</tbody>
-            </table>
+            </table></div>
           </section>
-        </div>
+        )}
       </>}
     </State>
   );

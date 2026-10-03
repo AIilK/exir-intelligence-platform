@@ -59,3 +59,4 @@
 @media(max-width:700px){.lq-kpis{grid-template-columns:1fr 1fr}.lq-scenarios{grid-template-columns:1fr}.lq-opening input:not([type]){width:130px}}
 .lq-grid3{grid-template-columns:repeat(3,1fr)}
 @media(max-width:1200px){.lq-grid3{grid-template-columns:1fr}}
+.lq-kpi-btn{cursor:pointer;text-align:right;font:inherit;color:inherit}

@@ -1,8 +1,11 @@
-"""Section 5 of the liquidity dashboard: personnel payroll, from Rahkaran only.
+"""Section 5 of the liquidity dashboard: personnel payroll per company.
 
-Management decision: every payroll figure comes from Rahkaran (HCM3); Karamad payroll
-is ignored.  Monthly figures are grouped by ``PayCalcItem.IssueYearMonth`` (one row per
-employee and factor per month, verified on live data).
+Rahkaran (HCM3) holds اکسیر، کادوس and فراز بهداشت, split by each employee's social-insurance
+workshop in the payroll month.  Karamad's payroll module belongs entirely to زرین کالای کادوس,
+whose sales staff are paid a monthly commission («اضافات»).  The forecast still uses the
+Rahkaran total only; Zarin and commissions are history, no forecast yet.  Rahkaran months
+are grouped by ``PayCalcItem.IssueYearMonth`` (one row per employee and factor per month,
+verified on live data).
 
 Grand total = net pay + social insurance (employee and employer share) + payroll tax,
 i.e. all cash that leaves the company for a payroll month.  The forecast places the last
@@ -35,14 +38,58 @@ COMPLETE_HEADCOUNT_RATIO = 0.8
 PAY_DAY_HISTORY_MONTHS = 6
 CACHE_TTL_SECONDS = 300
 
+# Each employee's company = the social-insurance workshop valid in that payroll month; the
+# workshop's party is named after the company («... شعبه اشتهارد 0040 - اکسیر»).
 PAYROLL_SQL = text(f"""
+    WITH paid AS (
+        SELECT DISTINCT i.[IssueYearMonth] AS [YearMonth], i.[EmployeeRef]
+        FROM HCM3.[PayCalcItem] AS i
+        WHERE i.[IssueYearMonth] >= :from_year_month
+    ),
+    workshop AS (
+        SELECT paid.[YearMonth], paid.[EmployeeRef], ero.[OrganizationBranchRef],
+               ROW_NUMBER() OVER (PARTITION BY paid.[YearMonth], paid.[EmployeeRef]
+                                  ORDER BY ero.[EffectiveYearMonth] DESC, ero.[EmployeeRelatedOrganizationID] DESC) AS [rn]
+        FROM paid
+        INNER JOIN HCM3.[EmployeeRelatedOrganization] AS ero
+            ON ero.[EmployeeRef] = paid.[EmployeeRef] AND ero.[IsInsurance] = 1
+           AND ero.[EffectiveYearMonth] <= paid.[YearMonth]
+           AND (ero.[ExpiryYearMonth] IS NULL OR ero.[ExpiryYearMonth] >= paid.[YearMonth])
+    )
     SELECT i.[IssueYearMonth] AS [YearMonth], i.[CompensationFactorRef] AS [Factor],
+           party.[CompanyName] AS [Workshop],
            COUNT(DISTINCT i.[EmployeeRef]) AS [Employees], SUM(i.[Value]) AS [Amount]
     FROM HCM3.[PayCalcItem] AS i
+    LEFT JOIN workshop AS w
+        ON w.[EmployeeRef] = i.[EmployeeRef] AND w.[YearMonth] = i.[IssueYearMonth] AND w.[rn] = 1
+    LEFT JOIN HCM3.[OrganizationBranch] AS ob ON ob.[OrganizationBranchID] = w.[OrganizationBranchRef]
+    LEFT JOIN GNR3.[Party] AS party ON party.[PartyID] = ob.[PartyRef]
     WHERE i.[CompensationFactorRef] IN ({", ".join(str(f) for f in PAYROLL_FACTORS)})
       AND i.[IssueYearMonth] >= :from_year_month
-    GROUP BY i.[IssueYearMonth], i.[CompensationFactorRef]
+    GROUP BY i.[IssueYearMonth], i.[CompensationFactorRef], party.[CompanyName]
 """)
+
+# Karamad payroll belongs entirely to زرین کالای کادوس.  SumP = net pay (= Impure − employee
+# insurance − SalaryTaxP); sales commission is booked in AdditionP («اضافات»), the
+# CommissionP column is never used.
+ZARIN_PAYROLL_SQL = text("""
+    SELECT CAST([FiscalName] AS int) AS [Year], [MonthRef] AS [Month],
+           COUNT(DISTINCT [EmployeeRef]) AS [Employees],
+           SUM(ISNULL([FunctionP], 0)) AS [BasePay], SUM(ISNULL([AdditionP], 0)) AS [Commission],
+           SUM(ISNULL([Impure], 0)) AS [Gross], SUM(ISNULL([SumP], 0)) AS [NetPay],
+           SUM(ISNULL([InsuranceP], 0)) AS [EmployeeInsurance], SUM(ISNULL([InsuranceCP], 0)) AS [EmployerInsurance],
+           SUM(ISNULL([SalaryTaxP], 0)) AS [Tax],
+           COUNT(DISTINCT CASE WHEN [DepartmentName] LIKE N'%فروش%' THEN [EmployeeRef] END) AS [SalesEmployees],
+           SUM(CASE WHEN [DepartmentName] LIKE N'%فروش%' THEN ISNULL([AdditionP], 0) ELSE 0 END) AS [SalesCommission]
+    FROM dbo.[vwPR_Salary]
+    WHERE CAST([FiscalName] AS int) * 100 + [MonthRef] >= :from_year_month
+    GROUP BY CAST([FiscalName] AS int), [MonthRef]
+""")
+
+# Rahkaran companies, matched in this order on the insurance workshop's name.
+RAHKARAN_COMPANIES = (("faraz", "فراز", "فراز بهداشت"), ("exir", "اکسیر", "اکسیر"), ("kadus", "کادوس", "کادوس"))
+UNINSURED_COMPANY = ("uninsured", "بدون بیمه (راهکاران)")
+ZARIN_COMPANY = ("zarin", "زرین کالای کادوس")
 
 PAYROLL_PAYMENTS_SQL = text("""
     SELECT CAST(h.[Date] AS date) AS [Day], SUM(t.[Amount]) AS [Amount]
@@ -105,6 +152,51 @@ def fetch_payroll_rows(from_year_month: int) -> list[dict[str, Any]]:
         return [dict(r) for r in connection.execute(PAYROLL_SQL, {"from_year_month": from_year_month}).mappings()]
 
 
+def fetch_zarin_payroll_rows(from_year_month: int) -> list[dict[str, Any]]:
+    from app.database.karamad_sqlserver import get_karamad_sqlserver_engine
+    with get_karamad_sqlserver_engine().connect() as connection:
+        return [dict(r) for r in connection.execute(ZARIN_PAYROLL_SQL, {"from_year_month": from_year_month}).mappings()]
+
+
+def rahkaran_company(workshop: str | None) -> tuple[str, str]:
+    for key, needle, label in RAHKARAN_COMPANIES:
+        if needle in (workshop or ""):
+            return key, label
+    return UNINSURED_COMPANY
+
+
+def _mark_complete(months: list[dict[str, Any]]) -> None:
+    """A trailing month whose headcount is far below the recent norm is still being calculated.
+
+    Only the latest months can be in progress: a past dip followed by a full month (e.g. a
+    Nowruz Farvardin) is a real, finished month.
+    """
+    for index, item in enumerate(months):
+        previous = [m["headcount"] for m in months[max(0, index - 3):index]]
+        norm = median(previous) if previous else item["headcount"]
+        item["complete"] = bool(norm) and item["headcount"] >= norm * COMPLETE_HEADCOUNT_RATIO
+    last_complete = max((i for i, m in enumerate(months) if m["complete"]), default=-1)
+    for item in months[:last_complete]:
+        item["complete"] = True
+
+
+def _month_item(ym: int, headcount: int, net: float, employee_ins: float, employer_ins: float,
+                tax: float) -> dict[str, Any]:
+    insurance = employee_ins + employer_ins
+    return {
+        "year_month": ym,
+        "month": _month_label(ym),
+        "headcount": headcount,
+        "net_pay_rial": _round(net),
+        "employee_insurance_rial": _round(employee_ins),
+        "employer_insurance_rial": _round(employer_ins),
+        "insurance_rial": _round(insurance),
+        "tax_rial": _round(tax),
+        "insurance_and_tax_rial": _round(insurance + tax),
+        "total_rial": _round(net + insurance + tax),
+    }
+
+
 def fetch_payroll_payments(date_from: date) -> list[dict[str, Any]]:
     from app.database.sqlserver import get_sqlserver_engine
     with get_sqlserver_engine().connect() as connection:
@@ -127,11 +219,13 @@ class PayrollService:
         today: date | None = None,
         fetch_rows: Callable[[int], list[dict[str, Any]]] = fetch_payroll_rows,
         fetch_payments: Callable[[date], list[dict[str, Any]]] = fetch_payroll_payments,
+        fetch_zarin: Callable[[int], list[dict[str, Any]]] = fetch_zarin_payroll_rows,
         cache_ttl_seconds: int = CACHE_TTL_SECONDS,
     ):
         self.today = today or date.today()
         self.fetch_rows = fetch_rows
         self.fetch_payments = fetch_payments
+        self.fetch_zarin = fetch_zarin
         self.cache_ttl_seconds = cache_ttl_seconds
 
     def _cached(self, name: str, loader: Callable[[], Any], refresh: bool) -> Any:
@@ -148,39 +242,73 @@ class PayrollService:
 
     # -- monthly figures ------------------------------------------------------
 
-    def _months(self, refresh: bool) -> list[dict[str, Any]]:
+    def _from_year_month(self) -> int:
         year, month, _ = _jalali(self.today)
-        from_ym = _ym_int(*_add_months(year, month, -15))
-        rows = self._cached("payroll_rows", lambda: self.fetch_rows(from_ym), refresh)
-        by_month: dict[int, dict[int, dict[str, float]]] = defaultdict(dict)
+        return _ym_int(*_add_months(year, month, -15))
+
+    def _rahkaran_rows(self, refresh: bool) -> list[dict[str, Any]]:
+        from_ym = self._from_year_month()
+        return self._cached("payroll_rows", lambda: self.fetch_rows(from_ym), refresh)
+
+    @staticmethod
+    def _series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Rahkaran factor rows (possibly several workshops per month) → one item per month."""
+        by_month: dict[int, dict[int, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: {"employees": 0, "amount": 0.0}))
         for row in rows:
-            by_month[int(row["YearMonth"])][int(row["Factor"])] = {
-                "employees": int(row["Employees"] or 0), "amount": float(row["Amount"] or 0)}
+            cell = by_month[int(row["YearMonth"])][int(row["Factor"])]
+            cell["employees"] += int(row["Employees"] or 0)
+            cell["amount"] += float(row["Amount"] or 0)
         months = []
         for ym in sorted(by_month):
             factors = by_month[ym]
-            amount = lambda factor: factors.get(factor, {}).get("amount", 0.0)  # noqa: E731
-            net = amount(FACTOR_NET_PAY)
-            insurance = amount(FACTOR_EMPLOYEE_INSURANCE) + amount(FACTOR_EMPLOYER_INSURANCE)
-            tax = amount(FACTOR_PAYROLL_TAX)
-            months.append({
-                "year_month": ym,
-                "month": _month_label(ym),
-                "headcount": factors.get(FACTOR_NET_PAY, {}).get("employees", 0),
-                "net_pay_rial": _round(net),
-                "employee_insurance_rial": _round(amount(FACTOR_EMPLOYEE_INSURANCE)),
-                "employer_insurance_rial": _round(amount(FACTOR_EMPLOYER_INSURANCE)),
-                "insurance_rial": _round(insurance),
-                "tax_rial": _round(tax),
-                "insurance_and_tax_rial": _round(insurance + tax),
-                "total_rial": _round(net + insurance + tax),
-            })
-        # Mark months still being calculated: headcount far below the recent norm.
-        for index, item in enumerate(months):
-            previous = [m["headcount"] for m in months[max(0, index - 3):index]]
-            norm = median(previous) if previous else item["headcount"]
-            item["complete"] = bool(norm) and item["headcount"] >= norm * COMPLETE_HEADCOUNT_RATIO
+            amount = lambda factor: factors[factor]["amount"] if factor in factors else 0.0  # noqa: E731
+            headcount = factors[FACTOR_NET_PAY]["employees"] if FACTOR_NET_PAY in factors else 0
+            months.append(_month_item(ym, headcount, amount(FACTOR_NET_PAY), amount(FACTOR_EMPLOYEE_INSURANCE),
+                                      amount(FACTOR_EMPLOYER_INSURANCE), amount(FACTOR_PAYROLL_TAX)))
+        _mark_complete(months)
         return months
+
+    def _months(self, refresh: bool) -> list[dict[str, Any]]:
+        """Rahkaran group total per month (all companies); the basis of the forecast."""
+        return self._series(self._rahkaran_rows(refresh))
+
+    def _rahkaran_companies(self, refresh: bool, group: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows_by_company: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in self._rahkaran_rows(refresh):
+            rows_by_company[rahkaran_company(row.get("Workshop"))].append(row)
+        # A company month is complete when the group month is (the run covers everyone at once).
+        complete = {m["year_month"]: m["complete"] for m in group}
+        order = [(k, label) for k, _, label in RAHKARAN_COMPANIES] + [UNINSURED_COMPANY]
+        companies = []
+        for key, label in order:
+            if (key, label) not in rows_by_company:
+                continue
+            months = self._series(rows_by_company[(key, label)])
+            for m in months:
+                m["complete"] = complete.get(m["year_month"], m["complete"])
+            companies.append({"key": key, "label": label, "system": "rahkaran", "channel": "b2b", "months": months})
+        return companies
+
+    def _zarin(self, refresh: bool) -> dict[str, Any]:
+        from_ym = self._from_year_month()
+        rows = self._cached("zarin_payroll_rows", lambda: self.fetch_zarin(from_ym), refresh)
+        months = []
+        for row in sorted(rows, key=lambda r: (int(r["Year"]), int(r["Month"]))):
+            ym = _ym_int(int(row["Year"]), int(row["Month"]))
+            value = lambda name: float(row.get(name) or 0)  # noqa: E731
+            item = _month_item(ym, int(row["Employees"] or 0), value("NetPay"), value("EmployeeInsurance"),
+                               value("EmployerInsurance"), value("Tax"))
+            item.update({
+                "base_pay_rial": _round(value("BasePay")),
+                "commission_rial": _round(value("Commission")),
+                "sales_commission_rial": _round(value("SalesCommission")),
+                "sales_headcount": int(row.get("SalesEmployees") or 0),
+                "gross_rial": _round(value("Gross")),
+            })
+            months.append(item)
+        _mark_complete(months)
+        key, label = ZARIN_COMPANY
+        return {"key": key, "label": label, "system": "karamad", "channel": "hybrid", "months": months}
 
     # -- pay day --------------------------------------------------------------
 
@@ -264,6 +392,36 @@ class PayrollService:
                 return None
             return round((latest[key] - previous[key]) / previous[key] * 100, 1)
 
+        companies = self._rahkaran_companies(refresh, all_months)
+        sources = ["rahkaran"]
+        try:
+            companies.append(self._zarin(refresh))
+            sources.append("karamad")
+        except Exception as exc:
+            warnings.append({"code": "karamad_unavailable",
+                             "message": f"حقوق زرین از کارآمد دریافت نشد. ({exc.__class__.__name__})"})
+        trend_length = max(1, min(int(months), 24))
+        company_cards = []
+        for company in companies:
+            done = [m for m in company.pop("months") if m["complete"]]
+            last, before = (done[-1] if done else None), (done[-2] if len(done) > 1 else None)
+            company_cards.append({
+                **company,
+                "latest_month": last,
+                "total_change_percent": None if not last or not before or not before["total_rial"]
+                else round((last["total_rial"] - before["total_rial"]) / before["total_rial"] * 100, 1),
+                "monthly_trend": done[-trend_length:],
+            })
+        # Month × company table: every complete month of every company.
+        table: dict[str, dict[str, Any]] = {}
+        for company in company_cards:
+            for m in company["monthly_trend"]:
+                row = table.setdefault(m["month"], {"month": m["month"], "companies": {}, "total_rial": 0.0, "headcount": 0})
+                row["companies"][company["key"]] = m["total_rial"]
+                row["total_rial"] = _round(row["total_rial"] + m["total_rial"])
+                row["headcount"] += m["headcount"]
+        by_company_monthly = [table[k] for k in sorted(table)][-trend_length:]
+
         data = {
             "latest_month": latest,
             "kpis": None if latest is None else {
@@ -275,13 +433,15 @@ class PayrollService:
                 "headcount_change": None if not previous else latest["headcount"] - previous["headcount"],
             },
             "monthly_trend": trend,
+            "companies": company_cards,
+            "by_company_monthly": by_company_monthly,
             "in_progress_months": [{"month": m["month"], "headcount": m["headcount"]} for m in in_progress],
             "pay_day": pay_day,
             "forecast": schedule,
-            "rule": "همه اعداد حقوق فقط از راهکاران (HCM3) است. جمع کل = خالص پرداختی + بیمه سهم کارمند و کارفرما + مالیات حقوق. در پیش‌بینی، جمع آخرین ماه کامل یکجا روی روز معمول پرداخت هر ماه قرار می‌گیرد.",
+            "rule": "اکسیر، کادوس و فراز از راهکاران (HCM3) به تفکیک کارگاه بیمه هر کارمند در همان ماه؛ کارکنان بدون کارگاه بیمه جدا آمده‌اند. زرین از حقوق کارآمد؛ پورسانت فروش زرین = «اضافات» فیش هر ماه. جمع کل = خالص پرداختی + بیمه سهم کارمند و کارفرما + مالیات حقوق. پیش‌بینی پرداخت فعلاً فقط حقوق راهکاران است (جمع آخرین ماه کامل روی روز معمول پرداخت) و برای زرین و پورسانت پیش‌بینی نداریم.",
         }
         return {
             "status": "success", "as_of": self.today.isoformat(), "as_of_jalali": format_jalali_date(self.today),
             "filters": {"months": months, "horizon_days": horizon_days}, "data": data,
-            "sources": ["rahkaran"], "warnings": warnings,
+            "sources": sources, "warnings": warnings,
         }
