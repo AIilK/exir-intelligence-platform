@@ -21,7 +21,11 @@ import "./ui-polish-v69.css";
 import "./management-v109.css";
 import "./theme-stability-v137.css";
 import "./customer-file.css";
+<<<<<<< HEAD
 import LiquidityPage from "./liquidity/liquidity-page";
+=======
+import "./readability-v2.css";
+>>>>>>> origin/main
 
 type View =
   | "management"
@@ -36,6 +40,7 @@ type View =
   | "b2bRemittances"
   | "monthlyExcel"
   | "collections"
+  | "distribution"
   | "representatives"
   | "simulator"
   | "alerts"
@@ -629,6 +634,26 @@ const chequeInsightRows = (rows: TreasuryCheque[]): InsightRecord[] =>
       due: x.due_date_jalali || String(x.due_date || "—").slice(0, 10),
       timing: remainingLabel(x),
     }));
+// Cheque term (receipt → due) over 90 days and amount over 100M toman — the company's review rule.
+const isLongTermLargeCheque = (x: TreasuryCheque) =>
+  (chequeTermDays(x) ?? 0) > ALERT_TERM_DAYS && (x.amount || 0) > ALERT_TERM_AMOUNT_RIAL;
+// Every long-term large cheque (no 50-row cap), largest first, with full amounts and the term.
+const longTermChequeInsight = (rows: TreasuryCheque[], incoming: boolean): InsightPayload => {
+  const total = rows.reduce((s, x) => s + (x.amount || 0), 0);
+  return {
+    title: `چک‌های ${incoming ? "دریافتی" : "پرداختی"} با مدت بیش از ۹۰ روز و مبلغ بالای ۱۰۰ میلیون`,
+    subtitle: "مدت چک = فاصله تاریخ دریافت/ثبت تا سررسید. همه موارد، از بزرگ‌ترین مبلغ.",
+    tone: "amber",
+    stats: [{ label: "تعداد چک", value: fa(rows.length) }, { label: "مبلغ کل", value: `${fullToman(total)} تومان` }],
+    records: [...rows].sort((a, b) => (b.amount || 0) - (a.amount || 0)).map((x) => ({
+      name: x.counterpart_name || "طرف حساب نامشخص",
+      number: String(x.serial_number || x.document_number || x.cheque_id || "—"),
+      amount: `${fullToman(x.amount || 0)} تومان`,
+      due: x.due_date_jalali || String(x.due_date || "—").slice(0, 10),
+      timing: `${remainingLabel(x)} • مدت ${fa(chequeTermDays(x) || 0)} روز`,
+    })),
+  };
+};
 const fullToman = (rial: number = 0) =>
   new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 }).format(rial / 10);
 
@@ -697,7 +722,7 @@ function ChequeHub({
         const d = daysToDue(x);
         return d !== undefined && d >= 0 && d <= 30;
       }),
-      over90 = rows.filter((x) => (x.term_days || 0) > 90);
+      over90 = rows.filter(isLongTermLargeCheque);
     return (
       <button
         className={`cheque-flow-card ${incoming ? "received" : "issued"}`}
@@ -732,7 +757,7 @@ function ChequeHub({
           </span>
           <span className={over90.length ? "warn" : ""}>
             <b>{fa(over90.length)}</b>
-            <small>بیش از ۹۰ روز</small>
+            <small>مدت ۹۰+ روز، بالای ۱۰۰ م</small>
           </span>
         </div>
         <div className="flow-bar">
@@ -1014,7 +1039,7 @@ function ChequeDetails({
       const d = daysToDue(x);
       return d !== undefined && d >= 0 && d <= 7;
     }),
-    over90 = viewRows.filter((x) => (x.term_days || 0) > 90),
+    over90 = viewRows.filter(isLongTermLargeCheque),
     futureDueDays = viewRows
       .map((x) => daysToDue(x))
       .filter((d): d is number => d !== undefined && d >= 0),
@@ -1213,10 +1238,11 @@ function ChequeDetails({
           }}
         />
         <K
-          t="خارج از سیاست ۹۰ روز"
+          t="مدت بیش از ۹۰ روز و بالای ۱۰۰ میلیون"
           v={fa(over90.length)}
-          n="نیازمند کنترل"
+          n={fullToman(over90.reduce((s, x) => s + (x.amount || 0), 0)) + " تومان"}
           c="amber"
+          detail={longTermChequeInsight(over90, incoming)}
         />
       </div>
       )}
@@ -1489,6 +1515,7 @@ const menu: [View, string, string][] = [
   ["cashflow", "⌁", "پیش‌بینی نقدینگی"],
   ["monthlyExcel", "▥", "Cash Flow روزانه"],
   ["collections", "✓", "مرکز عملیات وصول"],
+  ["distribution", "⛟", "توزیع بار"],
   ["representatives", "♙", "تحلیل نمایندگان"],
   ["simulator", "◫", "سناریوساز نقدینگی"],
   ["alerts", "!", "هشدارها"],
@@ -1498,6 +1525,279 @@ const menu: [View, string, string][] = [
   ["agents", "⬡", "تیم Agentها"],
 ];
 
+
+// «توزیع و وصول فاکتورهای ماه» — the finance team's monthly report, rebuilt from Karamad SQL.
+const JALALI_MONTH_NAMES = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"];
+const currentJalali = () => {
+  const p = new Intl.DateTimeFormat("en-US-u-ca-persian", { year: "numeric", month: "numeric" }).formatToParts(new Date());
+  return { year: Number(p.find((x) => x.type === "year")?.value), month: Number(p.find((x) => x.type === "month")?.value) };
+};
+function MonthlyDistributionReport() {
+  const now = currentJalali();
+  const [ym, setYm] = useState(() => now.month === 1 ? { year: now.year - 1, month: 12 } : { year: now.year, month: now.month - 1 });
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState("");
+  const [branch, setBranch] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    let active = true;
+    setData(null); setError("");
+    request(`/distribution/monthly?year=${ym.year}&month=${ym.month}`)
+      .then((d) => { if (active) setData(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت گزارش ناموفق بود"); });
+    return () => { active = false; };
+  }, [ym.year, ym.month]);
+  const months = Array.from({ length: 12 }, (_, i) => ({ year: now.year, month: i + 1 })).filter((m) => m.month <= now.month);
+  const t = data?.totals || {};
+  const q = search.trim().toLocaleLowerCase("fa-IR");
+  const customers = (data?.customers || []).filter((c: any) => c.branch_name === branch)
+    .filter((c: any) => !q || `${c.customer_name} ${c.customer_code}`.toLocaleLowerCase("fa-IR").includes(q));
+  const undistributed = (data?.undistributed || []).filter((x: any) => x.branch_name === branch);
+  const sum = (rows: any[], k: string) => rows.reduce((s, x) => s + Number(x[k] || 0), 0);
+  return <section className="cf-section">
+    <div className="cf-title">
+      <div><h3>توزیع و وصول فاکتورهای {data?.month_label || `${JALALI_MONTH_NAMES[ym.month - 1]} ${ym.year}`} — هیبریدها</h3>
+        <p>همان گزارش «توزیع و وصول فاکتورهای ماه» واحد مالی: فروش ماه بعد از کسر برگشتیِ همان فاکتورها؛ توزیع‌نشده = فاکتور بدون حواله خروج؛ وصول = نقد + حواله + چکِ تسویه‌شده روی فاکتورهای ماه؛ مانده = کمترینِ «مانده حساب مشتری» و «توزیع‌شده منهای وصول». مبالغ به تومان.</p></div>
+      <div className="distribution-controls"><label>ماه: <select value={ym.month} onChange={(e) => { setYm({ year: now.year, month: Number(e.target.value) }); setBranch(""); }}>
+        {months.map((m) => <option key={m.month} value={m.month}>{JALALI_MONTH_NAMES[m.month - 1]} {fa(m.year).replace(/٬/g, "")}</option>)}
+      </select></label></div>
+    </div>
+    {error ? <div className="profile-warning">{error}</div> : !data ? <div className="profile-loading">در حال ساخت گزارش ماه از کارآمد...</div> : <>
+      {branch && <button className="cheque-back" onClick={() => { setBranch(""); setSearch(""); }}>→ بازگشت به همه هیبریدها</button>}
+      {!branch && <div className="cf-table cf-clickable"><table>
+        <thead><tr><th>هیبرید</th><th>کل فروش</th><th>توزیع نشده</th><th>توزیع شده</th><th>وصولی ماه</th><th>مانده ماه</th></tr></thead>
+        <tbody>
+          {data.branches.map((b: any) => <tr key={b.branch_name} onClick={() => setBranch(b.branch_name)}>
+            <td><b>{b.branch_name}</b></td><td>{fullToman(b.sales_rial)}</td>
+            <td className={b.undistributed_rial > 0 ? "cf-debt" : undefined}>{fullToman(b.undistributed_rial)}<small>{fa(b.undistributed_count)} فاکتور</small></td>
+            <td>{fullToman(b.distributed_rial)}</td><td>{fullToman(b.collected_rial)}</td>
+            <td className="cf-debt"><b>{fullToman(b.remaining_rial)}</b></td>
+          </tr>)}
+          <tr className="cf-debt-total-row"><td><b>جمع کل</b></td><td><b>{fullToman(t.sales_rial)}</b></td><td><b>{fullToman(t.undistributed_rial)}</b></td>
+            <td><b>{fullToman(t.distributed_rial)}</b></td><td><b>{fullToman(t.collected_rial)}</b></td><td className="cf-debt"><b>{fullToman(t.remaining_rial)}</b></td></tr>
+        </tbody>
+      </table></div>}
+      {branch && <>
+        <div className="cf-kpis">{(() => { const b = data.branches.find((x: any) => x.branch_name === branch) || {}; return <>
+          <article><small>کل فروش {branch}</small><b>{fullToman(b.sales_rial)}</b><span>تومان</span></article>
+          <article className="cf-accent-red"><small>توزیع نشده</small><b>{fullToman(b.undistributed_rial)}</b><span>{fa(b.undistributed_count || 0)} فاکتور</span></article>
+          <article><small>توزیع شده</small><b>{fullToman(b.distributed_rial)}</b><span>تومان</span></article>
+          <article><small>وصولی ماه</small><b>{fullToman(b.collected_rial)}</b><span>تومان</span></article>
+          <article className="cf-accent-red"><small>مانده ماه</small><b>{fullToman(b.remaining_rial)}</b><span>تومان</span></article>
+        </>; })()}</div>
+        <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar collection-alert-filters">
+          <div><b>جستجوی نام یا کد مشتری</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="نام یا کد..." /></div>
+          <small>{fa(customers.length)} مشتری</small>
+        </section>
+        <div className="cf-table distribution-scroll"><table>
+          <thead><tr><th>کد مشتری</th><th>نام مشتری</th><th>مانده سیستم</th><th>توزیع شده</th><th>توزیع نشده</th><th>وصول</th><th>مانده فاکتورهای ماه</th></tr></thead>
+          <tbody>
+            <tr className="cf-debt-total-row"><td colSpan={2}><b>جمع</b></td><td><b>{fullToman(sum(customers, "system_balance_rial"))}</b></td><td><b>{fullToman(sum(customers, "distributed_rial"))}</b></td>
+              <td><b>{fullToman(sum(customers, "undistributed_rial"))}</b></td><td><b>{fullToman(sum(customers, "collected_rial"))}</b></td><td className="cf-debt"><b>{fullToman(sum(customers, "remaining_rial"))}</b></td></tr>
+            {customers.map((c: any) => <tr key={`${c.dl_ref}`}>
+              <td>{c.customer_code || "—"}</td><td className="cf-wrap"><b>{c.customer_name || "—"}</b></td>
+              <td>{fullToman(c.system_balance_rial)}</td><td>{fullToman(c.distributed_rial)}</td>
+              <td className={c.undistributed_rial > 0 ? "cf-debt" : undefined}>{fullToman(c.undistributed_rial)}</td>
+              <td>{fullToman(c.collected_rial)}</td><td className="cf-debt"><b>{fullToman(c.remaining_rial)}</b></td>
+            </tr>)}
+          </tbody>
+        </table></div>
+        {undistributed.length > 0 && <>
+          <h4>فاکتورهای توزیع‌نشده {branch} ({fa(undistributed.length)} فاکتور)</h4>
+          <div className="cf-table distribution-scroll"><table>
+            <thead><tr><th>شماره فاکتور</th><th>تاریخ</th><th>انتظار</th><th>مشتری</th><th>ویزیتور</th><th>مبلغ (تومان)</th></tr></thead>
+            <tbody>{undistributed.map((x: any) => <tr key={x.invoice_id}>
+              <td><b>{x.number}</b></td><td>{x.date_jalali}</td><td>{fa(x.days_waiting || 0)} روز</td>
+              <td className="cf-wrap"><b>{x.customer_name || "—"}</b><small>کد {x.customer_code || "—"}</small></td><td>{x.visitor_name || "—"}</td>
+              <td><b>{fullToman(x.amount_rial)}</b></td>
+            </tr>)}</tbody>
+          </table></div>
+        </>}
+      </>}
+    </>}
+  </section>;
+}
+
+// توزیع بار (Karamad): invoices with no exit document yet, open exits, invoice-to-exit speed, distributors.
+// Clicking a branch scopes the whole page to that hybrid.
+function DistributionPage() {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState("");
+  const [staleDays, setStaleDays] = useState(14);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState("");
+  const [onlyStale, setOnlyStale] = useState(false);
+  useEffect(() => {
+    let active = true;
+    request("/distribution")
+      .then((d) => { if (active) setData(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت اطلاعات توزیع ناموفق بود"); });
+    return () => { active = false; };
+  }, []);
+  const pick = (name: string) => {
+    setSelected(name); setSearch(""); setOnlyStale(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  if (error) return <div className="profile-warning">{error}</div>;
+  if (!data) return <div className="profile-loading">در حال دریافت اطلاعات توزیع بار از کارآمد...</div>;
+
+  const inScope = (x: any) => !selected || x.branch_name === selected;
+  const allRows: any[] = data.undistributed || [];
+  const allExits: any[] = data.open_exits || [];
+  const rows = allRows.filter(inScope);
+  const openExits = allExits.filter(inScope);
+  const lead: any[] = (data.lead_time || []).filter(inScope);
+  const distributors: any[] = (data.distributors || []).filter(inScope);
+  const sum = (items: any[]) => items.reduce((s, x) => s + Number(x.amount_rial || 0), 0);
+  const days = (x: any) => Number(x.days_waiting ?? 0);
+  const stale = rows.filter((x) => days(x) > staleDays);
+  const aging = [
+    { label: "تا ۳ روز (عادی)", items: rows.filter((x) => days(x) <= 3) },
+    { label: `۴ تا ${fa(staleDays)} روز`, items: rows.filter((x) => days(x) > 3 && days(x) <= staleDays) },
+    { label: `بیش از ${fa(staleDays)} روز (مشکوک)`, items: stale },
+  ];
+  const leadByBranch = new Map<string, any>((data.lead_time || []).map((l: any) => [l.branch_name, l]));
+  const branchNames = Array.from(new Set([...allRows.map((x) => x.branch_name), ...allExits.map((x) => x.branch_name)].filter(Boolean))) as string[];
+  const byBranch = branchNames.map((name) => {
+    const items = allRows.filter((x) => x.branch_name === name), old = items.filter((x) => days(x) > staleDays);
+    const exits = allExits.filter((x) => x.branch_name === name);
+    return { name, items, old, exits, oldest: items.reduce((m, x) => Math.max(m, days(x)), 0), lead: leadByBranch.get(name) };
+  }).sort((a, b) => sum(b.items) - sum(a.items));
+  const byVisitor = Array.from(new Set(rows.map((x) => x.visitor_name || "بدون ویزیتور"))).map((name) => {
+    const items = rows.filter((x) => (x.visitor_name || "بدون ویزیتور") === name);
+    return { name, items, old: items.filter((x) => days(x) > staleDays), oldest: items.reduce((m, x) => Math.max(m, days(x)), 0) };
+  }).sort((a, b) => sum(b.items) - sum(a.items));
+  const q = search.trim().toLocaleLowerCase("fa-IR");
+  const visible = rows
+    .filter((x) => !onlyStale || days(x) > staleDays)
+    .filter((x) => !q || [x.number, x.customer_name, x.customer_code, x.visitor_name].filter(Boolean).some((v) => String(v).toLocaleLowerCase("fa-IR").includes(q)))
+    .sort((a, b) => days(b) - days(a));
+  const leadInvoices = lead.reduce((s, l) => s + l.invoice_count, 0);
+  const averageLead = leadInvoices ? lead.reduce((s, l) => s + l.average_days * l.invoice_count, 0) / leadInvoices : 0;
+  const scopeLabel = selected || "همه شعب";
+
+  return <>
+    {!selected && <MonthlyDistributionReport />}
+    {selected && <button className="cheque-back" onClick={() => pick("")}>→ بازگشت به همه شعب</button>}
+    <section className="cf-section">
+      <div className="cf-title">
+        <div><h3>{selected ? `توزیع بار ${selected}` : "خلاصه توزیع بار"} — سال {String(data.fiscal_year_label).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)])}</h3><p>{(data.notes || []).join(" ")}</p></div>
+        <div className="distribution-controls">
+          <label>شعبه: <select value={selected} onChange={(e) => pick(e.target.value)}>
+            <option value="">همه شعب</option>{branchNames.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select></label>
+          <label>آستانه مشکوک: <input type="number" min={1} max={120} value={staleDays} onChange={(e) => setStaleDays(Math.max(1, Number(e.target.value) || 14))} /> روز</label>
+        </div>
+      </div>
+      <div className="cf-kpis">
+        <article className="cf-accent-red"><small>فاکتور توزیع‌نشده</small><b>{fullToman(sum(rows))}</b><span>تومان • {fa(rows.length)} فاکتور بدون حواله خروج</span></article>
+        <article><small>توزیع‌نشده بیش از {fa(staleDays)} روز</small><b>{fullToman(sum(stale))}</b><span>تومان • {fa(stale.length)} فاکتور</span></article>
+        <article><small>حواله‌های خروج با وضعیت «۰»</small><b>{fullToman(sum(openExits))}</b><span>تومان • {fa(openExits.length)} حواله، {fa(openExits.reduce((s, x) => s + x.invoice_count, 0))} فاکتور</span></article>
+        <article><small>میانگین صدور فاکتور تا خروج بار</small><b>{fa(Math.round(averageLead * 10) / 10)} روز</b><span>{fa(leadInvoices)} فاکتور خارج‌شده امسال</span></article>
+      </div>
+    </section>
+
+    <section className="cf-section">
+      <div className="cf-debt-detail-grid">
+        <div>
+          <div className="cf-title"><div><h3>سن فاکتورهای توزیع‌نشده</h3><p>چند روز از صدور فاکتور گذشته و هنوز حواله خروج ندارد — {scopeLabel}.</p></div></div>
+          <div className="cf-table"><table>
+            <thead><tr><th>سن</th><th>تعداد</th><th>مبلغ (تومان)</th></tr></thead>
+            <tbody>{aging.map((a) => <tr key={a.label}><td>{a.label}</td><td>{fa(a.items.length)}</td><td><b>{fullToman(sum(a.items))}</b></td></tr>)}</tbody>
+          </table></div>
+        </div>
+        <div>
+          <div className="cf-title"><div><h3>سرعت خروج بار</h3><p>فاصله صدور فاکتور تا تاریخ حواله خروج، برای فاکتورهای امسال{selected ? "" : "؛ کندترین شعبه بالا"}.</p></div></div>
+          <div className="cf-table distribution-scroll"><table>
+            <thead><tr><th>شعبه</th><th>میانگین</th><th>تا ۱ روز</th><th>تا ۳ روز</th><th>بیش از ۷ روز</th></tr></thead>
+            <tbody>{lead.map((l) => <tr key={l.branch_name}>
+              <td>{l.branch_name || "—"}</td>
+              <td className={l.average_days > 7 ? "cf-debt" : undefined}><b>{fa(l.average_days)} روز</b></td>
+              <td>{fa(l.within_1_day_percent)}٪</td><td>{fa(l.within_3_days_percent)}٪</td>
+              <td>{fa(l.over_7_days)} از {fa(l.invoice_count)}</td>
+            </tr>)}</tbody>
+          </table></div>
+        </div>
+      </div>
+    </section>
+
+    {!selected && <section className="cf-section">
+      <div className="cf-title"><div><h3>توزیع‌نشده به تفکیک شعبه</h3><p>روی هر شعبه کلیک کنید تا کل صفحه مخصوص همان هیبرید شود.</p></div></div>
+      <div className="cf-table cf-clickable"><table>
+        <thead><tr><th>شعبه</th><th>توزیع‌نشده</th><th>بیش از {fa(staleDays)} روز</th><th>قدیمی‌ترین</th><th>حواله وضعیت «۰»</th><th>میانگین صدور تا خروج</th></tr></thead>
+        <tbody>{byBranch.map((b) => <tr key={b.name} onClick={() => pick(b.name)}>
+          <td><b>{b.name}</b></td>
+          <td><b>{fullToman(sum(b.items))}</b><small>{fa(b.items.length)} فاکتور</small></td>
+          <td className={b.old.length ? "cf-debt" : undefined}>{fullToman(sum(b.old))}<small>{fa(b.old.length)} فاکتور</small></td>
+          <td>{b.items.length ? `${fa(b.oldest)} روز` : "—"}</td>
+          <td>{b.exits.length ? <>{fullToman(sum(b.exits))}<small>{fa(b.exits.length)} حواله</small></> : "—"}</td>
+          <td>{b.lead ? `${fa(b.lead.average_days)} روز` : "—"}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </section>}
+
+    {selected && <section className="cf-section">
+      <div className="cf-title"><div><h3>توزیع‌نشده به تفکیک ویزیتور — {selected}</h3><p>فاکتورهای بدون حواله خروج هر ویزیتور این شعبه؛ برای دیدن فاکتورهای یک ویزیتور روی ردیف کلیک کنید.</p></div></div>
+      {byVisitor.length ? <div className="cf-table cf-clickable"><table>
+        <thead><tr><th>ویزیتور</th><th>توزیع‌نشده</th><th>بیش از {fa(staleDays)} روز</th><th>قدیمی‌ترین</th></tr></thead>
+        <tbody>{byVisitor.map((v) => <tr key={v.name} onClick={() => setSearch(v.name === "بدون ویزیتور" ? "" : v.name)}>
+          <td><b>{v.name}</b></td>
+          <td><b>{fullToman(sum(v.items))}</b><small>{fa(v.items.length)} فاکتور</small></td>
+          <td className={v.old.length ? "cf-debt" : undefined}>{fullToman(sum(v.old))}<small>{fa(v.old.length)} فاکتور</small></td>
+          <td>{fa(v.oldest)} روز</td>
+        </tr>)}</tbody>
+      </table></div> : <div className="invoice-source-pending">این شعبه فاکتور توزیع‌نشده ندارد.</div>}
+    </section>}
+
+    <section className="cf-section">
+      <div className="cf-title"><div><h3>فاکتورهای توزیع‌نشده — {scopeLabel}</h3><p>قدیمی‌ترین بالا.</p></div></div>
+      <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar collection-alert-filters">
+        <div><b>جستجوی شماره فاکتور، مشتری یا ویزیتور</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="شماره، نام یا کد..." /></div>
+        <label className="distribution-check"><input type="checkbox" checked={onlyStale} onChange={(e) => setOnlyStale(e.target.checked)} /> فقط بیش از {fa(staleDays)} روز</label>
+        <small>{fa(visible.length)} فاکتور • {fullToman(sum(visible))} تومان</small>
+      </section>
+      {visible.length ? <div className="cf-table distribution-scroll"><table>
+        <thead><tr><th>شماره فاکتور</th><th>تاریخ</th><th>انتظار</th><th>مشتری</th><th>ویزیتور</th>{!selected && <th>شعبه</th>}<th>مبلغ (تومان)</th></tr></thead>
+        <tbody>{visible.map((x) => <tr key={x.invoice_id} className={days(x) > staleDays ? "cf-review-row" : undefined}>
+          <td><b>{x.number || "—"}</b></td>
+          <td>{x.date_jalali || "—"}</td>
+          <td className={days(x) > staleDays ? "cf-debt" : undefined}>{fa(days(x))} روز</td>
+          <td className="cf-wrap"><b>{x.customer_name || "—"}</b><small>کد {x.customer_code || "—"}</small></td>
+          <td>{x.visitor_name || "—"}</td>
+          {!selected && <td>{x.branch_name || "—"}</td>}
+          <td><b>{fullToman(x.amount_rial)}</b></td>
+        </tr>)}</tbody>
+      </table></div> : <div className="invoice-source-pending">فاکتوری با این فیلترها نیست.</div>}
+    </section>
+
+    <section className="cf-section">
+      <div className="cf-title"><div><h3>حواله‌های خروج با وضعیت «۰» — {scopeLabel}</h3><p>حواله‌هایی که فاکتورشان صادر شده ولی وضعیت حواله در کارآمد «۰» است؛ معنی دقیق این وضعیت (مثلاً «بار شده، بسته نشده») باید از واحد توزیع تأیید شود. قدیمی‌ترین بالا.</p></div></div>
+      {openExits.length ? <div className="cf-table distribution-scroll"><table>
+        <thead><tr><th>کد حواله</th><th>تاریخ</th><th>باز مانده</th>{!selected && <th>شعبه</th>}<th>موزع</th><th>راننده</th><th>فاکتور</th><th>مبلغ (تومان)</th></tr></thead>
+        <tbody>{[...openExits].sort((a, b) => (b.days_open || 0) - (a.days_open || 0)).map((x) => <tr key={x.exit_id}>
+          <td><b>{x.code || "—"}</b></td><td>{x.date_jalali || "—"}</td>
+          <td className={(x.days_open || 0) > staleDays ? "cf-debt" : undefined}>{fa(x.days_open || 0)} روز</td>
+          {!selected && <td>{x.branch_name || "—"}</td>}<td>{x.deliver_name || "—"}</td><td>{x.driver_name || "—"}</td>
+          <td>{fa(x.invoice_count)}</td><td><b>{fullToman(x.amount_rial)}</b></td>
+        </tr>)}</tbody>
+      </table></div> : <div className="invoice-source-pending">حواله‌ای با وضعیت «۰» نیست.</div>}
+    </section>
+
+    <section className="cf-section">
+      <div className="cf-title"><div><h3>عملکرد موزعان — {scopeLabel}</h3><p>حواله‌های خروج امسال به تفکیک موزع؛ از بیشترین مبلغ بار.</p></div></div>
+      {distributors.length ? <div className="cf-table distribution-scroll"><table>
+        <thead><tr><th>موزع</th>{!selected && <th>شعبه</th>}<th>حواله</th><th>فاکتور</th><th>مبلغ بار (تومان)</th><th>میانگین صدور تا خروج</th><th>آخرین خروج</th></tr></thead>
+        <tbody>{distributors.map((d: any, i: number) => <tr key={`${d.deliver_name}-${d.branch_name}-${i}`}>
+          <td><b>{d.deliver_name}</b></td>{!selected && <td>{d.branch_name || "—"}</td>}
+          <td>{fa(d.exit_count)}</td><td>{fa(d.invoice_count)}</td>
+          <td><b>{fullToman(d.amount_rial)}</b></td>
+          <td className={d.average_lead_days > 7 ? "cf-debt" : undefined}>{fa(d.average_lead_days)} روز</td>
+          <td>{d.last_exit_date_jalali || "—"}</td>
+        </tr>)}</tbody>
+      </table></div> : <div className="invoice-source-pending">حواله خروجی برای این شعبه ثبت نشده است.</div>}
+    </section>
+  </>;
+}
 
 function B2BCustomerRemittances() {
   const [data, setData] = useState<any>(null);
@@ -1869,6 +2169,7 @@ export default function Page() {
         )}
         {view === "companyPayments" && <CompanyPaymentOrders />}
         {view === "b2bRemittances" && <B2BCustomerRemittances />}
+        {view === "distribution" && <DistributionPage />}
         {view === "monthlyExcel" && (
           <MonthlyExcelAutomation chequeQuality={chequeQuality} />
         )}
@@ -1877,6 +2178,7 @@ export default function Page() {
             cases={cases}
             agent={pack?.agents?.collection}
             refresh={load}
+            received={received.length ? received : cheques}
           />
         )}
         {view === "representatives" && (
@@ -3857,10 +4159,122 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
   </>;
 }
 
+<<<<<<< HEAD
 // Open cheques far past due with a large amount need a closer look.
 // TEST values — production target is 90 days and 1_000_000_000 rial (100M toman).
 const REVIEW_OVERDUE_DAYS = 10;
 const REVIEW_AMOUNT_RIAL = 500_000_000;
+=======
+// Karamad sales, as in the finance sales report: خالص = قابل پرداخت − برگشتی، ناخالص = جمع قبل تخفیف − برگشتی.
+function SalesCell({ net, gross, count }: { net?: number; gross?: number; count?: number }) {
+  return <td><b>خالص {fullToman(net || 0)}</b><small>ناخالص {fullToman(gross || 0)}</small><small>تومان</small><small>{fa(count || 0)} فاکتور</small></td>;
+}
+
+// Breakdown of box 1 (مانده بدهی مشتریان), loaded when the box is opened.
+function DebtDetail({ kind, id }: { kind: "branch" | "visitor"; id: number }) {
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    let active = true;
+    setData(null); setError("");
+    request(`/sales-network/${kind === "branch" ? "branches" : "visitors"}/${id}/debt-detail`)
+      .then((d) => { if (active) setData(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت جزئیات بدهی ناموفق بود"); });
+    return () => { active = false; };
+  }, [kind, id]);
+  if (error) return <div className="profile-warning">{error}</div>;
+  if (!data) return <div className="profile-loading">در حال محاسبه جزئیات بدهی...</div>;
+
+  const total = data.total_debt_rial || 0;
+  const share = (v: number) => total ? `${fa(Math.round((v / total) * 100))}٪` : "—";
+  const origin = data.origin || {};
+  const q = search.trim().toLocaleLowerCase("fa-IR");
+  const customers = (data.customers || []).filter((c: any) => !q
+    || `${c.customer_name} ${c.customer_code}`.toLocaleLowerCase("fa-IR").includes(q));
+  return <div className="cf-debt-detail">
+    <div className="cf-debt-detail-grid">
+      <div>
+        <h4>۱. سن بدهی</h4>
+        <p>تاریخ فاکتورهایی که هنوز پرداخت نشده‌اند (FIFO: پرداخت‌ها اول قدیمی‌ترین فاکتورها را تسویه می‌کنند). چک برگشتی جداگانه در بخش ۲ است.</p>
+        <div className="cf-table"><table>
+          <thead><tr><th>سن</th><th>مبلغ (تومان)</th><th>سهم</th><th>مشتری</th></tr></thead>
+          <tbody>{(data.aging || []).map((a: any) => <tr key={a.label}>
+            <td>{a.label}</td><td><b>{fullToman(a.amount_rial)}</b></td><td>{share(a.amount_rial)}</td><td>{fa(a.customer_count)}</td>
+          </tr>)}</tbody>
+        </table></div>
+      </div>
+      <div>
+        <h4>۲. منشأ بدهی</h4>
+        <p>بدهی از فاکتور پرداخت‌نشده آمده یا از چکی که برگشت خورده و هنوز تسویه نشده است.</p>
+        <div className="cf-table"><table>
+          <thead><tr><th>منشأ</th><th>مبلغ (تومان)</th><th>سهم</th></tr></thead>
+          <tbody>
+            <tr><td>فاکتور پرداخت‌نشده</td><td><b>{fullToman(origin.invoice)}</b></td><td>{share(origin.invoice)}</td></tr>
+            <tr><td>چک برگشتی تسویه‌نشده</td><td className="cf-debt"><b>{fullToman(origin.returned_cheque)}</b></td><td>{share(origin.returned_cheque)}</td></tr>
+            {origin.unmatched > 0 && <tr><td>مانده قدیمی‌تر از فاکتورهای ثبت‌شده</td><td><b>{fullToman(origin.unmatched)}</b></td><td>{share(origin.unmatched)}</td></tr>}
+            <tr><th>جمع</th><th>{fullToman(total)}</th><th>{fa(data.debtor_customer_count || 0)} مشتری</th></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </div>
+
+    {kind === "branch" && <div>
+      <h4>۳. سهم هر ویزیتور</h4>
+      <p>چک برگشتی به ویزیتورِ فاکتورِ همان چک و بقیه بدهی با FIFO به ویزیتورِ فاکتورهای پرداخت‌نشده می‌رسد.</p>
+      <div className="cf-table"><table>
+        <thead><tr><th>ویزیتور</th><th>مبلغ (تومان)</th><th>سهم</th><th>مشتری بدهکار</th></tr></thead>
+        <tbody>{(data.visitors || []).map((v: any) => <tr key={v.visitor_name}>
+          <td>{v.visitor_name}</td><td><b>{fullToman(v.amount_rial)}</b></td><td>{share(v.amount_rial)}</td><td>{fa(v.customer_count)}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </div>}
+
+    {(data.months || []).length > 0 && <div>
+      <h4>۴. بدهی هر مشتری به تفکیک ماه</h4>
+      <p>مثل گزارش «مانده حساب‌های هیبرید مشتریان»: پرداخت‌ها اول قدیمی‌ترین بدهکاری‌ها را تسویه می‌کنند و مانده به ماهِ جدیدترین بدهکاری‌ها می‌رسد. مبالغ به تومان.</p>
+      <div className="cf-table cf-debt-customers"><table>
+        <thead><tr><th>مشتری</th><th>آخرین فاکتور</th>{data.months.map((m: any) => <th key={m.month}>{m.label}</th>)}<th>جمع</th></tr></thead>
+        <tbody>
+          <tr className="cf-debt-total-row"><td><b>جمع {fa(customers.length)} مشتری</b></td><td>—</td>
+            {data.months.map((m: any) => <td key={m.month}><b>{fullToman(customers.reduce((s: number, c: any) => s + Number(c.months?.[m.month] || 0), 0))}</b></td>)}
+            <td className="cf-debt"><b>{fullToman(customers.reduce((s: number, c: any) => s + Number(c.debt_rial || 0), 0))}</b></td></tr>
+          {customers.map((c: any) => <tr key={c.dl_ref}>
+            <td className="cf-wrap"><b>{c.customer_name || "—"}</b><small>کد {c.customer_code || "—"}</small></td>
+            <td>{c.last_invoice_date_jalali || "—"}</td>
+            {data.months.map((m: any) => <td key={m.month}>{Number(c.months?.[m.month] || 0) ? fullToman(c.months[m.month]) : "—"}</td>)}
+            <td className="cf-debt"><b>{fullToman(c.debt_rial)}</b></td>
+          </tr>)}
+        </tbody>
+      </table></div>
+    </div>}
+
+    <div>
+      <h4>{kind === "branch" ? "۵" : "۳"}. مشتریان بدهکار</h4>
+      <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar">
+        <div><b>جستجوی نام یا کد مشتری</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="نام یا کد..." /></div>
+        <small>{fa(customers.length)} مشتری</small>
+      </section>
+      <div className="cf-table cf-debt-customers"><table>
+        <thead><tr><th>مشتری</th><th>بدهی (تومان)</th><th>از چک برگشتی</th><th>قدیمی‌ترین فاکتور پرداخت‌نشده</th><th>آخرین پرداخت {"(سال جاری)"}</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
+        <tbody>{customers.map((c: any) => <tr key={c.dl_ref}>
+          <td className="cf-wrap"><b>{c.customer_name || "—"}</b><small>کد {c.customer_code || "—"}</small></td>
+          <td className="cf-debt">{fullToman(c.debt_rial)}</td>
+          <td>{c.returned_cheque_rial > 0 ? fullToman(c.returned_cheque_rial) : "—"}</td>
+          <td>{c.oldest_unpaid_invoice_date_jalali || "—"}</td>
+          <td>{c.last_payment_date_jalali || "—"}</td>
+          {kind === "branch" && <td className="cf-wrap">{(c.visitors || []).map((v: any) => <small key={v.visitor_name}>{v.visitor_name}: {fullToman(v.amount_rial)}</small>)}</td>}
+        </tr>)}</tbody>
+      </table></div>
+    </div>
+  </div>;
+}
+
+// Uncollected cheques with a long term (due more than 90 days after receipt) and a large amount need a closer look.
+// Cheques over 30 days past due are "unresolved" (not "open") but still uncollected, so both states count.
+const REVIEW_TERM_DAYS = 90;
+const REVIEW_AMOUNT_RIAL = 1_000_000_000; // 100M toman
+>>>>>>> origin/main
 const needsChequeReview = (x: any) =>
   x.return_risk?.state === "open"
   && typeof x.days_until_due === "number" && x.days_until_due < -REVIEW_OVERDUE_DAYS
@@ -3943,7 +4357,7 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
       </section>
 
       <section className="cf-section">
-        <div className="cf-title"><div><h3>مطالبات</h3><p>{kind === "branch" ? "مانده دفتر کل مشتریانی که شعبه اصلی‌شان همین شعبه است." : "مانده دفتر کل مشتریان: چک برگشتیِ تسویه‌نشده به ویزیتورِ فاکتورِ همان چک می‌رسد و بقیه به روش FIFO — پرداخت‌ها اول قدیمی‌ترین فاکتورها را تسویه می‌کنند، پس بدهی باقی‌مانده مال جدیدترین فاکتورهاست و به ویزیتوری می‌رسد که همان فاکتورها را زده است. بستانکاری مشتری به ویزیتور آخرین فاکتورش می‌رسد."} برای جزئیات، روی «مانده بدهی مشتریان» کلیک کنید.</p></div></div>
+        <div className="cf-title"><div><h3>مطالبات</h3><p>{kind === "branch" ? "مانده دفتر کل مشتریانی که شعبه اصلی‌شان همین شعبه است." : "مانده دفتر کل مشتریان: چک برگشتیِ تسویه‌نشده به ویزیتورِ فاکتورِ همان چک می‌رسد و بقیه به روش FIFO — پرداخت‌ها اول قدیمی‌ترین فاکتورها را تسویه می‌کنند، پس بدهی باقی‌مانده مال جدیدترین فاکتورهاست و به ویزیتوری می‌رسد که همان فاکتورها را زده است. بستانکاری مشتری به ویزیتور آخرین فاکتورش می‌رسد."} مانده شامل اسناد قطعی و اسنادی است که حسابداری هنوز صادر نکرده (مثل گزارش «مانده حساب‌های هیبرید مشتریان»). برای جزئیات، روی «مانده بدهی مشتریان» کلیک کنید.</p></div></div>
         <div className="cf-kpis">
           <article className={`cf-accent-red cf-kpi-clickable${showDebt ? " active" : ""}`} role="button" tabIndex={0}
             onClick={() => setShowDebt((v) => !v)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setShowDebt((v) => !v); } }}>
@@ -4174,9 +4588,9 @@ function Customers({
           <small>{fa(visibleRows.length)} مشتری پیدا شد</small>
         </section>
         <div className="cf-kpis cf-directory-kpis">
-          <article className="cf-accent-red"><small>کل مانده بدهی مشتریان</small><b>{portfolioLoading ? "…" : money(debtSummary.open_account_receivable_rial || 0)}</b><span>تومان</span></article>
-          <article><small>چک باز در دست شرکت</small><b>{portfolioLoading ? "…" : money(debtSummary.open_cheque_amount_rial || 0)}</b><span>تومان</span></article>
-          <article><small>بستانکاری مشتریان</small><b>{portfolioLoading ? "…" : money(debtSummary.customer_credit_rial || 0)}</b><span>تومان</span></article>
+          <article className="cf-accent-red"><small>کل مانده بدهی مشتریان</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.open_account_receivable_rial || 0)}</b><span>تومان</span></article>
+          <article><small>چک باز در دست شرکت</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.open_cheque_amount_rial || 0)}</b><span>تومان</span></article>
+          <article><small>بستانکاری مشتریان</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.customer_credit_rial || 0)}</b><span>تومان</span></article>
         </div>
         <div className="collection-module-filters cf-debt-filters">
           {([["all", "همه"], ["debtor", "مانده بدهکار"], ["uncovered", "بدهکار بدون چک"], ["cheque", "دارای چک باز"], ["creditor", "بستانکار"]] as const).map(([k, l]) => <button key={k} className={debtFilter === k ? "active" : ""} onClick={() => setDebtFilter(k)}>{l}</button>)}
@@ -4206,12 +4620,12 @@ function Customers({
                 const transferCount = Number(k.received_transfer_count || 0) + Number(k.paid_transfer_count || 0);
                 return <tr key={`${c.counterpart_ref || "no-ref"}-${normalizeName(cname(c))}`} onClick={() => open({ ...c, data_source: "rahkaran", karamad_activity: undefined })}>
                   <td><b>{cname(c)}</b></td>
-                  <td>{portfolioLoading ? "…" : <><b>{money(positionOf(c).open_account_receivable_rial || 0)}</b> <span className={`collection-account-state ${accountStateOf(c)}`}>{({ debtor: "بدهکار", creditor: "بستانکار", settled: "تسویه" } as any)[accountStateOf(c)] || "—"}</span></>}</td>
-                  <td><b>{money(customerPortfolioAmount(c))}</b></td>
-                  <td>{c.counterpart_ref ? money(c.open_exposure) : "—"}</td>
-                  <td>{c.counterpart_ref ? money(c.overdue_open_amount) : money(k.received_cheque_overdue_amount_rial || 0)}</td>
-                  <td><b>{fa(c.counterpart_ref ? (c.returned_cheque_count || 0) : (k.received_cheque_returned_count || 0))}</b> فقره · {money(c.counterpart_ref ? (c.returned_cheque_amount || 0) : (k.received_cheque_returned_amount_rial || 0))}</td>
-                  <td><b>{fa(c.counterpart_ref ? (c.future_open_cheque_count || 0) : (k.received_cheque_future_count || 0))}</b> فقره · {money(c.counterpart_ref ? (c.future_open_cheque_amount || 0) : (k.received_cheque_future_amount_rial || 0))}</td>
+                  <td>{portfolioLoading ? "…" : <><b>{fullToman(positionOf(c).open_account_receivable_rial || 0)}</b> <span className={`collection-account-state ${accountStateOf(c)}`}>{({ debtor: "بدهکار", creditor: "بستانکار", settled: "تسویه" } as any)[accountStateOf(c)] || "—"}</span></>}</td>
+                  <td><b>{fullToman(customerPortfolioAmount(c))}</b></td>
+                  <td>{c.counterpart_ref ? fullToman(c.open_exposure) : "—"}</td>
+                  <td>{c.counterpart_ref ? fullToman(c.overdue_open_amount) : fullToman(k.received_cheque_overdue_amount_rial || 0)}</td>
+                  <td><b>{fa(c.counterpart_ref ? (c.returned_cheque_count || 0) : (k.received_cheque_returned_count || 0))}</b> فقره · {fullToman(c.counterpart_ref ? (c.returned_cheque_amount || 0) : (k.received_cheque_returned_amount_rial || 0))}</td>
+                  <td><b>{fa(c.counterpart_ref ? (c.future_open_cheque_count || 0) : (k.received_cheque_future_count || 0))}</b> فقره · {fullToman(c.counterpart_ref ? (c.future_open_cheque_amount || 0) : (k.received_cheque_future_amount_rial || 0))}</td>
                   <td><b>{fa(chequeCount)}</b> فقره</td>
                   <td><b>{fa(transferCount)}</b> ردیف</td>
                   <td>{k.movement_count ? `${fa(k.movement_count)} گردش · ${(k.branches || []).join("، ") || "بدون شعبه"}` : (c.counterpart_ref ? "اطلاعات راهکاران" : "—")}</td>
@@ -4477,14 +4891,158 @@ function Cashflow({ cash, agent, openAgent }: { cash?: any; agent?: AgentResult;
     </>
   );
 }
+// Collection alerts: every received cheque that needs follow-up, with customer, number and amount.
+// Same open portfolio as «چک و سررسید» (V117 holding filter), so totals match that tab.
+const ALERT_TERM_DAYS = 90;
+const ALERT_TERM_AMOUNT_RIAL = 1_000_000_000; // 100M toman
+const chequeTermDays = (x: TreasuryCheque) => {
+  const start = x.registration_date || x.receipt_date || x.document_date;
+  if (!start || !x.due_date) return undefined;
+  const from = new Date(`${String(start).slice(0, 10)}T00:00:00`), to = new Date(`${String(x.due_date).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) ? undefined : Math.round((to.getTime() - from.getTime()) / 86400000);
+};
+
+type CollectionAlertKey = "returned" | "overdue" | "soon" | "term";
+type CollectionAlertGroup = { title: string; tone: string; priority: "critical" | "high" | "medium"; items: TreasuryCheque[] };
+
+function collectionAlertGroups(rows: TreasuryCheque[]): Record<CollectionAlertKey, CollectionAlertGroup> {
+  const portfolio = rows.filter((x) => receivedChequeHoldingBucket(x) !== "other");
+  const isReturned = (x: TreasuryCheque) => receivedChequeHoldingBucket(x).startsWith("returned");
+  return {
+    returned: { title: "چک برگشتیِ تسویه‌نشده", tone: "danger", priority: "critical", items: portfolio.filter(isReturned) },
+    overdue: { title: "سررسیدگذشته، وصول‌نشده", tone: "warn", priority: "high", items: portfolio.filter((x) => !isReturned(x) && (daysToDue(x) ?? 0) < 0) },
+    soon: { title: "سررسید ۷ روز آینده", tone: "soon", priority: "medium", items: portfolio.filter((x) => { const d = daysToDue(x); return !isReturned(x) && d !== undefined && d >= 0 && d <= 7; }) },
+    term: { title: "مدت چک بیش از ۹۰ روز و بالای ۱۰۰ میلیون", tone: "term", priority: "high", items: portfolio.filter((x) => !isReturned(x) && (chequeTermDays(x) ?? 0) > ALERT_TERM_DAYS && (x.amount || 0) > ALERT_TERM_AMOUNT_RIAL) },
+  };
+}
+const ALERT_KEYS: CollectionAlertKey[] = ["returned", "overdue", "soon", "term"];
+// Customer names are matched loosely (Arabic/Persian letters, spacing) between cases and cheques.
+const customerKey = (name?: string) => String(name || "").replaceAll("ي", "ی").replaceAll("ك", "ک").replace(/[\s‌]+/g, " ").trim();
+const chequeSum = (items: TreasuryCheque[]) => items.reduce((s, x) => s + (x.amount || 0), 0);
+const chequeTiming = (x: TreasuryCheque) => {
+  const d = daysToDue(x);
+  return d === undefined ? "—" : d < 0 ? `${fa(-d)} روز گذشته` : d === 0 ? "امروز" : `${fa(d)} روز مانده`;
+};
+const chequeStatusText = (x: TreasuryCheque) => String(x.state_label || x.cheque_status || "—").replaceAll("نزذ", "نزد");
+
+function CollectionAlerts({ groups, loading, openCaseKeys, busyKey, onCreateCase }: {
+  groups: Record<CollectionAlertKey, CollectionAlertGroup>;
+  loading: boolean;
+  openCaseKeys: Set<string>;
+  busyKey: string;
+  onCreateCase: (x: TreasuryCheque, key: CollectionAlertKey) => void;
+}) {
+  const [active, setActive] = useState<CollectionAlertKey>("returned");
+  const [search, setSearch] = useState("");
+  const [source, setSource] = useState<"" | "rahkaran" | "karamad">("");
+  const [branch, setBranch] = useState("");
+  const branchOf = (x: TreasuryCheque) => x.branch_name || x.branch || "";
+  const current = groups[active].items;
+  const branches = Array.from(new Set(current.map(branchOf).filter(Boolean))).sort((a, b) => a.localeCompare(b, "fa"));
+  const q = search.trim().toLocaleLowerCase("fa-IR");
+  const visible = current
+    .filter((x) => !source || x.source_system === source)
+    .filter((x) => !branch || branchOf(x) === branch)
+    .filter((x) => !q || [x.counterpart_name, x.serial_number, x.sayad_number].filter(Boolean).some((v) => String(v).toLocaleLowerCase("fa-IR").includes(q)))
+    .sort((a, b) => (b.amount || 0) - (a.amount || 0));
+  const heading = <Heading h="هشدارهای وصول" p="چک‌های دریافتی که پیگیری لازم دارند؛ روی هر کارت کلیک کنید تا ریز چک‌ها با نام مشتری، شماره چک و مبلغ باز شود. «ساخت پرونده» پرونده وصول را مستقیم در صف پایین می‌سازد." />;
+  if (loading) return <article className="fd-panel collection-alerts">{heading}<div className="profile-loading">در حال دریافت چک‌های دریافتی...</div></article>;
+  return <article className="fd-panel collection-alerts">
+    {heading}
+    <section className="collection-alert-cards">
+      {ALERT_KEYS.map((k) => <button key={k} className={`${groups[k].tone}${active === k ? " active" : ""}`}
+        onClick={() => { setActive(k); setBranch(""); }}>
+        <small>{groups[k].title}</small>
+        <b>{fa(groups[k].items.length)} فقره</b>
+        <span>{fullToman(chequeSum(groups[k].items))} تومان</span>
+      </button>)}
+    </section>
+    <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar collection-alert-filters">
+      <div><b>جستجوی مشتری، شماره چک یا صیاد</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="نام، شماره چک یا صیاد..." /></div>
+      <div><b>منبع</b><select value={source} onChange={(e) => setSource(e.target.value as any)}>
+        <option value="">همه</option><option value="rahkaran">راهکاران</option><option value="karamad">کارآمد</option>
+      </select></div>
+      <div><b>شعبه</b><select value={branch} onChange={(e) => setBranch(e.target.value)}>
+        <option value="">همه شعب</option>{branches.map((b) => <option key={b} value={b}>{b}</option>)}
+      </select></div>
+      <small>{fa(visible.length)} چک • {fullToman(chequeSum(visible))} تومان</small>
+    </section>
+    {visible.length ? <div className="cf-table collection-alert-table"><table>
+      <thead><tr><th>مشتری</th><th>شماره چک</th><th>صیاد</th><th>مبلغ (تومان)</th><th>سررسید</th><th>زمان سررسید</th>{active === "term" && <th>مدت چک</th>}<th>وضعیت</th><th>منبع / شعبه</th><th>بانک</th><th>اقدام</th></tr></thead>
+      <tbody>{visible.map((x) => {
+        const key = customerKey(x.counterpart_name);
+        return <tr key={`${x.source_system}-${x.cheque_id}-${x.serial_number}`}>
+          <td className="cf-wrap"><b>{x.counterpart_name || "—"}</b></td>
+          <td>{x.serial_number || "—"}</td>
+          <td>{x.sayad_number || "—"}</td>
+          <td className="cf-debt">{fullToman(x.amount || 0)}</td>
+          <td>{x.due_date_jalali || "—"}</td>
+          <td>{chequeTiming(x)}</td>
+          {active === "term" && <td>{fa(chequeTermDays(x) || 0)} روز</td>}
+          <td>{chequeStatusText(x)}</td>
+          <td>{x.source_system === "karamad" ? "کارآمد" : "راهکاران"}{branchOf(x) ? <small>{branchOf(x)}</small> : null}</td>
+          <td>{x.bank_name || "—"}</td>
+          <td>{!key ? "—" : openCaseKeys.has(key)
+            ? <span className="collection-alert-has-case">پرونده باز دارد ✓</span>
+            : <button className="collection-alert-action" disabled={busyKey === key} onClick={() => onCreateCase(x, active)}>
+              {busyKey === key ? "در حال ساخت..." : "ساخت پرونده"}
+            </button>}</td>
+        </tr>;
+      })}</tbody>
+    </table></div> : <div className="invoice-source-pending">چکی در این دسته وجود ندارد.</div>}
+  </article>;
+}
+
+const CASE_STATUS_LABELS: Record<string, string> = { open: "باز", in_progress: "در حال پیگیری", resolved: "حل‌شده" };
+const CASE_PRIORITY_LABELS: Record<string, string> = { critical: "بحرانی", high: "زیاد", medium: "متوسط" };
+const CASE_DUE_DAYS: Record<string, number> = { critical: 1, high: 3, medium: 7 };
+const isoDateAfter = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const jalaliOf = (value?: string) => {
+  if (!value) return "—";
+  const d = new Date(String(value).length <= 10 ? `${value}T00:00:00` : value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString("fa-IR");
+};
+
+// Detail of one case: the customer's alerting cheques (live, matched by name), follow-ups and promises.
+function CaseDetail({ c, cheques }: { c: Case; cheques: { x: TreasuryCheque; keys: CollectionAlertKey[] }[] }) {
+  const followups = c.followups || [], promises = c.promises || [];
+  return <>
+    {cheques.length ? <section className="case-cheques">
+      <b>چک‌های هشداردار این مشتری: {fa(cheques.length)} فقره • {fullToman(chequeSum(cheques.map((r) => r.x)))} تومان</b>
+      <div className="cf-table"><table>
+        <thead><tr><th>شماره چک</th><th>مبلغ (تومان)</th><th>سررسید</th><th>زمان</th><th>وضعیت</th><th>هشدار</th></tr></thead>
+        <tbody>{cheques.map(({ x, keys }) => <tr key={`${x.source_system}-${x.cheque_id}-${x.serial_number}`}>
+          <td>{x.serial_number || "—"}<small>{x.sayad_number || ""}</small></td>
+          <td className="cf-debt">{fullToman(x.amount || 0)}</td>
+          <td>{x.due_date_jalali || "—"}</td>
+          <td>{chequeTiming(x)}</td>
+          <td>{chequeStatusText(x)}</td>
+          <td>{keys.map((k) => <span key={k} className={`case-alert-tag ${k}`}>{collectionAlertShort[k]}</span>)}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </section> : <section className="case-cheques empty">این مشتری در حال حاضر چک هشداردار ندارد.</section>}
+    {(followups.length > 0 || promises.length > 0) && <section className="case-history">
+      {followups.slice(0, 3).map((f: any) => <small key={f.followup_id}>📞 {jalaliOf(f.created_at)}: {f.note || "تماس ثبت شد"}{f.created_by ? ` — ${f.created_by}` : ""}</small>)}
+      {promises.map((p: any) => <small key={p.promise_id}>🤝 قول پرداخت {fullToman(p.amount || 0)} تومان تا {jalaliOf(p.promise_date)} ({p.status === "pending" ? "در انتظار" : p.status})</small>)}
+    </section>}
+  </>;
+}
+const collectionAlertShort: Record<CollectionAlertKey, string> = { returned: "برگشتی", overdue: "سررسیدگذشته", soon: "سررسید نزدیک", term: "مدت بالای ۹۰ روز" };
+
 function Collections({
   cases,
   agent,
   refresh,
+  received,
 }: {
   cases: Case[];
   agent?: AgentResult;
   refresh: () => void;
+  received: TreasuryCheque[];
 }) {
   const [newCase, setNewCase] = useState({
     counterpart_name: "",
@@ -4492,6 +5050,9 @@ function Collections({
     due_at: "",
     priority: "high",
   });
+  const [busyKey, setBusyKey] = useState("");
+  const [message, setMessage] = useState("");
+  const [highlight, setHighlight] = useState("");
   const create = async () => {
     if (!newCase.counterpart_name) return;
     await request("/collection-cases", {
@@ -4507,8 +5068,58 @@ function Collections({
     });
     refresh();
   };
+
+  const groups = useMemo(() => collectionAlertGroups(received), [received]);
+  // Every alerting cheque per customer, each listed once with all the alerts it raises.
+  const chequesByCustomer = useMemo(() => {
+    const map = new Map<string, Map<TreasuryCheque, CollectionAlertKey[]>>();
+    for (const k of ALERT_KEYS) for (const x of groups[k].items) {
+      const key = customerKey(x.counterpart_name);
+      if (!key) continue;
+      const rows = map.get(key) || new Map();
+      rows.set(x, [...(rows.get(x) || []), k]);
+      map.set(key, rows);
+    }
+    return map;
+  }, [groups]);
+  const openCaseKeys = useMemo(() => new Set(cases.filter((c) => c.status !== "resolved").map((c) => customerKey(c.counterpart_name))), [cases]);
+
+  const createFromAlert = async (x: TreasuryCheque, key: CollectionAlertKey) => {
+    const name = (x.counterpart_name || "").trim(), nameKey = customerKey(name);
+    if (!name || busyKey) return;
+    // The case gets the most urgent alert this customer has, not only the one clicked.
+    const customerAlerts = Array.from(chequesByCustomer.get(nameKey)?.values() || []).flat();
+    const priority = customerAlerts.includes("returned") ? "critical" : customerAlerts.some((k) => k === "overdue" || k === "term") ? "high" : groups[key].priority;
+    setBusyKey(nameKey); setMessage("");
+    try {
+      const result = await request("/collection-cases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          counterpart_name: name,
+          counterpart_ref: x.source_system === "rahkaran" ? x.counterpart_ref : undefined,
+          priority,
+          due_at: isoDateAfter(CASE_DUE_DAYS[priority]),
+        }),
+      });
+      setMessage(`پرونده وصول «${name}» با اولویت ${CASE_PRIORITY_LABELS[priority]} و مهلت ${jalaliOf(isoDateAfter(CASE_DUE_DAYS[priority]))} ساخته شد.`);
+      setHighlight(result?.case?.case_id || "");
+      refresh();
+    } catch (e) {
+      setMessage(e instanceof Error ? `ساخت پرونده ناموفق بود: ${e.message}` : "ساخت پرونده ناموفق بود.");
+    } finally {
+      setBusyKey("");
+    }
+  };
+  useEffect(() => {
+    if (!highlight) return;
+    document.getElementById(`case-${highlight}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlight, cases]);
+
   return (
     <>
+      <CollectionAlerts groups={groups} loading={!received.length} openCaseKeys={openCaseKeys} busyKey={busyKey} onCreateCase={createFromAlert} />
+      {message && <div className="collection-case-message">{message}</div>}
       <AgentPanel agent={agent} />
       <article className="fd-panel">
         <Heading
@@ -4551,33 +5162,40 @@ function Collections({
       <article className="fd-panel">
         <Heading
           h="صف عملیات وصول"
-          p={`${fa(cases.length)} پرونده فعال و تاریخی`}
+          p={`${fa(cases.length)} پرونده • ${fa(cases.filter((c) => c.status !== "resolved").length)} پرونده باز؛ چک‌های هر پرونده زنده از سبد چک‌های دریافتی خوانده می‌شود.`}
         />
-        <div className="case-grid">
-          {cases.map((c) => (
-            <div key={c.case_id}>
-              <header>
-                <Risk
-                  x={
-                    c.priority === "critical"
-                      ? "critical"
-                      : c.priority === "high"
-                        ? "danger"
-                        : "safe"
-                  }
-                />
-                <b>{c.counterpart_name}</b>
-              </header>
-              <p>
-                مسئول: {c.assignee || "تعیین نشده"} • مهلت: {c.due_at || "—"}
-              </p>
-              <small>
-                {fa(c.followups?.length)} پیگیری • {fa(c.promises?.length)} قول
-                پرداخت
-              </small>
-              <CaseActions c={c} refresh={refresh} />
-            </div>
-          ))}
+        <div className="case-grid case-grid-detailed">
+          {cases.map((c) => {
+            const cheques = Array.from(chequesByCustomer.get(customerKey(c.counterpart_name))?.entries() || [])
+              .map(([x, keys]) => ({ x, keys }))
+              .sort((a, b) => (b.x.amount || 0) - (a.x.amount || 0));
+            return (
+              <div key={c.case_id} id={`case-${c.case_id}`} className={highlight === c.case_id ? "case-new" : undefined}>
+                <header>
+                  <Risk
+                    x={
+                      c.priority === "critical"
+                        ? "critical"
+                        : c.priority === "high"
+                          ? "danger"
+                          : "safe"
+                    }
+                  />
+                  <b>{c.counterpart_name}</b>
+                  <span className={`case-status ${c.status}`}>{CASE_STATUS_LABELS[c.status] || c.status}</span>
+                </header>
+                <p>
+                  اولویت: {CASE_PRIORITY_LABELS[c.priority] || c.priority} • مسئول: {c.assignee || "تعیین نشده"} • مهلت: {jalaliOf(c.due_at)}
+                </p>
+                <small>
+                  {fa(c.followups?.length)} پیگیری • {fa(c.promises?.length)} قول
+                  پرداخت
+                </small>
+                {received.length ? <CaseDetail c={c} cheques={cheques} /> : null}
+                <CaseActions c={c} refresh={refresh} />
+              </div>
+            );
+          })}
         </div>
       </article>
     </>
@@ -5508,6 +6126,7 @@ function description(v: View) {
       monthlyExcel:
         "آپلود Excel روزانه، تشخیص خودکار ماه شمسی و تحلیل از ابتدای همان ماه",
       collections: "مسئول، مهلت، تماس، قول پرداخت و نتیجه پیگیری",
+      distribution: "فاکتورهای توزیع‌نشده، حواله‌های خروج باز، سرعت خروج بار و عملکرد موزعان — کارآمد",
       representatives: "کیفیت پرتفوی و وصول به تفکیک نماینده",
       simulator: "بررسی اثر نرخ وصول و جابه‌جایی پرداخت‌ها",
       alerts: "هشدارهای قابل ارجاع و قابل بستن",
@@ -6031,7 +6650,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
           <h3>چک و سررسید این مشتری</h3>
           <p>همان الگوی صفحه چک و سررسید: جمع، فیلتر وضعیت/زمان، جستجو و سپس ریز کامل چک.</p>
         </div>
-        <b>{fa(filteredChequeRows.length)} فقره · {money(filteredChequeAmount)} تومان</b>
+        <b>{fa(filteredChequeRows.length)} فقره · {fullToman(filteredChequeAmount)} تومان</b>
       </div>
       <section className="customer-cheque-scope-cards">
         {[
@@ -6042,7 +6661,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
           ["overdue", "سررسیدگذشته", overdueRows],
           ["risk", "احتمال برگشت دارد", riskRows],
         ].map(([id, title, items]: any) => <button key={id} className={chequeScope === id ? "active" : ""} onClick={() => setChequeScope(id)}>
-          <small>{title}</small><b>{fa(items.length)} فقره</b><span>{money(items.reduce((sum: number, x: any) => sum + Number(x.amount_rial || x.amount || 0), 0))} تومان</span>
+          <small>{title}</small><b>{fa(items.length)} فقره</b><span>{fullToman(items.reduce((sum: number, x: any) => sum + Number(x.amount_rial || x.amount || 0), 0))} تومان</span>
         </button>)}
       </section>
       <section className="cash-bank-toolbar cheque-list-search customer-activity-search">
@@ -6055,7 +6674,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
           <td><b>{x.activity_type}</b></td>
           <td><b>{fa(x.cheque_number || x.transfer_number || x.serial_number || "—")}</b></td>
           <td>{fa(x.sayad_number || "—")}</td>
-          <td><b>{money(x.amount_rial || x.amount || 0)} تومان</b></td>
+          <td><b>{fullToman(x.amount_rial || x.amount || 0)} تومان</b></td>
           <td>{x.registration_date_jalali || x.receipt_date_jalali || x.registration_date || x.receipt_date || "—"}</td>
           <td>{x.due_date_jalali || x.effective_date_jalali || x.due_date || "—"}</td>
           <td><span className={`profile-due ${dueClass(x)}`}>{dueLabel(x)}</span></td>
@@ -6081,7 +6700,7 @@ function UnifiedCustomerActivityTables({ c }: { c: Customer }) {
           <td><b>{fa(x.transfer_number || x.document_number || x.transfer_id || "—")}</b></td>
           <td>{x.registration_date_jalali || "—"}</td>
           <td>{x.transfer_date_jalali || x.effective_date_jalali || "—"}</td>
-          <td><b>{money(x.amount_rial || 0)} تومان</b></td>
+          <td><b>{fullToman(x.amount_rial || 0)} تومان</b></td>
           <td>{x.bank || "—"}</td>
           <td>{x.branch || "—"}</td>
           <td>{[x.purpose, x.description].filter(Boolean).join(" — ") || "—"}</td>
@@ -6138,8 +6757,8 @@ function CustomerReliability({ c }: { c: Customer }) {
         <div className="karamad-summary">
           <div><span>شعبه‌های کارآمد</span><b>{(c.karamad_activity.branches || []).join("، ") || "—"}</b></div>
           <div><span>گردش کارآمد</span><b>{fa(c.karamad_activity.movement_count || 0)} ردیف</b></div>
-          <div><span>چک دریافتی کارآمد</span><b>{fa(c.karamad_activity.received_cheque_count || 0)} فقره · {money(c.karamad_activity.received_cheque_amount_rial || 0)} تومان</b></div>
-          <div><span>حواله دریافتی کارآمد</span><b>{fa(c.karamad_activity.received_transfer_count || 0)} فقره · {money(c.karamad_activity.received_transfer_amount_rial || 0)} تومان</b></div>
+          <div><span>چک دریافتی کارآمد</span><b>{fa(c.karamad_activity.received_cheque_count || 0)} فقره · {fullToman(c.karamad_activity.received_cheque_amount_rial || 0)} تومان</b></div>
+          <div><span>حواله دریافتی کارآمد</span><b>{fa(c.karamad_activity.received_transfer_count || 0)} فقره · {fullToman(c.karamad_activity.received_transfer_amount_rial || 0)} تومان</b></div>
         </div>
       )}
       <div className="reliability-main">
@@ -6200,7 +6819,7 @@ function CustomerReliability({ c }: { c: Customer }) {
           <b>
             {decision.recommended_max_new_cheque_amount_rial == null
               ? "پس از تکمیل سابقه تعیین می‌شود"
-              : `${money(decision.recommended_max_new_cheque_amount_rial)} تومان`}
+              : `${fullToman(decision.recommended_max_new_cheque_amount_rial)} تومان`}
           </b>
         </div>
         <div>
@@ -6283,18 +6902,54 @@ function LastInvoicesTable({ invoices, showVisitor = false }: { invoices: any[];
         <td><b>{/^\d+$/.test(inv.number || "") ? Number(inv.number).toLocaleString("fa-IR", { useGrouping: false }) : inv.number || "—"}</b></td>
         <td>{inv.date_jalali || "—"}</td>
         {showVisitor && <td>{inv.visitor_name || "—"}</td>}
-        <td><b>{money(inv.amount_rial || 0)}</b><small>تومان</small></td>
-        <td className={Number(inv.remaining_rial || 0) > 0 ? "cf-debt" : "cf-settled"}>{inv.remaining_rial == null ? "نامشخص" : Number(inv.remaining_rial) > 0 ? `${money(inv.remaining_rial)} تومان` : "تسویه شده"}</td>
+        <td><b>{fullToman(inv.amount_rial || 0)}</b><small>تومان</small></td>
+        <td className={Number(inv.remaining_rial || 0) > 0 ? "cf-debt" : "cf-settled"}>{inv.remaining_rial == null ? "نامشخص" : Number(inv.remaining_rial) > 0 ? `${fullToman(inv.remaining_rial)} تومان` : "تسویه شده"}</td>
         <td className="cf-flow">
           {inv.collected_percent == null ? "—" : <>
             <div className="cf-bar"><i style={{ width: `${pct}%` }} /></div>
-            <small>{fa(pct)}٪ وصول شده · {money(inv.collected_rial || 0)} تومان</small>
-            {(inv.collection_breakdown || []).length > 0 && <div className="cf-chips">{inv.collection_breakdown.map((b: any) => <span key={b.method}>{b.method}: {money(b.amount_rial)}</span>)}</div>}
+            <small>{fa(pct)}٪ وصول شده · {fullToman(inv.collected_rial || 0)} تومان</small>
+            {(inv.collection_breakdown || []).length > 0 && <div className="cf-chips">{inv.collection_breakdown.map((b: any) => <span key={b.method}>{b.method}: {fullToman(b.amount_rial)}</span>)}</div>}
           </>}
         </td>
       </tr>;
     })}</tbody>
   </table></div>;
+}
+
+// Rahkaran: invoices still (partly) unpaid long after issue. Remaining per invoice is the FIFO share
+// of the customer's balance (Rahkaran has no per-invoice settlement).
+function OldOpenInvoices({ invoices }: { invoices: any[] }) {
+  const [days, setDays] = useState(60);
+  const [open, setOpen] = useState(false);
+  const old = invoices.filter((x) => Number(x.age_days || 0) > days).sort((a, b) => Number(b.age_days) - Number(a.age_days));
+  const remaining = old.reduce((s, x) => s + Number(x.remaining_rial || 0), 0);
+  return <section className="cf-section">
+    <div className="cf-title">
+      <div><h3>فاکتورهای باز قدیمی</h3><p>فاکتورهایی که بیش از {fa(days)} روز از صدورشان گذشته و هنوز بخشی از مبلغشان باز است (مانده حساب مشتری به ترتیب به جدیدترین فاکتورها تخصیص داده شده).</p></div>
+      <div className="distribution-controls"><label>قدیمی‌تر از: <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+        {[30, 60, 90, 180].map((d) => <option key={d} value={d}>{fa(d)} روز</option>)}
+      </select></label></div>
+    </div>
+    <div className="cf-kpis">
+      <article className={`cf-accent-red${old.length ? " cf-kpi-clickable" : ""}${open ? " active" : ""}`} role="button" tabIndex={0}
+        onClick={() => old.length && setOpen((v) => !v)} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && old.length) { e.preventDefault(); setOpen((v) => !v); } }}>
+        <small>فاکتور باز بیش از {fa(days)} روز</small><b>{fa(old.length)} فاکتور</b>
+        <span>{fullToman(remaining)} تومان مانده</span>
+        {old.length > 0 && <em>{open ? "بستن ▲" : "مشاهده فاکتورها ▼"}</em>}
+      </article>
+      <article><small>قدیمی‌ترین فاکتور باز</small><b>{old.length ? old[0].date_jalali : "—"}</b><span>{old.length ? `${fa(old[0].age_days)} روز پیش` : "فاکتور باز قدیمی ندارد"}</span></article>
+    </div>
+    {open && old.length > 0 && <div className="cf-table distribution-scroll"><table>
+      <thead><tr><th>شماره فاکتور</th><th>تاریخ</th><th>گذشته</th><th>مبلغ فاکتور (تومان)</th><th>مانده (تومان)</th><th>درصد باز</th></tr></thead>
+      <tbody>{old.map((x) => <tr key={x.invoice_id}>
+        <td><b>{x.number || "—"}</b></td><td>{x.date_jalali || "—"}</td>
+        <td className="cf-debt">{fa(x.age_days)} روز</td>
+        <td>{fullToman(x.amount_rial)}</td>
+        <td className="cf-debt"><b>{fullToman(x.remaining_rial)}</b></td>
+        <td>{x.amount_rial ? `${fa(Math.round((x.remaining_rial / x.amount_rial) * 100))}٪` : "—"}</td>
+      </tr>)}</tbody>
+    </table></div>}
+  </section>;
 }
 
 function CustomerFileOverview({ c }: { c: Customer }) {
@@ -6329,14 +6984,17 @@ function CustomerFileOverview({ c }: { c: Customer }) {
         </div>
         <div className="cf-kpis">
           <article><small>تعداد کل فاکتور خرید</small><b>{fa(s.invoice_count || 0)}</b><span>از {s.first_invoice_date_jalali || "—"}</span></article>
-          <article><small>کل مبلغ خرید تا امروز</small><b>{money(s.purchase_amount_rial || 0)}</b><span>تومان</span></article>
-          <article><small>تعداد فاکتور خرید {cy}</small><b>{fa(s.current_year_invoice_count || 0)}</b><span>{money(s.current_year_amount_rial || 0)} تومان</span></article>
-          <article><small>تعداد فاکتور خرید {py}</small><b>{fa(s.previous_year_invoice_count || 0)}</b><span>{money(s.previous_year_amount_rial || 0)} تومان</span></article>
+          <article><small>کل مبلغ خرید تا امروز</small><b>{fullToman(s.purchase_amount_rial || 0)}</b><span>تومان</span></article>
+          <article><small>تعداد فاکتور خرید {cy}</small><b>{fa(s.current_year_invoice_count || 0)}</b><span>{fullToman(s.current_year_amount_rial || 0)} تومان</span></article>
+          <article><small>تعداد فاکتور خرید {py}</small><b>{fa(s.previous_year_invoice_count || 0)}</b><span>{fullToman(s.previous_year_amount_rial || 0)} تومان</span></article>
         </div>
         {Number(s.draft_invoice_count || 0) > 0 && <small className="cf-note">{fa(s.draft_invoice_count)} فاکتور پیش‌نویس/غیرقطعی راهکاران در این آمار شمرده نشده است.</small>}
       </section>
 
-      <section className="cf-section">
+      <OldOpenInvoices invoices={file.open_invoices || []} />
+
+      {/* Rahkaran customers buy directly from the company; only Karamad sales go through visitors. */}
+      {file.source === "karamad" && <section className="cf-section">
         <div className="cf-title">
           <div><h3>فروش ویزیتور</h3><p>هیبرید ← سرپرست ← ویزیتوری که به این مشتری فروخته است</p></div>
         </div>
@@ -6347,14 +7005,14 @@ function CustomerFileOverview({ c }: { c: Customer }) {
             <td>{v.branch || "—"}</td>
             <td>{v.supervisor || "—"}</td>
             <td className="cf-wrap">{(v.hybrids || []).join("، ") || "—"}</td>
-            <td><b>{money(v.visitor_sales_current_year_rial || 0)}</b><small>{fa(v.visitor_invoice_count_current_year || 0)} فاکتور</small></td>
-            <td><b>{money(v.visitor_sales_previous_year_rial || 0)}</b><small>{fa(v.visitor_invoice_count_previous_year || 0)} فاکتور</small></td>
-            <td>{money(v.customer_sales_current_year_rial || 0)}</td>
-            <td>{money(v.customer_sales_previous_year_rial || 0)}</td>
+            <td><b>{fullToman(v.visitor_sales_current_year_rial || 0)}</b><small>{fa(v.visitor_invoice_count_current_year || 0)} فاکتور</small></td>
+            <td><b>{fullToman(v.visitor_sales_previous_year_rial || 0)}</b><small>{fa(v.visitor_invoice_count_previous_year || 0)} فاکتور</small></td>
+            <td>{fullToman(v.customer_sales_current_year_rial || 0)}</td>
+            <td>{fullToman(v.customer_sales_previous_year_rial || 0)}</td>
             <td>{v.last_invoice_date_jalali || "—"}</td>
           </tr>)}</tbody>
         </table></div> : <div className="invoice-source-pending">{network.note || "برای این مشتری ویزیتوری ثبت نشده است."}</div>}
-      </section>
+      </section>}
 
       <section className="cf-section">
         <div className="cf-title">
@@ -6382,11 +7040,11 @@ function CustomerReceivables({ detail }: { detail: Customer }) {
         <span className={`collection-account-state ${ap.balance_status || "unknown"}`}>{ap.balance_status === "debtor" ? "بدهکار" : ap.balance_status === "creditor" ? "بستانکار" : ap.balance_status === "settled" ? "تسویه" : "فاقد حساب"}</span>
       </div>
       <div className="cf-kpis">
-        <article className="cf-accent-red"><small>مانده بدهی فعلی</small><b>{money(cp.open_account_receivable_rial || 0)}</b><span>تومان • بدون چک</span></article>
-        <article><small>چک باز در دست شرکت</small><b>{money(cp.open_cheque_amount_rial || 0)}</b><span>تومان</span></article>
-        <article><small>کل مطالبات درگیر وصول</small><b>{money(cp.total_collection_exposure_rial || 0)}</b><span>مانده + چک باز</span></article>
+        <article className="cf-accent-red"><small>مانده بدهی فعلی</small><b>{fullToman(cp.open_account_receivable_rial || 0)}</b><span>تومان • بدون چک</span></article>
+        <article><small>چک باز در دست شرکت</small><b>{fullToman(cp.open_cheque_amount_rial || 0)}</b><span>تومان</span></article>
+        <article><small>کل مطالبات درگیر وصول</small><b>{fullToman(cp.total_collection_exposure_rial || 0)}</b><span>مانده + چک باز</span></article>
         <article><small>پوشش با چک</small><b>{fa(cp.cheque_coverage_percent || 0)}٪</b><span>{fa(cp.uncovered_percent || 0)}٪ بدون چک</span></article>
-        {Number(cp.customer_credit_rial || 0) > 0 && <article><small>بستانکاری مشتری</small><b>{money(cp.customer_credit_rial)}</b><span>تومان</span></article>}
+        {Number(cp.customer_credit_rial || 0) > 0 && <article><small>بستانکاری مشتری</small><b>{fullToman(cp.customer_credit_rial)}</b><span>تومان</span></article>}
       </div>
       {breakdown.length > 0 && <div className="cf-table"><table>
         <thead><tr><th>حساب</th><th>بدهکار</th><th>بستانکار</th><th>مانده</th></tr></thead>
@@ -6511,31 +7169,31 @@ function CustomerProfile({
         <div className="modal-metrics profile-metrics">
           <K
             t="کل چک‌های دریافت‌شده"
-            v={money(total)}
+            v={fullToman(total)}
             n={`${fa(detail.historical_cheque_count || 0)} فقره • تومان`}
             c="blue"
           />
           <K
             t="وصول‌شده قطعی"
-            v={money(collected)}
+            v={fullToman(collected)}
             n={`${fa(detail.collected_cheque_count || 0)} فقره`}
             c="teal"
           />
           <K
             t="چک‌های دریافتی باز"
-            v={money(open)}
+            v={fullToman(open)}
             n={`${fa(detail.open_cheque_count || 0)} فقره • تومان`}
             c="amber"
           />
           <K
             t="برگشتی/واخواست‌شده"
-            v={money(returned)}
+            v={fullToman(returned)}
             n={`${fa(returnedCount)} فقره • تومان`}
             c="red"
           />
           <K
             t="چک‌های آینده"
-            v={money(futureAmount)}
+            v={fullToman(futureAmount)}
             n={`${fa(futureCount)} فقره • تومان`}
             c="blue"
           />
@@ -6552,8 +7210,8 @@ function CustomerProfile({
             <i style={{ width: `${percent}%` }} />
           </div>
           <footer>
-            <span>وصول‌شده: {money(collected)} تومان</span>
-            <span>هنوز باز: {money(open)} تومان</span>
+            <span>وصول‌شده: {fullToman(collected)} تومان</span>
+            <span>هنوز باز: {fullToman(open)} تومان</span>
           </footer>
         </section>
         <UnifiedCustomerActivityTables c={detail} />

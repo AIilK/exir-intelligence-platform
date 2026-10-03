@@ -1,1 +1,41 @@
-.case-actions{display:grid!important;gap:7px}.case-actions>div{display:flex;gap:5px}.case-actions input,.outcome-form input,.outcome-form select{min-width:0;border:1px solid #d9e1eb;border-radius:7px;padding:7px}.case-actions input{flex:1}.case-actions footer{display:flex;gap:6px}.outcome-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.outcome-form button{border:0;background:#14a893;color:white;border-radius:8px;padding:9px 13px;cursor:pointer}.outcome-form span{color:#087b65;font-size:11px}@media(max-width:700px){.case-actions>div,.outcome-form{flex-direction:column;align-items:stretch}}
+.case-actions{display:grid!important;gap:7px}.case-actions>div{display:flex;gap:5px}.case-actions input,.outcome-form input,.outcome-form select{min-width:0;border:1px solid #d9e1eb;border-radius:7px;padding:7px}.case-actions input{flex:1}.case-actions footer{display:flex;gap:6px}.outcome-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.outcome-form button{border:0;background:#14a893;color:white;border-radius:8px;padding:9px 13px;cursor:pointer}.outcome-form span{color:#087b65;font-size:12.5px}@media(max-width:700px){.case-actions>div,.outcome-form{flex-direction:column;align-items:stretch}}
+
+/* Collection alerts (هشدارهای وصول): alert cards + cheque detail table */
+.collection-alerts{display:grid;gap:14px}
+.collection-alert-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.collection-alert-cards button{--tone:#5fa8d3;display:grid;gap:6px;text-align:right;padding:14px 16px;border:1px solid rgba(94,126,151,.25);border-top:3px solid var(--tone);border-radius:14px;background:rgba(255,255,255,.03);color:inherit;font:inherit;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.collection-alert-cards button.danger{--tone:#ef7a80}
+.collection-alert-cards button.warn{--tone:#f0a35b}
+.collection-alert-cards button.soon{--tone:#f3be6e}
+.collection-alert-cards button.term{--tone:#b48cf0}
+.collection-alert-cards button:hover,.collection-alert-cards button.active{border-color:var(--tone);background:color-mix(in srgb,var(--tone) 14%,transparent)}
+.collection-alert-cards small{font-size:13.5px;opacity:.8}
+.collection-alert-cards b{font-size:20px;color:var(--tone)}
+.collection-alert-cards span{font-size:13px;opacity:.75;font-variant-numeric:tabular-nums}
+.collection-alert-filters select{min-width:140px}
+.collection-alert-table{max-height:560px;overflow-y:auto}
+.collection-alert-table th{position:sticky;top:0;z-index:1}
+.collection-alert-action{border:0;background:#14a893;color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+
+/* Collection case queue with live cheque detail */
+.case-grid.case-grid-detailed{grid-template-columns:repeat(auto-fit,minmax(460px,1fr))}
+.case-grid-detailed>div{display:grid;gap:8px;align-content:start}
+.case-grid-detailed>div.case-new{border-color:#14a893;box-shadow:0 0 0 2px rgba(20,168,147,.35)}
+.case-grid-detailed header b{flex:1}
+.case-status{font-size:12.5px;padding:2px 9px;border-radius:999px;background:rgba(95,168,211,.16);color:#8cc7ea;white-space:nowrap}
+.case-status.in_progress{background:rgba(243,190,110,.16);color:#f3be6e}
+.case-status.resolved{background:rgba(63,212,176,.14);color:#3fd4b0}
+.case-cheques{display:grid;gap:6px;font-size:13px}
+.case-cheques.empty{opacity:.65}
+.case-cheques .cf-table{max-height:230px;overflow-y:auto}
+.case-cheques .cf-table table{min-width:0}
+.case-cheques .cf-table th{position:sticky;top:0;z-index:1}
+.case-alert-tag{display:inline-block;margin:1px 2px;padding:1px 7px;border-radius:999px;font-size:12px;background:rgba(95,168,211,.16)}
+.case-alert-tag.returned{background:rgba(239,122,128,.18);color:#ff9aa0}
+.case-alert-tag.overdue{background:rgba(240,163,91,.18);color:#f0a35b}
+.case-alert-tag.soon{background:rgba(243,190,110,.16);color:#f3be6e}
+.case-alert-tag.term{background:rgba(180,140,240,.18);color:#c9a9f5}
+.case-history{display:grid;gap:3px}
+.collection-alert-has-case{color:#3fd4b0;font-size:13px;white-space:nowrap}
+.collection-alert-action:disabled{opacity:.6;cursor:wait}
+.collection-case-message{padding:10px 14px;border:1px solid rgba(20,168,147,.5);border-radius:12px;background:rgba(20,168,147,.1);color:#7fe3cc}
