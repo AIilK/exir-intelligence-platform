@@ -782,10 +782,12 @@ class KaramadSalesNetworkService:
         rows = connection.execute(text(
             f"""
             SELECT d.[inx], d.[Serial], d.[InquiryCode], d.[Price], d.[BookDate], d.[DueDate], d.[DLRef],
-                   st.[Name] AS StatusName, COALESCE(bk.[Name], d.[Bank]) AS BankName, v.[Name] AS VisitorName
+                   st.[Name] AS StatusName, COALESCE(bk.[Name], d.[Bank]) AS BankName, v.[Name] AS VisitorName,
+                   cu.[Name] AS CustomerName, cu.[Code] AS CustomerCode
             FROM dbo.[tblChequeD] d
             LEFT JOIN dbo.[tblFactorF] fx ON fx.[ID] = d.[FactorRef]
             LEFT JOIN dbo.[tblVisitor] v ON v.[ID] = fx.[VisitorRef] AND NOT {VISITOR_LEFT}
+            OUTER APPLY (SELECT TOP (1) c.[Name], c.[Code] FROM dbo.[tblCustomer] c WHERE c.[DLRef] = d.[DLRef] ORDER BY c.[ID]) cu
             OUTER APPLY (SELECT TOP (1) s.[Name] FROM dbo.[tblChequeDStatus] s WHERE s.[Code] = d.[StatusRef]) st
             OUTER APPLY (SELECT TOP (1) b.[Name] FROM dbo.[tblBankList] b WHERE b.[Code] = d.[BankIDRef]) bk
             WHERE d.[StatusRef] IN ({statuses}) AND {cheque_scope}
@@ -810,6 +812,8 @@ class KaramadSalesNetworkService:
                 "cheque_status": _text(r["StatusName"]),
                 "bank": _text(r["BankName"]),
                 "visitor_name": _text(r["VisitorName"]),
+                "customer_name": _text(r["CustomerName"]),
+                "customer_code": _text(r["CustomerCode"]),
                 "_dl_ref": r["DLRef"],
             })
 

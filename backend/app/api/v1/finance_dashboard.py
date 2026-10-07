@@ -541,6 +541,33 @@ def distribution_monthly(year: int, month: int):
         raise HTTPException(status_code=500, detail=f"دریافت گزارش توزیع و وصول با خطا مواجه شد: {exc}") from exc
 
 
+@router.get("/karamad/unrecorded-payments.xlsx", summary="Excel پرداخت‌های ثبت‌نشده احتمالی مشتریان کارآمد")
+def karamad_unrecorded_payments_excel():
+    from datetime import date
+    from urllib.parse import quote
+    from app.services.karamad_unrecorded_payment_service import KaramadUnrecordedPaymentService
+    from app.utils.jalali import format_jalali_date
+    try:
+        content = KaramadUnrecordedPaymentService().workbook().getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت گزارش پرداخت‌های ثبت‌نشده با خطا مواجه شد: {exc}") from exc
+    name = f"پرداخت-ثبت-نشده-احتمالی-{format_jalali_date(date.today()).replace('/', '-')}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=unrecorded-payments.xlsx; filename*=UTF-8''{quote(name)}"},
+    )
+
+
+@router.get("/distribution/timeline", summary="زمان‌بندی توزیع هر فاکتور: ثبت فاکتور، ثبت حواله خروج و تاریخ خروج")
+def distribution_timeline(days: int = 14):
+    from app.services.karamad_distribution_service import KaramadDistributionService
+    try:
+        return KaramadDistributionService().timeline(days)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت زمان‌بندی توزیع فاکتورها با خطا مواجه شد: {exc}") from exc
+
+
 @router.get("/customer-intelligence/{counterpart_ref}", summary="تحلیل انسانی رفتار یک مشتری")
 def customer_intelligence_detail(
     counterpart_ref: int,

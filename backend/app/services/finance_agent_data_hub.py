@@ -79,12 +79,73 @@ class FinanceAgentDataHub:
             }
         return result
 
+    @staticmethod
+    def _live_cheque_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """Same summary shape as _cheque_summary, from live rows carrying days_until_due."""
+
+        buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            days = row.get("days_until_due", row.get("days_to_due"))
+            bucket = "unknown" if days is None else "overdue" if days < 0 else "today" if days == 0 else "future"
+            buckets[bucket].append({**row, "amount_rial": row.get("amount_rial", row.get("amount"))})
+        everything = [r for items in buckets.values() for r in items]
+        amount = FinanceAgentDataHub._amount
+        return {
+            "count": len(everything), "amount_rial": amount(everything),
+            **{f"{name}_count": len(buckets[name]) for name in ("overdue", "today", "future")},
+            **{f"{name}_amount_rial": amount(buckets[name]) for name in ("overdue", "today", "future")},
+            "unknown_due_count": len(buckets["unknown"]), "unknown_due_amount_rial": amount(buckets["unknown"]),
+        }
+
+    def _live_karamad(self) -> dict[str, Any]:
+        """V171: cheques and drafts straight from Karamad SQL instead of the manual Excel import."""
+
+        from app.services.karamad_live_cash_draft_service import KaramadLiveCashDraftService
+        from app.services.treasury_service import _karamad_cheques
+
+        from app.services.received_cheque_current_status import received_cheque_is_approved_open_holding
+
+        received = self._live_cheque_summary(
+            [row for row in _karamad_cheques("received_cheques") if received_cheque_is_approved_open_holding(row)])
+        issued = self._live_cheque_summary(_karamad_cheques("issued_cheques"))
+        start = date(date.today().year - (1 if date.today().month < 3 or (date.today().month == 3 and date.today().day < 21) else 0), 3, 21)
+        drafts = KaramadLiveCashDraftService().report(start=start, end=date.today(), limit=200000).get("movements") or []
+
+        def total(items: list[dict[str, Any]]) -> dict[str, Any]:
+            return {"count": len(items), "amount_rial": round(sum(float(x.get("amount_rial") or 0) for x in items), 2)}
+
+        receipts = [m for m in drafts if m["movement_type"] == "bank_receipt"]
+        payments = [m for m in drafts if m["movement_type"] == "bank_payment"]
+        bank_to_bank = [m for m in payments if m.get("classification") == "company_bank_transfer"]
+        petty = [m for m in drafts if m.get("classification") == "petty_cash"]
+        return {
+            "received_cheques": received,
+            "issued_cheques": issued,
+            "received_transfers": total(receipts),
+            "paid_transfers": {
+                **total(payments),
+                "bank_to_bank_count": len(bank_to_bank),
+                "bank_to_bank_amount_rial": total(bank_to_bank)["amount_rial"],
+                "other_count": len(payments) - len(bank_to_bank),
+                "other_amount_rial": round(total(payments)["amount_rial"] - total(bank_to_bank)["amount_rial"], 2),
+            },
+            "petty_cash": total(petty),
+            "period_start": start.isoformat(),
+        }
+
     def build(self) -> dict[str, Any]:
         state = self.karamad._state()
         rows = list(state.get("records", {}).values())
         summary = self.karamad.summary(state=state)
         received_cheques = self._cheque_summary(rows, "received_cheques")
         issued_cheques = self._cheque_summary(rows, "issued_cheques")
+        try:
+            live = self._live_karamad()
+        except Exception as exc:  # noqa: BLE001 — fall back to the last manual import
+            live = None
+            live_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        if live:
+            received_cheques, issued_cheques = live["received_cheques"], live["issued_cheques"]
 
         customer = self.karamad.customer_summary()
         customers = customer.get("customers") or []
@@ -95,35 +156,47 @@ class FinanceAgentDataHub:
             reverse=True,
         )[:20]
 
+        imported_transfers = {
+            "received_transfers": {
+                "count": int(summary.get("received_transfer_total_count") or 0),
+                "amount_rial": float(summary.get("received_transfer_total_rial") or 0),
+            },
+            "paid_transfers": {
+                "count": int(summary.get("paid_transfer_total_count") or 0),
+                "amount_rial": float(summary.get("paid_transfer_total_rial") or 0),
+                "bank_to_bank_count": int(summary.get("paid_transfer_bank_to_bank_count") or 0),
+                "bank_to_bank_amount_rial": float(summary.get("paid_transfer_bank_to_bank_rial") or 0),
+                "other_count": int(summary.get("paid_transfer_other_count") or 0),
+                "other_amount_rial": float(summary.get("paid_transfer_other_rial") or 0),
+            },
+            "petty_cash": {
+                "count": int(summary.get("petty_cash_count") or 0),
+                "amount_rial": float(summary.get("petty_cash_rial") or 0),
+            },
+        }
+        transfers = {key: live[key] for key in imported_transfers} if live else imported_transfers
+
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "data_version": "karamad-unified-snapshot-v106",
+            "data_version": "karamad-live-sql-v171" if live else "karamad-unified-snapshot-v106",
             "karamad": {
+                "source": "live" if live else "import",
+                "live_error": None if live else live_error,
+                "live_period_start": live.get("period_start") if live else None,
                 "record_count": len(rows),
                 "freshness": self._freshness(state),
                 "received_cheques": received_cheques,
                 "issued_cheques": {
                     **issued_cheques,
-                    "future_data_complete": False,
+                    "future_data_complete": bool(live),
                     "returns_available": False,
-                    "note": "فایل فعلی فقط چک‌های پرداختی ثبت‌شده کارآمد است؛ نبود رکورد آینده به معنی نبود تعهد آینده نیست و برگشتی برای این منبع فعلاً گزارش نشده است.",
+                    "note": (
+                        "چک‌های پرداختی زنده کارآمد با وضعیت نهایی «عادی» (هنوز پاس‌نشده)."
+                        if live else
+                        "فایل فعلی فقط چک‌های پرداختی ثبت‌شده کارآمد است؛ نبود رکورد آینده به معنی نبود تعهد آینده نیست و برگشتی برای این منبع فعلاً گزارش نشده است."
+                    ),
                 },
-                "received_transfers": {
-                    "count": int(summary.get("received_transfer_total_count") or 0),
-                    "amount_rial": float(summary.get("received_transfer_total_rial") or 0),
-                },
-                "paid_transfers": {
-                    "count": int(summary.get("paid_transfer_total_count") or 0),
-                    "amount_rial": float(summary.get("paid_transfer_total_rial") or 0),
-                    "bank_to_bank_count": int(summary.get("paid_transfer_bank_to_bank_count") or 0),
-                    "bank_to_bank_amount_rial": float(summary.get("paid_transfer_bank_to_bank_rial") or 0),
-                    "other_count": int(summary.get("paid_transfer_other_count") or 0),
-                    "other_amount_rial": float(summary.get("paid_transfer_other_rial") or 0),
-                },
-                "petty_cash": {
-                    "count": int(summary.get("petty_cash_count") or 0),
-                    "amount_rial": float(summary.get("petty_cash_rial") or 0),
-                },
+                **transfers,
                 "customer_count": int(customer.get("customer_count") or 0),
                 "top_customers": top_customers,
             },
@@ -139,8 +212,8 @@ class FinanceAgentDataHub:
             "rules": {
                 "bank_to_bank_net_effect": 0,
                 "petty_cash_cashflow_included": False,
-                "karamad_issued_future_complete": False,
+                "karamad_issued_future_complete": bool(live),
                 "karamad_issued_returns_available": False,
-                "karamad_snapshots_replace_previous": True,
+                "karamad_snapshots_replace_previous": not live,
             },
         }

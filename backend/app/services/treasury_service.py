@@ -227,6 +227,14 @@ def _karamad_cheques(source_kind: str) -> list[dict[str, Any]]:
             return KaramadLiveReceivedChequeService().report().get("cheques", [])
         except Exception:
             pass
+    # V171: چک‌های پرداختی هم از جدول زنده کارآمد (vwChequePLinesFull، وضعیت نهایی «عادی»)؛
+    # Snapshot اکسل هیچ چک آینده‌ای نداشت و تعهدات واقعی از گزارش و پیش‌بینی جا می‌ماند.
+    if source_kind == "issued_cheques":
+        try:
+            from app.services.karamad_issued_cheque_sql_service import KaramadIssuedChequeSQLService
+            return KaramadIssuedChequeSQLService().fetch_all()
+        except Exception:
+            pass
     from app.services.karamad_manual_import_service import KaramadManualImportService
     return KaramadManualImportService().cheque_rows(source_kind)
 
@@ -939,12 +947,12 @@ def get_open_issued_cheques(
     return {
         "status": "success",
         "report_type": "open_issued_cheques",
-        "data_source": "RPA3.PayableNote + KarAmand Excel",
+        "data_source": "RPA3.PayableNote + KarAmand Live SQL (vwChequePLinesFull)",
         "data_sources": ["راهکاران", "کارآمد"],
         "state_filter": [11],
         "paid_state_excluded": 28,
         "posting_business_rule": "وجود سند تأییدشده تعیین وضعیت/وصول چک در PayableNoteTransaction یا State پرداخت‌شده = سند خورده و برداشت‌شده؛ از تعهدات باز و Cash Flow آینده حذف می‌شود",
-        "due_policy": "Rahkaran: from 20 days overdue through all future due dates; KarAmand: all registered cheques from latest snapshot (future coverage incomplete)",
+        "due_policy": "Rahkaran: from 20 days overdue through all future due dates; KarAmand: all live cheques whose final status is عادی (not yet cleared)",
         "row_limit": None,
         "guarantee_cheques_excluded": True,
         "shareholder_cheques_excluded": True,
@@ -2755,6 +2763,8 @@ def get_company_payment_orders(limit: int = 1000, engine: Engine | None = None) 
             "payment_method": method,
             "category": _payment_order_category(row["Description"]),
             "is_approved": row["ApproveDate"] is not None,
+            "source": "rahkaran",
+            "source_label": "راهکاران",
         })
 
     categories: dict[str, dict[str, Any]] = {}
@@ -2775,6 +2785,168 @@ def get_company_payment_orders(limit: int = 1000, engine: Engine | None = None) 
         },
         "note": "دسته‌بندی مدیریتی بر پایه شرح حواله است؛ State خام راهکاران نیز برای کنترل نمایش داده می‌شود.",
     }
+
+_KARAMAD_FEE_TOKENS = ("کارمزد", "شاپرک", "هزینه بانکی", "هزنیه بانکی", "واگذاری چک", "هزینه کارمزد")
+_KARAMAD_BANK_NAMES = ("سپه", "بانک", "ملت", "ملی", "تجارت", "صادرات", "پارسیان", "پاسارگاد", "رفاه", "سامان", "اقتصاد نوین", "شهر")
+
+
+def _karamad_payment_category(counterpart: Any, behalf: Any, description: Any) -> str:
+    """دسته پرداخت کارآمد؛ در کارآمد معنای پرداخت بیشتر در «تفصیلی طرف حساب» است تا شرح."""
+
+    from app.services.karamad_live_cash_draft_service import _classify
+
+    def clean(value: Any) -> str:
+        value = str(value or "").replace("ي", "ی").replace("ك", "ک").replace("‌", " ")
+        return re.sub(r"\s+", " ", value).strip()
+
+    name = clean(counterpart)
+    text_value = clean(f"{behalf or ''} {description or ''}")
+    is_company_account = (
+        (name.startswith(_KARAMAD_BANK_NAMES) and re.search(r"\d{6,}", name) is not None)
+        or name.startswith(("هیبرید", "انتقال"))
+        or "برداشت از سپرده" in name
+    )
+    if is_company_account or _classify(behalf, description)[0] == "company_bank_transfer":
+        return "انتقال بین حساب‌های شرکت"
+    if name == "جاری شرکا":
+        return "جاری شرکا"
+    if name in {"ک"} or any(token in f"{name} {text_value}" for token in _KARAMAD_FEE_TOKENS):
+        return "کارمزد و هزینه بانکی"
+    if any(token in f"{name} {text_value}" for token in ("سنوات", "پرسنل", "پاداش", "عیدی")):
+        return "حقوق و پرسنل"
+    if name.startswith("شرکت"):
+        return "شرکت‌ها و تأمین‌کنندگان"
+    category = _payment_order_category(f"{name} {text_value}")
+    if category == "سایر" and name.startswith(("هزینه", "هزنیه")):
+        return "خدمات و هزینه‌ها"
+    return category
+
+
+def get_company_payment_orders_karamad(limit: int = 5000, since: Any = None) -> dict[str, Any]:
+    """پرداخت‌های شرکت از کارآمد، هم‌شکل خروجی راهکاران.
+
+    هر سند پرداخت کارآمد یک ردیف است:
+    - حواله پرداخت بانکی: dbo.tblDraftP (Price، بانک از tblAccBank)
+    - پرداخت نقدی صندوق: dbo.tblCashP (PriceN، صندوق از tblAccFund)
+    - چک پرداختی: dbo.tblChequeP (Price، وضعیت از tblChequePStatus)
+    tblPaymentRequest در کارآمد کم استفاده می‌شود (حدود ۹٪ حواله‌ها)، پس مبنا خود اسناد پرداخت است.
+    کارآمد تاریخ تأیید ندارد؛ «صدور سند حسابداری» (VoucherRef) معادل تأیید نمایش داده می‌شود.
+    """
+    from app.database.karamad_sqlserver import get_karamad_sqlserver_engine
+    from app.services.karamad_live_cash_draft_service import _classify
+
+    safe_limit = max(1, min(int(limit), 20000))
+    query = text(f"""
+        WITH payments AS (
+            SELECT N'draft' AS Kind, CAST(d.[inx] AS bigint) AS ItemID, CAST(d.[Code] AS nvarchar(50)) AS Number,
+                   d.[BookDate], CAST(NULL AS date) AS DueDate, d.[Price] AS Amount, d.[Charge] AS Charge,
+                   d.[Behalf], d.[Description], d.[DLRef], d.[BranchRef], d.[BankRef], CAST(NULL AS int) AS FundRef,
+                   d.[VoucherRef], CAST(NULL AS int) AS StatusRef, d.[UserRef], d.[PaymentRequestRef]
+            FROM dbo.[tblDraftP] d
+            UNION ALL
+            SELECT N'cash', CAST(c.[inx] AS bigint), CAST(c.[Code] AS nvarchar(50)), c.[BookDate], NULL, c.[PriceN], NULL,
+                   c.[Behalf], c.[Description], c.[DLRef], c.[BranchRef], NULL, c.[FundRef],
+                   c.[VoucherRef], NULL, c.[UserRef], c.[PaymentRequestRef]
+            FROM dbo.[tblCashP] c
+            UNION ALL
+            SELECT N'cheque', CAST(q.[inx] AS bigint), CAST(q.[Code] AS nvarchar(50)), q.[BookDate], q.[DueDate], q.[Price], NULL,
+                   q.[Behalf], q.[Description], q.[DLRef], q.[BranchRef], q.[BankRef], NULL,
+                   NULL, q.[StatusRef], q.[UserRef], q.[PaymentRequestRef]
+            FROM dbo.[tblChequeP] q
+        )
+        SELECT TOP ({safe_limit}) p.*, dl.[Name] AS CounterpartName, dl.[Code] AS CounterpartCode,
+               br.[Name] AS BranchName, bk.[Name] AS BankName, fd.[Name] AS FundName,
+               st.[Name] AS ChequeStatus, u.[Name] AS UserName
+        FROM payments p
+        LEFT JOIN dbo.[tblDL] dl ON dl.[ID] = p.[DLRef]
+        LEFT JOIN dbo.[tblUser] u ON u.[ID] = p.[UserRef]
+        OUTER APPLY (SELECT TOP (1) b.[Name] FROM dbo.[tblBranch] b WHERE b.[Code] = p.[BranchRef]) br
+        OUTER APPLY (SELECT TOP (1) a.[Name] FROM dbo.[tblAccBank] a WHERE a.[Code] = p.[BankRef]) bk
+        OUTER APPLY (SELECT TOP (1) f.[Name] FROM dbo.[tblAccFund] f WHERE f.[Code] = p.[FundRef]) fd
+        OUTER APPLY (SELECT TOP (1) s.[Name] FROM dbo.[tblChequePStatus] s WHERE s.[Code] = p.[StatusRef]) st
+        WHERE (:since IS NULL OR p.[BookDate] >= :since)
+        ORDER BY p.[BookDate] DESC, p.[ItemID] DESC
+    """)
+    with get_karamad_sqlserver_engine().connect() as connection:
+        db_rows = connection.execute(query, {"since": since}).mappings().all()
+
+    method_by_kind = {"draft": "نقد/بانکی", "cash": "نقد/بانکی", "cheque": "چکی"}
+    kind_label = {"draft": "حواله بانکی", "cash": "پرداخت نقدی", "cheque": "چک پرداختی"}
+    rows: list[dict[str, Any]] = []
+    for row in db_rows:
+        kind = row["Kind"]
+        amount = _as_number(row["Amount"])
+        description = " | ".join(
+            str(value).strip() for value in (row["Behalf"], row["Description"]) if value and str(value).strip()
+        )
+        category = _karamad_payment_category(row["CounterpartName"] or row["Behalf"], row["Behalf"], row["Description"])
+        if kind == "cheque":
+            state = f"cheque:{row['StatusRef']}"
+            state_label = f"چک {row['ChequeStatus'] or 'نامشخص'}"
+            approved = row["StatusRef"] not in (None, 1)
+        else:
+            approved = row["VoucherRef"] is not None
+            state = "voucher" if approved else "no_voucher"
+            state_label = "سند حسابداری صادر شده" if approved else "بدون سند حسابداری"
+        order_date = row["BookDate"]
+        rows.append({
+            "payment_order_id": f"karamad:{kind}:{row['ItemID']}",
+            "payment_order_number": row["Number"],
+            "order_date": _as_datetime(order_date),
+            "order_date_jalali": _as_jalali_date(order_date),
+            "creation_date": None,
+            "approve_date": _as_datetime(order_date) if approved else None,
+            "counterpart_ref": row["DLRef"],
+            "counterpart_code": row["CounterpartCode"],
+            "counterpart_name": row["CounterpartName"] or row["Behalf"],
+            "state": state,
+            "state_label": state_label,
+            "payment_type": kind,
+            "payment_kind_label": kind_label[kind],
+            "source_type": None,
+            "source_ref": row["PaymentRequestRef"],
+            "branch_ref": row["BranchRef"],
+            "branch_name": row["BranchName"],
+            "fiscal_year_ref": None,
+            "description": description,
+            "currency_ref": None,
+            "operational_currency_amount": amount,
+            "deposit_amount": amount if kind == "draft" else 0,
+            "cash_amount": amount if kind == "cash" else 0,
+            "cheque_amount": amount if kind == "cheque" else 0,
+            "calculated_amount": amount,
+            "bank_fee_amount": _as_number(row["Charge"]) if row["Charge"] is not None else 0,
+            "payment_method": method_by_kind[kind],
+            "category": category,
+            "is_approved": approved,
+            "bank_name": row["BankName"] or row["FundName"],
+            "due_date_jalali": _as_jalali_date(row["DueDate"]) if row["DueDate"] else None,
+            "registered_by": row["UserName"],
+            "source": "karamad",
+            "source_label": "کارآمد",
+        })
+    return _company_payment_response(rows, source="karamad")
+
+
+def _company_payment_response(rows: list[dict[str, Any]], source: str) -> dict[str, Any]:
+    categories: dict[str, dict[str, Any]] = {}
+    for item in rows:
+        bucket = categories.setdefault(item["category"], {"count": 0, "amount": 0})
+        bucket["count"] += 1
+        bucket["amount"] += item["calculated_amount"]
+    return {
+        "status": "ok", "source": source, "rows": rows,
+        "summary": {
+            "count": len(rows),
+            "calculated_amount": sum(x["calculated_amount"] for x in rows),
+            "approved_count": sum(1 for x in rows if x["is_approved"]),
+            "waiting_count": sum(1 for x in rows if not x["is_approved"]),
+            "bank_cash_count": sum(1 for x in rows if x["payment_method"] == "نقد/بانکی"),
+            "cheque_count": sum(1 for x in rows if x["payment_method"] == "چکی"),
+            "categories": categories,
+        },
+    }
+
 
 _B2B_INTERNAL_TOKENS = ("جاری شرکا", "جاري شرکا", "بابت انتقال", "انتقال از", "انتقال بین", "انتقال بانکی")
 _B2B_REVERSE_TOKENS = ("بازگشت اعلامیه پرداخت", "بازگشت پرداخت", "برگشت اعلامیه پرداخت")

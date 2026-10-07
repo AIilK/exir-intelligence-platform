@@ -16,8 +16,8 @@ def run_daily_customer_intelligence():
     if settings.karamad_excel_scan_enabled:
         karamad_import = run_karamad_excel_scan()
     customer_result = CustomerAutomationService().run(trigger="scheduled")
-    from app.services.finance_operations_service import FinanceAgentOrchestrator
-    manager_result = FinanceAgentOrchestrator().run_all(trigger="scheduled")
+    from app.services.page_agent_orchestrator import PageAgentOrchestrator
+    manager_result = PageAgentOrchestrator().run_all(trigger="scheduled")
     return {"cashflow_excel_import": excel_import, "karamad_excel_import": karamad_import, "customer_automation": customer_result, "finance_agent_team": manager_result}
 def start_customer_scheduler():
     global _scheduler

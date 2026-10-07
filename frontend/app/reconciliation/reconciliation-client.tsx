@@ -20,7 +20,26 @@ type ReconciliationReport = {
     definite_resolution_rate?: number;
     business_counts?: BusinessCounts;
   };
+  book_balance?: {
+    available?: boolean;
+    message?: string;
+    matched_day_count?: number;
+    day_count?: number;
+    last_matched_date_jalali?: string | null;
+    first_unmatched_date_jalali?: string | null;
+  };
 };
+
+function balanceStatus(report: ReconciliationReport): string {
+  const balance = report.book_balance;
+  if (!balance) return "";
+  if (!balance.available) return balance.message ?? "";
+  const days = `${toFa(balance.matched_day_count)} از ${toFa(balance.day_count)} روز`;
+  if (!balance.first_unmatched_date_jalali) {
+    return `مانده پایان روز بانک و دفتر راهکاران در همه روزها برابر است (${days}).`;
+  }
+  return `مانده بانک و دفتر راهکاران تا ${balance.last_matched_date_jalali ?? "-"} برابر است؛ اولین روز مغایر ${balance.first_unmatched_date_jalali} (${days} برابر).`;
+}
 
 const ACCEPTED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".pdf", ".html", ".htm"];
 
@@ -226,6 +245,9 @@ export default function ReconciliationClient({
             </a>
             <button className="rc-secondary" onClick={reset}>مغایرت‌گیری فایل جدید</button>
           </div>
+          {balanceStatus(report) && (
+            <p className="rc-human-note">{balanceStatus(report)}</p>
+          )}
           <p className="rc-human-note">
             وضعیت «نیازمند بررسی» فقط کاندید بررسی انسانی است و به معنی مغایرت قطعی نیست.
           </p>

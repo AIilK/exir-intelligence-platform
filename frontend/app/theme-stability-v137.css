@@ -238,3 +238,4 @@ html,body{background:var(--v137-bg);}
 .invoice-source-pending{margin-top:14px;padding:14px 16px;border:1px dashed rgba(255,255,255,.16);border-radius:14px;opacity:.72}
 .section-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.section-title-row small{opacity:.68}
 @media(max-width:900px){.collection-detail-hero,.last-invoice-grid{grid-template-columns:1fr}.collection-detail-head{align-items:flex-start;flex-direction:column-reverse}}
+.payment-source-chip{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:.8rem;white-space:nowrap;border:1px solid #315b69;background:#183747;color:#d9f1f4}.payment-source-chip.karamad{background:rgba(224,164,58,.14);border-color:rgba(224,164,58,.5);color:#f2c46d}.payment-subline{display:block;margin-top:3px;font-size:.78rem;color:#9fbac3;white-space:normal}

@@ -101,6 +101,9 @@ class KaramadLiveCashDraftService:
                 d.[CustomerDebtRef] AS customer_debt_ref,
                 d.[Confirmed] AS confirmed
             FROM dbo.[tblCashD] d
+            -- PriceN = دریافت نقدی واقعی. ردیف‌هایی که فقط PriceT (تخفیف فاکتور → «تخفیفات حین تسویه»)
+            -- یا PriceE (اضافه فاکتور → «سایر درآمدها») دارند جابه‌جایی پول نیستند؛ جدا در summary می‌آیند.
+            WHERE ISNULL(d.[PriceN], 0) <> 0
 
             UNION ALL
 
@@ -267,9 +270,20 @@ class KaramadLiveCashDraftService:
             WHERE {where}
         """)
 
+        settlement_sql = text(f"""
+            SELECT COUNT_BIG(*) AS adjustment_count,
+                   COALESCE(SUM(ISNULL(d.[PriceT], 0)), 0) AS discount_rial,
+                   COALESCE(SUM(ISNULL(d.[PriceE], 0)), 0) AS surplus_rial
+            FROM dbo.[tblCashD] d
+            WHERE d.[BookDate] >= :date_from AND d.[BookDate] < :date_to_exclusive
+              AND (ISNULL(d.[PriceT], 0) <> 0 OR ISNULL(d.[PriceE], 0) <> 0)
+              {"AND CAST(d.[BranchRef] AS varchar(50)) = :branch" if branch else ""}
+        """)
+
         with self.engine.connect() as conn:
             rows = conn.execute(rows_sql, params).mappings().all()
             summary = conn.execute(count_sql, params).mappings().one()
+            settlement = conn.execute(settlement_sql, params).mappings().one()
 
         payloads: list[dict[str, Any]] = []
         for row in rows:
@@ -347,6 +361,10 @@ class KaramadLiveCashDraftService:
                 "cash_payment_rial": _number(sum(float(r["amount_rial"] or 0) for r in operational if r["movement_type"] == "cash_payment")),
                 "company_bank_transfer_rial": _number(sum(float(r["amount_rial"] or 0) for r in transfers)),
                 "petty_cash_rial": _number(sum(float(r["amount_rial"] or 0) for r in petty)),
+                # تخفیف/اضافه فاکتور هنگام تسویه (نه پول) — برای شفافیت جدا گزارش می‌شود.
+                "settlement_adjustment_count": int(settlement["adjustment_count"] or 0),
+                "settlement_discount_rial": _number(settlement["discount_rial"]),
+                "settlement_surplus_rial": _number(settlement["surplus_rial"]),
                 "available_branches": self.branches(),
             },
             "movements": payloads,
