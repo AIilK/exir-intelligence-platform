@@ -124,10 +124,6 @@ def account_numbers(title: str | None) -> list[str]:
     return [n for n in re.findall(r"\d+", (title or "").replace("/", "")) if len(n) >= 8 or n == DUPLICATE_ACCOUNT_DIGITS]
 
 
-def _digits(value: str | None) -> str:
-    return re.sub(r"\D", "", value or "")
-
-
 class BankBalanceService:
     def __init__(self, today: date | None = None, fetchers: dict[str, Fetcher] | None = None,
                  cache_ttl_seconds: int = CACHE_TTL_SECONDS):
@@ -261,27 +257,3 @@ class BankBalanceService:
         }
         return {"status": "success", "as_of": self.today.isoformat(), "as_of_jalali": format_jalali_date(self.today),
                 "filters": {"channel": channel}, "data": data, "sources": sources, "warnings": warnings}
-
-
-def attach_balances(issued_accounts: list[dict[str, Any]], balance_accounts: list[dict[str, Any]]) -> None:
-    """Fill balance/coverage on the issued-cheque bank-account table (matched by account number)."""
-    by_number: dict[tuple[str, str], dict[str, Any]] = {}
-    for account in balance_accounts:
-        if account["kind"] != "bank":
-            continue
-        for number in account["account_numbers"]:
-            by_number[(account["system"], number)] = account
-    for row in issued_accounts:
-        # Karamad has no account-number column; the number is written into the bank name.
-        wanted = _digits(row.get("account_number")) or _digits(row.get("bank_name"))
-        if len(wanted) < 6:
-            continue
-        match = next((a for (system, number), a in by_number.items()
-                      if system == row["system"] and (number.endswith(wanted) or wanted.endswith(number))), None)
-        if match is None:
-            continue
-        row["balance_rial"] = match["balance_rial"]
-        row["balance_account_name"] = match["account_name"]
-        row["balance_included"] = match["included"]
-        due = (row.get("overdue_rial") or 0) + (row.get("next_30_days_rial") or 0)
-        row["coverage_percent"] = round(match["balance_rial"] / due * 100, 1) if due else None

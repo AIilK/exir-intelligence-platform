@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import "./liquidity.css";
 
 type Channel = "all" | "b2b" | "hybrid";
-type Section = "forecast" | "balances" | "received" | "issued" | "flows" | "payroll" | "quality";
+type Section = "forecast" | "received" | "issued" | "flows" | "payroll";
 
 const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
 const LIQUIDITY_API = () => `http://${apiHost()}:8000/api/v1/liquidity`;
@@ -20,19 +20,28 @@ const toman = (rial: number | null | undefined = 0) => {
   if (abs >= 1e6) return `${nf.format(t / 1e6)} میلیون`;
   return nf.format(t);
 };
+/** rial → the exact toman amount with thousands separators («۳٬۱۴۴٬۸۶۹٬۲۵۳») */
+const fullToman = (rial: number | null | undefined = 0) => nf.format(Math.round(Number(rial || 0) / 10));
+const PAYROLL_COLORS: Record<string, string> = {
+  exir: "#38bdf8", kadus: "#34d399", faraz: "#a78bfa", uninsured: "#94a3b8", zarin: "#f59e0b",
+};
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${nf1.format(v)}٪`);
 
 const CHANNELS: [Channel, string][] = [["all", "کل گروه"], ["b2b", "B2B (راهکاران)"], ["hybrid", "هیبرید (کارآمد)"]];
 const SECTIONS: [Section, string][] = [
   ["forecast", "پیش‌بینی"],
-  ["balances", "موجودی بانک"],
   ["received", "چک دریافتی"],
   ["issued", "چک پرداختی"],
   ["flows", "ورودی و خروجی"],
   ["payroll", "حقوق"],
-  ["quality", "تأمین مالی و کیفیت داده"],
 ];
-const HORIZONS = [7, 14, 30, 60, 90];
+// One period filter: «N روز آینده» on forward-looking tabs, «N روز گذشته» on history tabs.
+const PERIODS = [7, 14, 30, 60, 90, 180];
+const FORWARD_SECTIONS: Section[] = ["forecast", "received", "issued"];
+const HISTORY_SECTIONS: Section[] = ["flows"];
+// The forecast's daily inflow/outflow estimate always averages the last 90 days, so the
+// forecast does not jump with the period filter.
+const FORECAST_BASE_DAYS = 90;
 
 function useLiquidity(path: string | null, reloadKey: number) {
   const [data, setData] = useState<any>(null);
@@ -133,19 +142,18 @@ function BalanceChart({ scenarios, active }: { scenarios: any[]; active: string 
 
 const COMPONENTS: [string, string, 1 | -1][] = [
   ["received_cheques_rial", "چک دریافتی", 1],
-  ["estimated_inflow_rial", "ورودی برآوردی (میانه روز کاری)", 1],
+  ["estimated_inflow_rial", "ورودی برآوردی (میانگین روز کاری)", 1],
   ["issued_cheques_rial", "چک پرداختی", -1],
   ["payroll_rial", "حقوق", -1],
-  ["estimated_outflow_rial", "خروجی برآوردی (میانه روز کاری)", -1],
+  ["estimated_outflow_rial", "خروجی برآوردی (میانگین روز کاری)", -1],
 ];
 
-function ForecastSection({ channel, horizon, reloadKey }: { channel: Channel; horizon: number; reloadKey: number }) {
+function ForecastSection({ channel, horizon, baseDays, reloadKey }: { channel: Channel; horizon: number; baseDays: number; reloadKey: number }) {
   const [scenarioKey, setScenarioKey] = useState("reliance");
-  const [includeCash, setIncludeCash] = useState(false);
   const [manualInput, setManualInput] = useState("");
   const [manual, setManual] = useState<number | null>(null);
   const [showAllDays, setShowAllDays] = useState(false);
-  const path = `/summary?channel=${channel}&horizon_days=${horizon}&include_cash=${includeCash}` +
+  const path = `/summary?channel=${channel}&horizon_days=${horizon}&base_days=${baseDays}` +
     (manual != null ? `&opening_balance=${manual}` : "");
   const { data, error, loading } = useLiquidity(path, reloadKey);
   const d = data?.data;
@@ -156,6 +164,7 @@ function ForecastSection({ channel, horizon, reloadKey }: { channel: Channel; ho
   };
   const days = scenario?.days || [];
   const listed = showAllDays ? days : days.filter((x: any) => x.issued_cheques_rial || x.payroll_rial || x.received_cheques_rial || x.closing_rial < 0);
+  const withOpening = d?.opening.source === "manual";
 
   return (
     <State loading={loading && !d} error={error}>
@@ -171,32 +180,30 @@ function ForecastSection({ channel, horizon, reloadKey }: { channel: Channel; ho
           ))}
         </div>
         <div className="fd-kpis lq-kpis">
-          <Kpi label={`موجودی امروز (${d.opening.source === "manual" ? "دستی" : "دفتری"})`} value={`${toman(d.opening.used_rial)} تومان`}
-            note={d.opening.source === "manual" ? `دفتری: ${toman(d.opening.book_bank_rial)}` : includeCash ? "بانک + صندوق" : "فقط بانک"} tone="blue" />
-          <Kpi label="اولین روز کسری" value={scenario.first_shortage ? scenario.first_shortage.date_jalali : "کسری ندارد"}
-            note={scenario.first_shortage ? `${fa(scenario.first_shortage.days_from_today)} روز دیگر` : `در افق ${fa(horizon)} روزه`}
+          <Kpi label={`خالص جریان نقد ${fa(horizon)} روز`} value={`${toman(scenario.inflow_rial - scenario.outflow_rial)} تومان`}
+            note="ورودی − خروجی" tone={scenario.inflow_rial >= scenario.outflow_rial ? "teal" : "red"} />
+          <Kpi label="کل ورودی" value={`${toman(scenario.inflow_rial)} تومان`} note="چک دریافتی + ورودی برآوردی" tone="blue" />
+          <Kpi label="کل خروجی" value={`${toman(scenario.outflow_rial)} تومان`} note="چک پرداختی + حقوق + خروجی برآوردی" tone="amber" />
+          <Kpi label="اولین روز کسری تجمعی" value={scenario.first_shortage ? scenario.first_shortage.date_jalali : "کسری ندارد"}
+            note={scenario.first_shortage ? `${fa(scenario.first_shortage.days_from_today)} روز دیگر` : `در ${fa(horizon)} روز آینده`}
             tone={scenario.first_shortage ? "red" : "teal"} />
-          <Kpi label="بدترین مانده" value={`${toman(scenario.worst_balance.balance_rial)} تومان`} note={scenario.worst_balance.date_jalali}
-            tone={scenario.worst_balance.balance_rial < 0 ? "red" : "amber"} />
-          <Kpi label="درصد پوشش" value={pct(scenario.coverage_percent)} note="(موجودی + ورودی) ÷ خروجی"
+          <Kpi label="بیشترین کسری تجمعی" value={scenario.financing_need_rial ? `${toman(scenario.financing_need_rial)} تومان` : "کسری ندارد"}
+            note={scenario.financing_need_rial ? `در ${scenario.worst_balance.date_jalali} · باید از موجودی یا تأمین مالی پوشش داده شود` : undefined}
+            tone={scenario.financing_need_rial ? "red" : "teal"} />
+          <Kpi label="نسبت پوشش" value={pct(scenario.coverage_percent)} note={withOpening ? "(موجودی + ورودی) ÷ خروجی" : "ورودی ÷ خروجی"}
             tone={(scenario.coverage_percent ?? 0) < 100 ? "red" : "teal"} />
-          <Kpi label="Runway" value={scenario.runway_days == null ? `بیش از ${fa(horizon)} روز` : `${fa(scenario.runway_days)} روز`}
-            note="تا اولین مانده منفی" tone={scenario.runway_days == null ? "teal" : "red"} />
-          <Kpi label="مانده پایان افق" value={`${toman(scenario.closing_rial)} تومان`}
-            note={scenario.financing_need_rial ? `نیاز تأمین مالی ${toman(scenario.financing_need_rial)}` : undefined}
-            tone={scenario.closing_rial < 0 ? "red" : "teal"} />
         </div>
 
         <section className="fd-panel">
           <div className="lq-panel-head">
-            <div className="fd-heading"><h2>مانده روزانه پیش‌بینی‌شده</h2><p>{d.rule}</p></div>
+            <div className="fd-heading"><h2>جریان نقد خالص تجمعی</h2><p>{d.rule}</p></div>
             <div className="lq-opening">
-              <label><input type="checkbox" checked={includeCash} onChange={(e) => setIncludeCash(e.target.checked)} /> صندوق هم حساب شود ({toman(d.opening.book_cash_rial)})</label>
+              <small>موجودی اول دوره (اختیاری)</small>
               <span>
-                <input value={manualInput} onChange={(e) => setManualInput(e.target.value)} placeholder="موجودی واقعی (میلیارد تومان)"
+                <input value={manualInput} onChange={(e) => setManualInput(e.target.value)} placeholder="میلیارد تومان"
                   onKeyDown={(e) => e.key === "Enter" && applyManual()} />
                 <button onClick={applyManual}>اعمال</button>
-                {manual != null && <button onClick={() => { setManual(null); setManualInput(""); }}>دفتری</button>}
+                {manual != null && <button onClick={() => { setManual(null); setManualInput(""); }}>حذف</button>}
               </span>
             </div>
           </div>
@@ -208,105 +215,54 @@ function ForecastSection({ channel, horizon, reloadKey }: { channel: Channel; ho
             <div className="fd-heading"><h2>اجزای پیش‌بینی ({scenario.label})</h2><p>جمع {fa(horizon)} روز آینده</p></div>
             <table className="lq-table">
               <tbody>
-                <tr><td>موجودی اول دوره</td><td className="num">{toman(scenario.opening_rial)}</td></tr>
+                {withOpening && <tr><td>موجودی اول دوره (دستی)</td><td className="num">{toman(scenario.opening_rial)}</td></tr>}
                 {COMPONENTS.map(([key, label, sign]) => (
                   <tr key={key}><td>{sign > 0 ? "+" : "−"} {label}</td>
                     <td className={`num ${sign > 0 ? "pos" : "neg"}`}>{toman(scenario.totals[key])}</td></tr>
                 ))}
-                <tr className="total"><td>مانده پایان افق</td><td className="num">{toman(scenario.closing_rial)}</td></tr>
+                <tr className="total"><td>{withOpening ? "مانده پایان دوره" : "خالص جریان نقد"}</td><td className="num">{toman(scenario.closing_rial)}</td></tr>
               </tbody>
             </table>
-            <p className="lq-rule">میانه روز کاری: ورودی {toman(d.basis.median_daily_inflow_rial)} · خروجی {toman(d.basis.median_daily_outflow_rial)} (مبنای {fa(d.basis.base_days)} روز اخیر). مبالغ به تومان.</p>
+            <p className="lq-rule">میانگین روز کاری: ورودی {toman(d.basis.daily_inflow_rial)} · خروجی {toman(d.basis.daily_outflow_rial)} (مبنای {fa(d.basis.base_days)} روز اخیر). مبالغ به تومان.</p>
           </section>
           <section className="fd-panel">
-            <div className="fd-heading"><h2>مقایسه سناریوها</h2><p>پایان افق {fa(horizon)} روزه</p></div>
+            <div className="fd-heading"><h2>مقایسه سناریوها</h2><p>{fa(horizon)} روز آینده</p></div>
             <table className="lq-table">
-              <thead><tr><th>سناریو</th><th>ورودی</th><th>خروجی</th><th>مانده پایان</th><th>بدترین</th><th>پوشش</th></tr></thead>
+              <thead><tr><th>سناریو</th><th>ورودی</th><th>خروجی</th><th>خالص</th><th>بیشترین کسری</th><th>پوشش</th></tr></thead>
               <tbody>
                 {d.scenarios.map((s: any) => (
                   <tr key={s.key} className={s.key === scenarioKey ? "sel" : ""} onClick={() => setScenarioKey(s.key)}>
                     <td><i className="dot" style={{ background: SCENARIO_COLORS[s.key] }} />{s.label}</td>
                     <td className="num">{toman(s.inflow_rial)}</td><td className="num">{toman(s.outflow_rial)}</td>
-                    <td className={`num ${s.closing_rial < 0 ? "neg" : ""}`}>{toman(s.closing_rial)}</td>
-                    <td className={`num ${s.worst_balance.balance_rial < 0 ? "neg" : ""}`}>{toman(s.worst_balance.balance_rial)}</td>
+                    <td className={`num ${s.inflow_rial < s.outflow_rial ? "neg" : "pos"}`}>{toman(s.inflow_rial - s.outflow_rial)}</td>
+                    <td className={`num ${s.financing_need_rial ? "neg" : ""}`}>{s.financing_need_rial ? toman(s.financing_need_rial) : "—"}</td>
                     <td className="num">{pct(s.coverage_percent)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <div className="lq-sources">
-              {d.opening.by_system.map((s: any) => (
-                <span key={s.system}>{s.label}: بانک {toman(s.bank_rial)} · آخرین سند {s.last_posted_date_jalali || "—"}</span>
-              ))}
-              <span className="lq-unverified">موجودی دفتری هنوز با صورت‌حساب بانک تطبیق داده نشده است.</span>
-            </div>
           </section>
         </div>
 
         <section className="fd-panel">
           <div className="lq-panel-head">
-            <div className="fd-heading"><h2>جدول روزانه ({scenario.label})</h2><p>{showAllDays ? "همه روزها" : "فقط روزهای دارای چک، حقوق یا کسری"}</p></div>
+            <div className="fd-heading"><h2>جدول روزانه ({scenario.label})</h2><p>{showAllDays ? "همه روزها" : "فقط روزهای دارای چک، حقوق یا کسری تجمعی"}</p></div>
             <button className="lq-link" onClick={() => setShowAllDays(!showAllDays)}>{showAllDays ? "فقط روزهای مهم" : "همه روزها"}</button>
           </div>
           <div className="fd-table">
             <table>
-              <thead><tr><th>تاریخ</th><th>موجودی اول</th><th>چک دریافتی</th><th>ورودی برآوردی</th><th>چک پرداختی</th><th>حقوق</th><th>خروجی برآوردی</th><th>مانده پایان</th></tr></thead>
+              <thead><tr><th>تاریخ</th><th>چک دریافتی</th><th>ورودی برآوردی</th><th>چک پرداختی</th><th>حقوق</th><th>خروجی برآوردی</th><th>خالص روز</th><th>تجمعی</th></tr></thead>
               <tbody>
                 {listed.map((x: any) => (
                   <tr key={x.date} className={x.closing_rial < 0 ? "lq-neg-row" : ""}>
                     <td>{x.date_jalali}{x.weekday === 4 && <small> جمعه</small>}</td>
-                    <td>{toman(x.opening_rial)}</td>
                     <td className="pos">{x.received_cheques_rial ? toman(x.received_cheques_rial) : "—"}</td>
                     <td>{x.estimated_inflow_rial ? toman(x.estimated_inflow_rial) : "—"}</td>
                     <td className="neg">{x.issued_cheques_rial ? toman(x.issued_cheques_rial) : "—"}</td>
                     <td className="neg">{x.payroll_rial ? toman(x.payroll_rial) : "—"}</td>
                     <td>{x.estimated_outflow_rial ? toman(x.estimated_outflow_rial) : "—"}</td>
+                    <td className={x.net_rial < 0 ? "neg" : "pos"}>{toman(x.net_rial)}</td>
                     <td className={x.closing_rial < 0 ? "neg" : ""}><b>{toman(x.closing_rial)}</b></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </>}
-    </State>
-  );
-}
-
-// ------------------------------------------------------------------ balances
-
-function BalancesSection({ channel, reloadKey }: { channel: Channel; reloadKey: number }) {
-  const { data, error, loading } = useLiquidity(`/bank-balances?channel=${channel}`, reloadKey);
-  const [showExcluded, setShowExcluded] = useState(false);
-  const d = data?.data;
-  const rows = (d?.accounts || []).filter((a: any) => showExcluded || a.included);
-  return (
-    <State loading={loading && !d} error={error}>
-      {d && <>
-        <Warnings items={data.warnings} />
-        <div className="fd-kpis">
-          <Kpi label="موجودی بانک" value={`${toman(d.bank_rial)} تومان`} tone="blue" />
-          <Kpi label="موجودی صندوق" value={`${toman(d.cash_rial)} تومان`} note="پیش‌فرض در پیش‌بینی نیست" tone="amber" />
-          {d.by_system.map((s: any) => (
-            <Kpi key={s.system} label={s.label} value={`${toman(s.bank_rial)} تومان`} note={`آخرین سند ${s.last_posted_date_jalali || "—"}`} />
-          ))}
-        </div>
-        <section className="fd-panel">
-          <div className="lq-panel-head">
-            <div className="fd-heading"><h2>حساب‌ها</h2><p>{d.rule}</p></div>
-            <label className="lq-check"><input type="checkbox" checked={showExcluded} onChange={(e) => setShowExcluded(e.target.checked)} /> نمایش حساب‌های کنارگذاشته
-              ({d.excluded.map((e: any) => `${e.label}: ${toman(e.amount_rial)}`).join(" · ")})</label>
-          </div>
-          <div className="fd-table">
-            <table>
-              <thead><tr><th>سیستم</th><th>نوع</th><th>حساب</th><th>مانده دفتری (تومان)</th><th>آخرین سند</th><th>وضعیت</th></tr></thead>
-              <tbody>
-                {rows.map((a: any) => (
-                  <tr key={a.account_key} className={a.included ? "" : "lq-muted"}>
-                    <td>{a.system === "rahkaran" ? "راهکاران" : "کارآمد"}</td><td>{a.kind_label}</td><td>{a.account_name}</td>
-                    <td className={a.negative ? "neg" : ""}><b>{toman(a.balance_rial)}</b></td>
-                    <td>{a.last_posted_date_jalali || "—"}</td>
-                    <td>{a.included ? <span className="fd-badge safe">در موجودی</span> : <span className="fd-badge danger">{a.excluded_label}</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -467,15 +423,13 @@ function IssuedSection({ channel, horizon, reloadKey }: { channel: Channel; hori
           </section>
         )}
         <section className="fd-panel">
-          <div className="fd-heading"><h2>حساب‌های بانکی: تعهد و پوشش</h2><p>هر ردیف یک حساب بانکی شرکت است: چقدر چک از آن حساب باید پاس شود (معوق، ۷، ۳۰ و ۹۰ روز آینده) و الان چقدر پول در آن هست. پوشش = مانده ÷ (معوق + ۳۰ روز آینده)؛ زیر ۱۰۰٪ یعنی موجودی همان حساب برای چک‌هایش کافی نیست و باید پول به آن منتقل شود.</p></div>
+          <div className="fd-heading"><h2>تعهد چک به تفکیک حساب بانکی</h2><p>هر ردیف یک حساب بانکی است: چقدر چک از آن حساب باید پاس شود (معوق، ۷، ۳۰ و ۹۰ روز آینده). حساب‌های شخصی سهامداران با «شخصی» مشخص شده‌اند.</p></div>
           <div className="fd-table"><table>
-            <thead><tr><th>بانک / حساب</th><th>معوق</th><th>۷ روز</th><th>۳۰ روز</th><th>۹۰ روز</th><th>مانده</th><th>پوشش</th></tr></thead>
+            <thead><tr><th>بانک / حساب</th><th>معوق</th><th>۷ روز</th><th>۳۰ روز</th><th>۹۰ روز</th></tr></thead>
             <tbody>{d.by_bank_account.map((a: any) => (
               <tr key={a.bank_account_key}>
-                <td>{a.bank_name} {a.account_number}<small> {a.system === "rahkaran" ? "راهکاران" : "کارآمد"}</small></td>
+                <td>{a.bank_name} {a.account_number}<small> {a.system === "rahkaran" ? "راهکاران" : "کارآمد"}</small>{a.personal_account && <span className="fd-badge danger lq-tag">شخصی</span>}</td>
                 <td>{toman(a.overdue_rial)}</td><td>{toman(a.next_7_days_rial)}</td><td>{toman(a.next_30_days_rial)}</td><td>{toman(a.next_90_days_rial)}</td>
-                <td>{a.balance_rial == null ? "—" : toman(a.balance_rial)}{a.balance_included === false && <small> (شخصی)</small>}</td>
-                <td className={a.coverage_percent != null && a.coverage_percent < 100 ? "neg" : ""}>{pct(a.coverage_percent)}</td>
               </tr>
             ))}</tbody>
           </table></div>
@@ -487,46 +441,94 @@ function IssuedSection({ channel, horizon, reloadKey }: { channel: Channel; hori
 
 // ------------------------------------------------------------------ inflows / outflows
 
-function FlowsSection({ channel, reloadKey }: { channel: Channel; reloadKey: number }) {
-  const inflows = useLiquidity(`/inflows?channel=${channel}`, reloadKey);
-  const outflows = useLiquidity(`/outflows?channel=${channel}`, reloadKey);
+function FlowsSection({ channel, baseDays, reloadKey }: { channel: Channel; baseDays: number; reloadKey: number }) {
+  const inflows = useLiquidity(`/inflows?channel=${channel}&base_days=${baseDays}`, reloadKey);
+  const outflows = useLiquidity(`/outflows?channel=${channel}&base_days=${baseDays}`, reloadKey);
   const i = inflows.data?.data, o = outflows.data?.data;
+  const change = (group: string) => o?.categories.find((c: any) => c.category === group)?.month_comparison.change_percent;
   return (
     <State loading={(inflows.loading || outflows.loading) && !(i && o)} error={inflows.error || outflows.error}>
       {i && o && <>
         <Warnings items={[...(inflows.data.warnings || []), ...(outflows.data.warnings || [])]} />
         <div className="fd-kpis">
-          <Kpi label={`ورودی از مشتری (${fa(i.base_period.days)} روز)`} value={`${toman(i.customer_collection.total_rial)} تومان`} note={`${i.base_period.from_jalali} تا ${i.base_period.to_jalali}`} />
-          <Kpi label="میانه ورودی روز کاری" value={`${toman(i.forecast_basis.median_daily_working_rial)} تومان`} note={`میانگین ${toman(i.customer_collection.mean_daily_rial)}`} tone="blue" />
-          <Kpi label={`خروجی (${fa(o.base_period.days)} روز)`} value={`${toman(o.total.total_rial)} تومان`} tone="red" />
-          <Kpi label="میانه خروجی روز کاری" value={`${toman(o.forecast_basis.median_daily_working_rial)} تومان`} note={`میانگین ${toman(o.total.mean_daily_rial)}`} tone="amber" />
+          <Kpi label={`ورودی از مشتری (${fa(i.base_period.days)} روز)`} value={`${toman(i.breakdown.total_rial)} تومان`} note={`${i.base_period.from_jalali} تا ${i.base_period.to_jalali}`} />
+          <Kpi label={`خروجی (${fa(o.base_period.days)} روز)`} value={`${toman(o.breakdown.total_rial)} تومان`} tone="red" />
+          <Kpi label="میانگین ورودی روز کاری" value={`${toman(i.forecast_basis.daily_working_rial)} تومان`} note={`مبنای پیش‌بینی · میانه ${toman(i.forecast_basis.median_daily_rial)}`} tone="blue" />
+          <Kpi label="میانگین خروجی روز کاری" value={`${toman(o.forecast_basis.daily_working_rial)} تومان`} note={`مبنای پیش‌بینی · میانه ${toman(o.forecast_basis.median_daily_rial)}`} tone="amber" />
         </div>
-        <div className="fd-grid">
-          <section className="fd-panel">
-            <div className="fd-heading"><h2>ورودی</h2><p>{i.rule}</p></div>
-            <table className="lq-table"><tbody>
-              {i.by_method.map((m: any) => <tr key={m.method}><td>{m.label}</td><td className="num">{toman(m.amount_rial)}</td></tr>)}
-              {i.by_channel.map((m: any) => <tr key={m.channel}><td>{m.label}</td><td className="num">{toman(m.amount_rial)}</td></tr>)}
-            </tbody></table>
-            <div className="fd-heading"><h2>الگوی روز هفته (میانگین)</h2></div>
-            <WeekdayBars items={i.weekday_pattern} />
-            {i.hybrid_settlement && <p className="lq-rule">تسویه هیبرید با شرکت: دریافت راهکاران {toman(i.hybrid_settlement.received_by_company_rial)} · پرداخت کارآمد {toman(i.hybrid_settlement.paid_by_hybrid_rial)} — {i.hybrid_settlement.rule}</p>}
-          </section>
-          <section className="fd-panel">
-            <div className="fd-heading"><h2>خروجی به تفکیک دسته</h2><p>{o.rule}</p></div>
-            <table className="lq-table">
-              <thead><tr><th>دسته</th><th>جمع</th><th>سهم</th><th>ماهانه</th><th>ماه جاری نسبت به قبل</th></tr></thead>
-              <tbody>{o.categories.map((c: any) => (
-                <tr key={c.category}><td>{c.label}</td><td className="num">{toman(c.total_rial)}</td><td className="num">{pct(c.share_percent)}</td>
-                  <td className="num">{toman(c.monthly_average_rial)}</td><td className="num">{pct(c.month_comparison.change_percent)}</td></tr>
-              ))}</tbody>
-            </table>
-          </section>
-        </div>
+        <section className="fd-panel">
+          <div className="fd-heading"><h2>ورودی: وصول از مشتری</h2><p>{i.rule}</p></div>
+          <FlowTable breakdown={i.breakdown} channel={channel} totalLabel="جمع ورودی" />
+          <div className="fd-heading"><h2>الگوی روز هفته (میانگین وصول از مشتری)</h2></div>
+          <WeekdayBars items={i.weekday_pattern} />
+        </section>
+        <section className="fd-panel">
+          <div className="fd-heading"><h2>خروجی به تفکیک مقصد</h2><p>{o.rule}</p></div>
+          <FlowTable breakdown={o.breakdown} channel={channel} totalLabel="جمع خروجی"
+            change={{ title: `${o.month_comparison.month} نسبت به ${o.month_comparison.previous_month}`, of: change }} />
+        </section>
       </>}
     </State>
   );
 }
+
+const SYSTEM_LABELS: Record<string, string> = { rahkaran: "راهکاران", karamad: "کارآمد" };
+
+/** One row per group (customer collections, imports, suppliers, …); a click opens the accounts behind it. */
+function FlowTable({ breakdown, channel, totalLabel, change }: {
+  breakdown: any; channel: Channel; totalLabel: string;
+  change?: { title: string; of: (group: string) => number | null | undefined };
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  const both = channel === "all";
+  const columns = 5 + (both ? 2 : 0) + (change ? 1 : 0);
+  return (
+    <div className="lq-scroll"><table className="lq-table lq-flow">
+      <thead><tr>
+        <th>دسته</th>{both && <><th>راهکاران</th><th>کارآمد</th></>}<th>حواله</th><th>نقد</th><th>جمع</th><th>سهم</th>
+        {change && <th>{change.title}</th>}
+      </tr></thead>
+      <tbody>
+        {breakdown.items.map((g: any) => <FlowRows key={g.group} g={g} both={both} columns={columns} change={change}
+          open={open === g.group} onToggle={() => setOpen(open === g.group ? null : g.group)} />)}
+        <tr className="total">
+          <td>{totalLabel}</td>
+          {both && <><td className="num">{toman(sum(breakdown.items, "rahkaran_rial"))}</td><td className="num">{toman(sum(breakdown.items, "karamad_rial"))}</td></>}
+          <td className="num">{toman(sum(breakdown.items, "bank_rial"))}</td><td className="num">{toman(sum(breakdown.items, "cash_rial"))}</td>
+          <td className="num">{toman(breakdown.total_rial)}</td><td />{change && <td />}
+        </tr>
+      </tbody>
+      <caption className="lq-rule">همین ارقام مبنای میانگین روز کاری و پیش‌بینی است. روی هر دسته بزنید تا حساب‌هایش را ببینید.</caption>
+    </table></div>
+  );
+}
+
+function FlowRows({ g, both, columns, change, open, onToggle }: {
+  g: any; both: boolean; columns: number; open: boolean; onToggle: () => void;
+  change?: { of: (group: string) => number | null | undefined };
+}) {
+  return <>
+    <tr className={`lq-flow-row${open ? " sel" : ""}`} onClick={onToggle}>
+      <td className="lq-flow-label">{open ? "▾" : "◂"} {g.label}
+        <small>{fa(g.row_count)} ردیف</small></td>
+      {both && <><td className="num">{toman(g.rahkaran_rial)}</td><td className="num">{toman(g.karamad_rial)}</td></>}
+      <td className="num">{toman(g.bank_rial)}</td><td className="num">{toman(g.cash_rial)}</td>
+      <td className="num"><b>{toman(g.total_rial)}</b></td><td className="num">{pct(g.share_percent)}</td>
+      {change && <td className="num">{pct(change.of(g.group))}</td>}
+    </tr>
+    {open && <tr className="lq-flow-sources"><td colSpan={columns}>
+      {g.sources.map((s: any, n: number) => (
+        <div key={n}>
+          <span>{SYSTEM_LABELS[s.system] || s.system} · {s.account_code || "بدون حساب"} {s.account_name || ""}</span>
+          <b>{toman(s.amount_rial)}</b>
+        </div>
+      ))}
+      {g.other_sources_rial != null && <div><span>سایر حساب‌ها و طرف‌حساب‌ها</span><b>{toman(g.other_sources_rial)}</b></div>}
+    </td></tr>}
+  </>;
+}
+
+const sum = (items: any[], key: string) => items.reduce((a, x) => a + Number(x[key] || 0), 0);
 
 function WeekdayBars({ items }: { items: any[] }) {
   const max = Math.max(1, ...items.map((x) => x.average_rial));
@@ -543,49 +545,90 @@ function PayrollSection({ reloadKey }: { reloadKey: number }) {
   const d = data?.data;
   const companies: any[] = d?.companies || [];
   const company = companies.find((c) => c.key === selected) || companies[0];
-  const latestRow = d?.by_company_monthly?.[d.by_company_monthly.length - 1];
+  // The group total only makes sense for a month every company has finished; companies can
+  // be on different months (e.g. Rahkaran recalculating while Karamad is already closed).
+  const monthly: any[] = d?.by_company_monthly || [];
+  const latestRow = [...monthly].reverse().find((r) => companies.every((c) => r.companies[c.key] != null))
+    ?? monthly[monthly.length - 1];
+  const behind = companies.filter((c) => c.latest_month && latestRow && c.latest_month.month !== latestRow.month);
   const isZarin = company?.key === "zarin";
   return (
     <State loading={loading && !d} error={error}>
       <Warnings items={data?.warnings} />
       {d && d.kpis && <>
-        <div className="fd-kpis lq-kpis">
-          {latestRow && <Kpi label={`جمع کل گروه ${latestRow.month}`} value={`${toman(latestRow.total_rial)} تومان`}
-            note={`${fa(latestRow.headcount)} نفر · راهکاران + زرین`} tone="red" />}
-          {companies.map((c) => c.latest_month && (
-            <button key={c.key} className={`fd-kpi lq-kpi-btn ${c.key === company?.key ? "teal" : "blue"}`} onClick={() => setSelected(c.key)}>
-              <small>{c.label} · {c.latest_month.month}</small>
-              <b>{toman(c.latest_month.total_rial)} تومان</b>
-              <em>{fa(c.latest_month.headcount)} نفر · {pct(c.total_change_percent)} نسبت به ماه قبل</em>
-            </button>
-          ))}
+        {latestRow && (
+          <section className="fd-panel lq-pay-summary">
+            <div className="lq-pay-total">
+              <small>جمع حقوق گروه · {latestRow.month}</small>
+              <b>{fullToman(latestRow.total_rial)}<span>تومان</span></b>
+              <em>{fa(latestRow.headcount)} نفر · خالص + بیمه سهم کارفرما</em>
+              {behind.length > 0 && <em className="lq-unverified">آخرین ماه کامل هر شرکت روی کارت خودش است: {behind.map((c) => `${c.label} ${c.latest_month.month}`).join("، ")}</em>}
+            </div>
+            <div className="lq-pay-share">
+              <div className="lq-share-bar">
+                {companies.filter((c) => latestRow.companies[c.key]).map((c) => (
+                  <i key={c.key} title={c.label} style={{ width: `${(latestRow.companies[c.key] / latestRow.total_rial) * 100}%`, background: PAYROLL_COLORS[c.key] }} />
+                ))}
+              </div>
+              <div className="lq-share-legend">
+                {companies.filter((c) => latestRow.companies[c.key]).map((c) => (
+                  <span key={c.key}><i style={{ background: PAYROLL_COLORS[c.key] }} />{c.label}
+                    <b>{nf.format(Math.round((latestRow.companies[c.key] / latestRow.total_rial) * 100))}٪</b></span>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        <div className="lq-pay-cards">
+          {companies.map((c) => {
+            const m = c.latest_month;
+            if (!m) return null;
+            const change = c.total_change_percent;
+            const rows: [string, number][] = c.key === "zarin"
+              ? [["حقوق پایه", m.base_pay_rial], ["پورسانت", m.commission_rial], ["بیمه سهم کارفرما", m.insurance_rial]]
+              : [["خالص", m.net_pay_rial], ["بیمه سهم کارفرما", m.insurance_rial]];
+            return (
+              <button key={c.key} className={`lq-pay-card ${c.key === company?.key ? "active" : ""}`} onClick={() => setSelected(c.key)}
+                style={{ ["--accent" as any]: PAYROLL_COLORS[c.key] }}>
+                <header><span>{c.label}</span><small>{c.system === "karamad" ? "کارآمد" : "راهکاران"} · {m.month}</small></header>
+                <b>{fullToman(m.total_rial)}<span>تومان</span></b>
+                <div className="lq-pay-meta">
+                  <span>{fa(m.headcount)} نفر</span>
+                  {change != null && <span className={change > 0 ? "up" : change < 0 ? "down" : ""}>{change > 0 ? "▲" : change < 0 ? "▼" : ""} {nf1.format(Math.abs(change))}٪</span>}
+                </div>
+                <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{fullToman(value)}</dd></div>)}</dl>
+              </button>
+            );
+          })}
         </div>
 
         <section className="fd-panel">
-          <div className="fd-heading"><h2>حقوق ماه‌به‌ماه به تفکیک شرکت</h2><p>جمع کل هر شرکت (خالص + بیمه سهم کارمند و کارفرما + مالیات). {d.rule}</p></div>
+          <div className="fd-heading"><h2>حقوق ماه‌به‌ماه به تفکیک شرکت</h2><p>جمع کل هر شرکت (خالص + بیمه سهم کارفرما)، فقط ماه‌های کامل. مبالغ به تومان.</p></div>
           <div className="fd-table"><table>
             <thead><tr><th>ماه</th>{companies.map((c) => <th key={c.key}>{c.label}</th>)}<th>جمع گروه</th></tr></thead>
             <tbody>{[...d.by_company_monthly].reverse().map((row: any) => (
               <tr key={row.month}><td>{row.month}</td>
-                {companies.map((c) => <td key={c.key}>{row.companies[c.key] == null ? "—" : toman(row.companies[c.key])}</td>)}
-                <td><b>{toman(row.total_rial)}</b></td></tr>
+                {companies.map((c) => <td key={c.key} className="num">{row.companies[c.key] == null ? "—" : fullToman(row.companies[c.key])}</td>)}
+                <td className="num"><b>{fullToman(row.total_rial)}</b></td></tr>
             ))}</tbody>
           </table></div>
+          <Rule text={d.rule} />
         </section>
 
         {company && (
           <section className="fd-panel">
             <div className="lq-panel-head">
               <div className="fd-heading"><h2>جزئیات ماهانه: {company.label}</h2>
-                <p>{isZarin ? "از حقوق کارآمد. پورسانت = «اضافات» فیش حقوق هر ماه (عمدتاً ویزیتورها و سرپرستان فروش)؛ حقوق پایه ثابت است و نوسان از پورسانت می‌آید." : "از راهکاران، به تفکیک کارگاه بیمه هر کارمند در همان ماه."}</p></div>
+                <p>{isZarin ? "از حقوق کارآمد. پورسانت = «اضافات» فیش حقوق هر ماه (عمدتاً ویزیتورها و سرپرستان فروش)؛ حقوق پایه ثابت است و نوسان از پورسانت می‌آید." : "از راهکاران، به تفکیک کارگاه بیمه هر کارمند در همان ماه."} مبالغ به تومان.</p></div>
               <div className="lq-seg">{companies.map((c) => <button key={c.key} className={c.key === company.key ? "active" : ""} onClick={() => setSelected(c.key)}>{c.label}</button>)}</div>
             </div>
             <div className="fd-table"><table>
-              <thead><tr><th>ماه</th><th>نفرات</th>{isZarin && <><th>حقوق پایه</th><th>پورسانت (اضافات)</th></>}<th>خالص پرداختی</th><th>بیمه</th><th>مالیات</th><th>جمع کل</th></tr></thead>
+              <thead><tr><th>ماه</th><th>نفرات</th>{isZarin && <><th>حقوق پایه</th><th>پورسانت (اضافات)</th></>}<th>خالص پرداختی</th><th>بیمه سهم کارفرما</th><th>جمع کل</th></tr></thead>
               <tbody>{[...company.monthly_trend].reverse().map((m: any) => (
                 <tr key={m.month}><td>{m.month}</td><td>{fa(m.headcount)}</td>
-                  {isZarin && <><td>{toman(m.base_pay_rial)}</td><td className="pos">{toman(m.commission_rial)}</td></>}
-                  <td>{toman(m.net_pay_rial)}</td><td>{toman(m.insurance_rial)}</td><td>{toman(m.tax_rial)}</td><td><b>{toman(m.total_rial)}</b></td></tr>
+                  {isZarin && <><td className="num">{fullToman(m.base_pay_rial)}</td><td className="num pos">{fullToman(m.commission_rial)}</td></>}
+                  <td className="num">{fullToman(m.net_pay_rial)}</td><td className="num">{fullToman(m.insurance_rial)}</td><td className="num"><b>{fullToman(m.total_rial)}</b></td></tr>
               ))}</tbody>
             </table></div>
           </section>
@@ -595,49 +638,11 @@ function PayrollSection({ reloadKey }: { reloadKey: number }) {
   );
 }
 
-// ------------------------------------------------------------------ financing + data quality
-
-function QualitySection({ channel, reloadKey }: { channel: Channel; reloadKey: number }) {
-  const financing = useLiquidity(`/financing?channel=${channel}`, reloadKey);
-  const quality = useLiquidity(`/data-quality?channel=${channel}`, reloadKey);
-  const f = financing.data?.data, q = quality.data?.data;
-  return (
-    <State loading={(financing.loading || quality.loading) && !(f && q)} error={financing.error || quality.error}>
-      {f && q && <div className="fd-grid">
-        <section className="fd-panel">
-          <div className="fd-heading"><h2>تأمین مالی ({fa(f.base_period.days)} روز)</h2><p>{f.rule}</p></div>
-          <table className="lq-table">
-            <thead><tr><th>نوع</th><th>ورودی</th><th>خروجی</th><th>خالص</th></tr></thead>
-            <tbody>{f.items.map((x: any) => (
-              <tr key={x.category}><td>{x.label}</td><td className="num">{toman(x.inflow_rial)}</td><td className="num">{toman(x.outflow_rial)}</td>
-                <td className={`num ${x.net_rial < 0 ? "neg" : "pos"}`}>{toman(x.net_rial)}</td></tr>
-            ))}</tbody>
-          </table>
-        </section>
-        <section className="fd-panel">
-          <div className="fd-heading"><h2>نیازمند بازبینی نگاشت</h2><p>{q.rule} جمع: {toman(q.review_total_rial)} تومان</p></div>
-          <table className="lq-table">
-            <thead><tr><th>مورد</th><th>حساب</th><th>ورودی</th><th>خروجی</th></tr></thead>
-            <tbody>{q.review_items.slice(0, 25).map((x: any, idx: number) => (
-              <tr key={idx}><td>{x.label}<small> {x.system === "rahkaran" ? "راهکاران" : "کارآمد"}</small></td><td>{x.account_code || "—"} {x.account_name || ""}</td>
-                <td className="num">{toman(x.inflow_rial)}</td><td className="num">{toman(x.outflow_rial)}</td></tr>
-            ))}</tbody>
-          </table>
-          <div className="fd-heading"><h2>کنارگذاشته‌ها (عمداً در هیچ جمعی نیستند)</h2></div>
-          <table className="lq-table"><tbody>
-            {q.excluded_totals.map((x: any) => <tr key={x.category}><td>{x.label}</td><td className="num">{toman(x.amount_rial)}</td></tr>)}
-          </tbody></table>
-        </section>
-      </div>}
-    </State>
-  );
-}
-
 // ------------------------------------------------------------------ page
 
 export default function LiquidityPage() {
   const [channel, setChannel] = useState<Channel>("all");
-  const [horizon, setHorizon] = useState(30);
+  const [period, setPeriod] = useState(30);
   const [section, setSection] = useState<Section>("forecast");
   const [reloadKey, setReloadKey] = useState(0);
   const today = useMemo(() => new Intl.DateTimeFormat("fa-IR-u-ca-persian", { dateStyle: "long" }).format(new Date()), []);
@@ -645,23 +650,26 @@ export default function LiquidityPage() {
     <div className="lq-page">
       <header className="lq-header">
         <div className="fd-heading">
-          <h2>مدیریت نقدینگی (جدید)</h2>
-          <p>{today} · همه اعداد مستقیم از دیتابیس راهکاران و کارآمد (بدون اکسل) · مبالغ به تومان</p>
+          <h2>مدیریت نقدینگی</h2>
+          <p>{today} · مبالغ به تومان</p>
         </div>
         <div className="lq-toolbar">
           <div className="lq-seg">{CHANNELS.map(([k, label]) => <button key={k} className={channel === k ? "active" : ""} onClick={() => setChannel(k)}>{label}</button>)}</div>
-          <div className="lq-seg">{HORIZONS.map((h) => <button key={h} className={horizon === h ? "active" : ""} onClick={() => setHorizon(h)}>{fa(h)} روز</button>)}</div>
+          {(FORWARD_SECTIONS.includes(section) || HISTORY_SECTIONS.includes(section)) && (
+            <div className="lq-field">
+              <small>بازه: {fa(period)} روز {FORWARD_SECTIONS.includes(section) ? "آینده" : "گذشته"}</small>
+              <div className="lq-seg">{PERIODS.map((d) => <button key={d} className={period === d ? "active" : ""} onClick={() => setPeriod(d)}>{fa(d)} روز</button>)}</div>
+            </div>
+          )}
           <button className="run" onClick={() => setReloadKey((k) => k + 1)}>↻ بروزرسانی</button>
         </div>
       </header>
       <div className="lq-tabs" role="tablist">{SECTIONS.map(([k, label]) => <button key={k} className={section === k ? "active" : ""} onClick={() => setSection(k)}>{label}</button>)}</div>
-      {section === "forecast" && <ForecastSection channel={channel} horizon={horizon} reloadKey={reloadKey} />}
-      {section === "balances" && <BalancesSection channel={channel} reloadKey={reloadKey} />}
-      {section === "received" && <ReceivedSection channel={channel} horizon={horizon} reloadKey={reloadKey} />}
-      {section === "issued" && <IssuedSection channel={channel} horizon={horizon} reloadKey={reloadKey} />}
-      {section === "flows" && <FlowsSection channel={channel} reloadKey={reloadKey} />}
+      {section === "forecast" && <ForecastSection channel={channel} horizon={period} baseDays={FORECAST_BASE_DAYS} reloadKey={reloadKey} />}
+      {section === "received" && <ReceivedSection channel={channel} horizon={period} reloadKey={reloadKey} />}
+      {section === "issued" && <IssuedSection channel={channel} horizon={period} reloadKey={reloadKey} />}
+      {section === "flows" && <FlowsSection channel={channel} baseDays={period} reloadKey={reloadKey} />}
       {section === "payroll" && <PayrollSection reloadKey={reloadKey} />}
-      {section === "quality" && <QualitySection channel={channel} reloadKey={reloadKey} />}
     </div>
   );
 }

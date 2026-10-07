@@ -57,13 +57,22 @@ ZARIN = [
 ]
 
 
-def _service(rows=ROWS, payments=PAYMENTS, zarin=ZARIN):
+# Zarin settles its payroll on the 28th (1405/03/28, 04/28, 05/28; 1405/06/28 = 2026-09-19).
+ZARIN_PAYMENTS = [
+    {"Day": date(2026, 6, 18), "Amount": 480},
+    {"Day": date(2026, 7, 19), "Amount": 660},
+    {"Day": date(2026, 8, 19), "Amount": 400},
+    {"Day": date(2026, 8, 20), "Amount": 5},
+]
+
+
+def _service(rows=ROWS, payments=PAYMENTS, zarin=ZARIN, zarin_payments=ZARIN_PAYMENTS):
     def fetch_zarin(_ym):
         if isinstance(zarin, Exception):
             raise zarin
         return list(zarin)
     return PayrollService(today=TODAY, fetch_rows=lambda _ym: list(rows), fetch_payments=lambda _d: list(payments),
-                          fetch_zarin=fetch_zarin)
+                          fetch_zarin=fetch_zarin, fetch_zarin_payments=lambda _d: list(zarin_payments))
 
 
 def _workshop(rows, workshop):
@@ -76,9 +85,9 @@ def test_kpis_use_latest_complete_month_and_total_includes_insurance_and_tax():
     kpis = data["kpis"]
     assert kpis["headcount"] == 143
     assert kpis["net_pay_rial"] == 630
-    assert kpis["insurance_and_tax_rial"] == 45 + 130 + 115
-    assert kpis["total_rial"] == 630 + 45 + 130 + 115
-    assert kpis["total_change_percent"] == round((920 - 930) / 930 * 100, 1)
+    assert kpis["insurance_and_tax_rial"] == 130 + 115
+    assert kpis["total_rial"] == 630 + 130                # employee share (45) and tax (115) excluded
+    assert kpis["total_change_percent"] == round((760 - 780) / 780 * 100, 1)
     assert kpis["headcount_change"] == 2
     assert data["in_progress_months"] == [{"month": "1405/06", "headcount": 8}]
     assert [m["month"] for m in data["monthly_trend"]] == ["1405/03", "1405/04", "1405/05"]
@@ -91,18 +100,32 @@ def test_pay_day_is_the_median_day_of_the_largest_monthly_payment():
 
 
 def test_forecast_places_last_complete_total_once_per_month_on_pay_day():
-    forecast = _service().schedule(horizon_days=60)
-    assert [(f["date_jalali"], f["payroll_month"], f["amount_rial"]) for f in forecast] == [
-        ("1405/07/20", "1405/06", 920),
-        ("1405/08/20", "1405/07", 920),
+    forecast = _service().schedule(horizon_days=60, channel="b2b")
+    assert [(f["date_jalali"], f["payroll_month"], f["amount_rial"], f["group"]) for f in forecast] == [
+        ("1405/07/20", "1405/06", 760, "rahkaran"),
+        ("1405/08/20", "1405/07", 760, "rahkaran"),
     ]
+
+
+def test_forecast_adds_zarin_last_month_on_its_own_pay_day():
+    forecast = _service().schedule(horizon_days=60)
+    zarin = [(f["date_jalali"], f["amount_rial"]) for f in forecast if f["group"] == "zarin"]
+    assert zarin == [("1405/07/28", 490), ("1405/08/28", 490)]       # 400 + 90
+    assert [f["group"] for f in _service().schedule(horizon_days=60, channel="hybrid")] == ["zarin", "zarin"]
+    assert [f["date"] for f in forecast] == sorted(f["date"] for f in forecast)
+
+
+def test_forecast_keeps_rahkaran_when_karamad_is_down():
+    forecast = _service(zarin=ConnectionError("down")).schedule(horizon_days=60)
+    assert {f["group"] for f in forecast} == {"rahkaran"}
 
 
 def test_unavailable_rahkaran_returns_warning():
     def boom(_):
         raise ConnectionError("down")
 
-    result = PayrollService(today=TODAY, fetch_rows=boom, fetch_payments=boom, fetch_zarin=boom).report()
+    result = PayrollService(today=TODAY, fetch_rows=boom, fetch_payments=boom, fetch_zarin=boom,
+                            fetch_zarin_payments=boom).report()
     assert result["data"] is None
     assert result["warnings"][0]["code"] == "rahkaran_unavailable"
 
@@ -123,7 +146,7 @@ def test_rahkaran_is_split_by_insurance_workshop_company_and_group_total_unchang
     data = _service(rows=COMPANY_ROWS).report()["data"]
     cards = {c["key"]: c for c in data["companies"]}
     assert [c["key"] for c in data["companies"]] == ["faraz", "exir", "kadus", "uninsured", "zarin"]
-    assert cards["exir"]["latest_month"]["total_rial"] == 310 + 20 + 60 + 50
+    assert cards["exir"]["latest_month"]["total_rial"] == 310 + 60
     assert cards["faraz"]["latest_month"]["headcount"] == 32
     assert cards["uninsured"]["latest_month"]["total_rial"] == 60
     assert cards["kadus"]["monthly_trend"][0]["month"] == "1405/04"
@@ -132,7 +155,7 @@ def test_rahkaran_is_split_by_insurance_workshop_company_and_group_total_unchang
     assert data["kpis"]["total_rial"] == sum(cards[k]["latest_month"]["total_rial"] for k in ("exir", "faraz", "kadus", "uninsured"))
 
 
-def test_zarin_comes_from_karamad_with_monthly_commission_and_no_forecast():
+def test_zarin_comes_from_karamad_with_monthly_commission():
     service = _service()
     data = service.report()["data"]
     zarin = next(c for c in data["companies"] if c["key"] == "zarin")
@@ -140,17 +163,15 @@ def test_zarin_comes_from_karamad_with_monthly_commission_and_no_forecast():
     assert [m["commission_rial"] for m in zarin["monthly_trend"]] == [230, 470, 180]
     latest = zarin["latest_month"]
     assert latest["month"] == "1405/05" and latest["headcount"] == 103
-    assert latest["total_rial"] == 400 + 33 + 90 + 13
+    assert latest["total_rial"] == 400 + 90
     assert latest["base_pay_rial"] == 240 and latest["sales_commission_rial"] == 170
-    # the forecast is still Rahkaran only
-    assert all(f["amount_rial"] == 920 for f in service.schedule(horizon_days=60))
     month = next(r for r in data["by_company_monthly"] if r["month"] == "1405/05")
-    assert month["companies"]["zarin"] == 536 and month["total_rial"] == 920 + 536
+    assert month["companies"]["zarin"] == 490 and month["total_rial"] == 760 + 490
 
 
 def test_karamad_down_keeps_rahkaran_payroll_with_warning():
     result = _service(zarin=ConnectionError("down")).report()
-    assert result["data"]["kpis"]["total_rial"] == 920
+    assert result["data"]["kpis"]["total_rial"] == 760
     assert [c["key"] for c in result["data"]["companies"]] == ["uninsured"]
     assert result["warnings"][0]["code"] == "karamad_unavailable"
     assert result["sources"] == ["rahkaran"]

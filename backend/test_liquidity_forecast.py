@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from app.services.liquidity import bank_balances
-from app.services.liquidity.bank_balances import BankBalanceService, attach_balances
+from app.services.liquidity.bank_balances import BankBalanceService
 from app.services.liquidity.forecast import SCENARIOS, ForecastInputs, run_forecast, run_scenario
 
 # 2026-09-30 = 1405/07/08 (Wednesday); 2026-10-02 is a Friday.
@@ -23,7 +23,7 @@ def _scenario(key):
 
 def _inputs(**overrides):
     values = dict(today=TODAY, horizon_days=5, opening_balance_rial=1000.0,
-                  median_inflow_rial=100.0, median_outflow_rial=50.0)
+                  daily_inflow_rial=100.0, daily_outflow_rial=50.0)
     values.update(overrides)
     return ForecastInputs(**values)
 
@@ -38,7 +38,7 @@ def test_estimated_flows_skip_friday():
 
 def test_scenarios_pick_definite_or_reliance_cheques():
     received = {"2026-10-01": {"definite_rial": 500.0, "reliance_rial": 300.0}}
-    inputs = _inputs(received=received, median_inflow_rial=0.0, median_outflow_rial=0.0)
+    inputs = _inputs(received=received, daily_inflow_rial=0.0, daily_outflow_rial=0.0)
     by_key = {s["key"]: s for s in run_forecast(inputs)["scenarios"]}
     assert by_key["definite"]["closing_rial"] == 1500
     assert by_key["reliance"]["closing_rial"] == 1300
@@ -46,12 +46,12 @@ def test_scenarios_pick_definite_or_reliance_cheques():
 
 
 def test_pessimistic_halves_estimated_inflow():
-    result = run_scenario(_inputs(median_outflow_rial=0.0), _scenario("pessimistic"))
+    result = run_scenario(_inputs(daily_outflow_rial=0.0), _scenario("pessimistic"))
     assert result["totals"]["estimated_inflow_rial"] == 200
 
 
 def test_first_shortage_worst_balance_and_runway():
-    inputs = _inputs(median_inflow_rial=0.0, median_outflow_rial=0.0,
+    inputs = _inputs(daily_inflow_rial=0.0, daily_outflow_rial=0.0,
                      issued={"2026-10-01": 1500.0},
                      received={"2026-10-03": {"definite_rial": 800.0, "reliance_rial": 800.0}},
                      payroll=[{"date": "2026-10-03", "amount_rial": 100.0}])
@@ -122,16 +122,3 @@ def test_balances_per_channel_and_posting_lag_warning():
 def test_negative_bank_balance_is_flagged():
     warnings = _service().report("b2b")["warnings"]
     assert any(w["code"] == "negative_bank_balance" for w in warnings)
-
-
-def test_attach_balances_matches_account_number_and_coverage():
-    accounts, _, _ = _service().accounts("all")
-    table = [
-        {"system": "rahkaran", "account_number": "611828288000026601", "overdue_rial": 1000.0, "next_30_days_rial": 1500.0,
-         "balance_rial": None, "coverage_percent": None},
-        {"system": "karamad", "account_number": None, "overdue_rial": 0.0, "next_30_days_rial": 10.0,
-         "balance_rial": None, "coverage_percent": None},
-    ]
-    attach_balances(table, accounts)
-    assert table[0]["balance_rial"] == 5000 and table[0]["coverage_percent"] == 200.0
-    assert table[1]["balance_rial"] is None

@@ -3,7 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, Query
 
 from app.services.liquidity.account_map import CATEGORY_LABELS
-from app.services.liquidity.bank_balances import BankBalanceService, attach_balances
+from app.services.liquidity.bank_balances import BankBalanceService
 from app.services.liquidity.cash_movements import CHANNEL_LABELS, CashMovementService
 from app.services.liquidity.issued_cheques import IssuedChequeService
 from app.services.liquidity.payroll import PayrollService
@@ -81,15 +81,8 @@ def liquidity_issued_cheques(
     max_amount: float | None = Query(default=None, ge=0, description="حداکثر مبلغ (ریال)"),
     refresh: bool = Refresh,
 ):
-    result = IssuedChequeService().report(horizon_days=horizon_days, channel=channel, bank_account=bank_account,
-                                          payee=payee, min_amount=min_amount, max_amount=max_amount, refresh=refresh)
-    try:
-        accounts, _, _ = BankBalanceService().accounts(channel, refresh)
-        attach_balances(result["data"]["by_bank_account"], accounts)
-    except Exception as exc:  # the cheque table stays usable without balances
-        result["warnings"].append({"code": "balances_unavailable",
-                                   "message": f"مانده حساب‌ها دریافت نشد؛ ستون پوشش خالی است. ({exc.__class__.__name__})"})
-    return result
+    return IssuedChequeService().report(horizon_days=horizon_days, channel=channel, bank_account=bank_account,
+                                        payee=payee, min_amount=min_amount, max_amount=max_amount, refresh=refresh)
 
 
 @router.get("/payroll", summary="حقوق پرسنل از راهکاران: خالص، بیمه، مالیات، جمع کل و زمان پرداخت")
@@ -101,21 +94,20 @@ def liquidity_payroll(
     return PayrollService().report(months=months, horizon_days=horizon_days, refresh=refresh)
 
 
-@router.get("/summary", summary="پیش‌بینی روزانه نقدینگی: موجودی، ورودی و خروجی، اولین کسری، Runway و سناریوها")
+@router.get("/summary", summary="پیش‌بینی روزانه جریان نقد خالص: ورودی و خروجی، اولین کسری تجمعی، بیشترین کسری و سناریوها")
 def liquidity_summary(
     horizon_days: int = Query(default=30, ge=7, le=180, description="افق پیش‌بینی از امروز"),
     channel: ChannelParam = Channel,
     base_days: int = BaseDays,
-    include_cash: bool = Query(default=False, description="موجودی صندوق هم در موجودی اول دوره بیاید"),
-    opening_balance: float | None = Query(default=None, description="موجودی واقعی امروز (ریال)؛ جایگزین موجودی دفتری"),
+    opening_balance: float | None = Query(default=None, description="موجودی اول دوره (ریال، اختیاری)؛ بدون آن پیش‌بینی از صفر و فقط جریان خالص است"),
     refresh: bool = Refresh,
 ):
     return LiquiditySummaryService().report(horizon_days=horizon_days, channel=channel, base_days=base_days,
-                                            include_cash=include_cash, opening_balance_rial=opening_balance,
-                                            refresh=refresh)
+                                            opening_balance_rial=opening_balance, refresh=refresh)
 
 
-@router.get("/bank-balances", summary="موجودی دفتری بانک و صندوق به تفکیک حساب")
+# Not on the dashboard (management decision 1405/07/13: no bank statements yet); kept for treasury checks.
+@router.get("/bank-balances", summary="موجودی دفتری بانک و صندوق به تفکیک حساب (خارج از داشبورد)")
 def liquidity_bank_balances(channel: ChannelParam = Channel, refresh: bool = Refresh):
     return BankBalanceService().report(channel=channel, refresh=refresh)
 

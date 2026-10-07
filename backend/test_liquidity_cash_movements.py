@@ -84,7 +84,7 @@ def test_outflow_categories_net_import_blocking_and_exclusions():
         _m(d, "karamad", "outflow", "3112", 200),                      # stock settlement: internal
         _m(d, "karamad", "outflow", "3112", 150, note="fx_purchase"),  # FX bought for the company
         _m(d, "karamad", "outflow", "1113", 9_000),       # inter-bank
-        _m(d, "karamad", "outflow", "3220", 800),         # Karamad payroll ignored
+        _m(d, "karamad", "outflow", "3220", 800),         # Zarin payroll: payroll section
     ]
     result = _service(rahkaran, karamad).outflows(base_days=7)
     categories = {c["category"]: c["total_rial"] for c in result["data"]["categories"]}
@@ -157,19 +157,26 @@ def test_unavailable_system_returns_warning_instead_of_failing():
     assert result["warnings"][0]["code"] == "karamad_unavailable"
 
 
-def test_month_comparison_uses_same_number_of_days():
-    # 1405/07/01 = 2026-09-23; today is 1405/07/08 -> 7 complete days compared.
+def test_month_comparison_is_last_complete_month_vs_the_one_before():
+    # Today 1405/07/08: Shahrivar (1405/06) vs Mordad (1405/05); Mehr so far is ignored.
     rahkaran = [
-        _m(date(2026, 9, 23), "rahkaran", "inflow", "123003", 200),   # 1405/07/01
+        _m(date(2026, 9, 23), "rahkaran", "inflow", "123003", 999),   # 1405/07/01: current, partial month
         _m(date(2026, 8, 23), "rahkaran", "inflow", "123003", 100),   # 1405/06/01
-        _m(date(2026, 9, 5), "rahkaran", "inflow", "123003", 999),    # 1405/06/14: outside same period
+        _m(date(2026, 9, 21), "rahkaran", "inflow", "123003", 200),   # 1405/06/30
+        _m(date(2026, 7, 23), "rahkaran", "inflow", "123003", 150),   # 1405/05/01
     ]
     comparison = _service(rahkaran).inflows(base_days=30)["data"]["month_comparison"]
-    assert comparison["current_month"] == "1405/07"
-    assert comparison["days_compared"] == 7
-    assert comparison["current_month_to_date_rial"] == 200
-    assert comparison["previous_month_same_period_rial"] == 100
+    assert (comparison["month"], comparison["previous_month"]) == ("1405/06", "1405/05")
+    assert comparison["month_rial"] == 300
+    assert comparison["previous_month_rial"] == 150
     assert comparison["change_percent"] == 100.0
+
+
+def test_forecast_basis_is_the_working_day_mean():
+    rahkaran = [_m(TODAY - timedelta(days=3), "rahkaran", "outflow", "116001", 9_000)]
+    data = _service(rahkaran).outflows(base_days=30, channel="b2b")["data"]
+    assert data["forecast_basis"]["daily_working_rial"] == data["total"]["mean_daily_rial"] > 0
+    assert data["total"]["median_daily_rial"] == 0
 
 
 def test_results_are_cached_until_refresh():
@@ -185,3 +192,32 @@ def test_results_are_cached_until_refresh():
     assert len(calls) == 1
     service.inflows(channel="b2b", refresh=True)
     assert len(calls) == 2
+
+
+def test_breakdown_keeps_only_customer_collections_and_operating_outflows():
+    d = TODAY - timedelta(days=1)
+    rahkaran = [
+        _m(d, "rahkaran", "inflow", "123003", 1_000, name="شرکت B2B"),
+        _m(d, "rahkaran", "inflow", "123003", 600, method="cash", name="هیبرید غرب (پادینا)- تهران"),
+        _m(d, "rahkaran", "inflow", "124046", 800),                                 # raw-material buyers
+        _m(d, "rahkaran", "inflow", "512029", 5_000, counterpart="950031"),         # shareholders
+        _m(d, "rahkaran", "outflow", "512029", 3_000, counterpart="950031"),
+        _m(d, "rahkaran", "outflow", "116001", 1_000),
+        _m(d, "rahkaran", "inflow", "116001", 300),                                 # returned block
+        _m(d, "rahkaran", "outflow", "512002", 4_000),                              # payroll: own tab
+    ]
+    karamad = [_m(d, "karamad", "outflow", "3112", 600), _m(d, "karamad", "inflow", "1313", 200, method="cash")]
+    service = _service(rahkaran, karamad)
+
+    inflow = service.inflows(base_days=7)["data"]
+    groups = {g["group"]: g for g in inflow["breakdown"]["items"]}
+    assert {k: g["total_rial"] for k, g in groups.items()} == {"customer_collection": 1200}
+    customer = groups["customer_collection"]
+    assert (customer["rahkaran_rial"], customer["karamad_rial"], customer["bank_rial"], customer["cash_rial"]) == (1000, 200, 1000, 200)
+    assert inflow["forecast_basis"]["daily_working_rial"] == 200  # 1,200 over six working days
+
+    outflow = service.outflows(base_days=7)["data"]
+    groups = {g["group"]: g for g in outflow["breakdown"]["items"]}
+    assert {k: g["total_rial"] for k, g in groups.items()} == {"imports": 700}
+    assert outflow["breakdown"]["total_rial"] == outflow["total"]["total_rial"] == 700
+    assert outflow["forecast_basis"]["daily_working_rial"] == round(700 / 6, 2)

@@ -2,8 +2,8 @@
 
 closing(day) = opening
              + received cheques (قطعی or اتکا, per scenario)
-             + estimated collections (median working-day inflow × scenario factor)
-             − issued cheques − payroll − estimated operating outflow (median working day)
+             + estimated collections (mean working-day inflow × scenario factor)
+             − issued cheques − payroll − estimated operating outflow (mean working day)
 
 Fridays carry no estimated collection or outflow; dated items (cheques, payroll) land on
 their own day whatever the weekday.
@@ -31,11 +31,11 @@ class Scenario:
 
 SCENARIOS = (
     Scenario("definite", "قطعی", "definite_rial", 1.0,
-             "همه چک‌های دریافتی بازه ۱۰۰٪ وصول می‌شوند + میانه ورودی نقد و حواله."),
+             "همه چک‌های دریافتی بازه ۱۰۰٪ وصول می‌شوند + میانگین ورودی نقد و حواله."),
     Scenario("reliance", "اتکا", "reliance_rial", 1.0,
-             "چک دریافتی × درصد اتکای هر چک + میانه ورودی نقد و حواله. سناریوی مبنا."),
+             "چک دریافتی × درصد اتکای هر چک + میانگین ورودی نقد و حواله. سناریوی مبنا."),
     Scenario("pessimistic", "بدبینانه", "reliance_rial", 0.5,
-             "چک دریافتی × درصد اتکا + فقط ۵۰٪ میانه ورودی نقد و حواله."),
+             "چک دریافتی × درصد اتکا + فقط ۵۰٪ میانگین ورودی نقد و حواله."),
 )
 BASE_SCENARIO = "reliance"
 
@@ -45,8 +45,8 @@ class ForecastInputs:
     today: date
     horizon_days: int
     opening_balance_rial: float
-    median_inflow_rial: float
-    median_outflow_rial: float
+    daily_inflow_rial: float
+    daily_outflow_rial: float
     received: dict[str, dict[str, float]] = field(default_factory=dict)  # iso date → definite/reliance
     issued: dict[str, float] = field(default_factory=dict)
     payroll: list[dict[str, Any]] = field(default_factory=list)  # {"date", "amount_rial"}
@@ -73,10 +73,10 @@ def run_scenario(inputs: ForecastInputs, scenario: Scenario) -> dict[str, Any]:
         working = day.weekday() != FRIDAY
         flows = {
             "received_cheques": inputs.received.get(key, {}).get(scenario.cheque_field, 0.0),
-            "estimated_inflow": inputs.median_inflow_rial * scenario.inflow_factor if working else 0.0,
+            "estimated_inflow": inputs.daily_inflow_rial * scenario.inflow_factor if working else 0.0,
             "issued_cheques": inputs.issued.get(key, 0.0),
             "payroll": payroll_by_day.get(key, 0.0),
-            "estimated_outflow": inputs.median_outflow_rial if working else 0.0,
+            "estimated_outflow": inputs.daily_outflow_rial if working else 0.0,
         }
         inflow = flows["received_cheques"] + flows["estimated_inflow"]
         outflow = flows["issued_cheques"] + flows["payroll"] + flows["estimated_outflow"]

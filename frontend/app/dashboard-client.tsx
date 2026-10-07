@@ -21,11 +21,8 @@ import "./ui-polish-v69.css";
 import "./management-v109.css";
 import "./theme-stability-v137.css";
 import "./customer-file.css";
-<<<<<<< HEAD
 import LiquidityPage from "./liquidity/liquidity-page";
-=======
 import "./readability-v2.css";
->>>>>>> origin/main
 
 type View =
   | "management"
@@ -1511,7 +1508,7 @@ const menu: [View, string, string][] = [
   ["cashBank", "⇄", "نقد و حواله"],
   ["companyPayments", "↗", "حواله‌های پرداختی شرکت"],
   ["b2bRemittances", "⇢", "حواله‌های مشتریان B2B"],
-  ["liquidity", "₪", "نقدینگی (جدید)"],
+  ["liquidity", "₪", "نقدینگی"],
   ["cashflow", "⌁", "پیش‌بینی نقدینگی"],
   ["monthlyExcel", "▥", "Cash Flow روزانه"],
   ["collections", "✓", "مرکز عملیات وصول"],
@@ -4159,12 +4156,6 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
   </>;
 }
 
-<<<<<<< HEAD
-// Open cheques far past due with a large amount need a closer look.
-// TEST values — production target is 90 days and 1_000_000_000 rial (100M toman).
-const REVIEW_OVERDUE_DAYS = 10;
-const REVIEW_AMOUNT_RIAL = 500_000_000;
-=======
 // Karamad sales, as in the finance sales report: خالص = قابل پرداخت − برگشتی، ناخالص = جمع قبل تخفیف − برگشتی.
 function SalesCell({ net, gross, count }: { net?: number; gross?: number; count?: number }) {
   return <td><b>خالص {fullToman(net || 0)}</b><small>ناخالص {fullToman(gross || 0)}</small><small>تومان</small><small>{fa(count || 0)} فاکتور</small></td>;
@@ -4274,7 +4265,6 @@ function DebtDetail({ kind, id }: { kind: "branch" | "visitor"; id: number }) {
 // Cheques over 30 days past due are "unresolved" (not "open") but still uncollected, so both states count.
 const REVIEW_TERM_DAYS = 90;
 const REVIEW_AMOUNT_RIAL = 1_000_000_000; // 100M toman
->>>>>>> origin/main
 const needsChequeReview = (x: any) =>
   x.return_risk?.state === "open"
   && typeof x.days_until_due === "number" && x.days_until_due < -REVIEW_OVERDUE_DAYS

@@ -59,9 +59,8 @@ CATEGORY_LABELS: dict[str, str] = {
     "shareholders": "سهامداران و جاری شرکا",
     "hybrid_settlement": "تسویه هیبرید با شرکت (گردش داخلی)",
     "inter_bank": "انتقال بین‌بانکی",
-    "cheque_section": "چک (در بخش چک‌ها)",
-    "payroll_section": "حقوق (در بخش حقوق)",
-    "karamad_payroll_ignored": "حقوق کارآمد (طبق تصمیم مدیریت حساب نمی‌شود)",
+    "cheque_section": "چک (در تب‌های چک)",
+    "payroll_section": "حقوق (در تب حقوق)",
     "unknown_deposit": "واریزی نامشخص",
     "unmapped": "حساب نگاشت‌نشده",
 }
@@ -99,6 +98,8 @@ RAHKARAN_FACTORS: dict[str, dict[str, Classification]] = {
     # Customer collections (the only input of the inflow average).
     "123003": {_IN: _c("inflow", "customer_collection"), _OUT: _c("outflow", "customer_refund")},
     "123011": {_IN: _c("inflow", "customer_collection"), _OUT: _c("outflow", "customer_refund")},
+    # «حسابهای دریافتنی تجاری ارزی»: export customers paying in dollars into the FX cash desk.
+    "123010": {_IN: _c("inflow", "customer_collection"), _OUT: _c("outflow", "customer_refund")},
     "1": {_IN: _c("inflow", "customer_collection")},  # حسابهای دریافتنی بابت برگشتی
     "123008": {_IN: _c("inflow", "customer_collection")},
     # Other inflows: shown, never averaged into the forecast.
@@ -111,7 +112,8 @@ RAHKARAN_FACTORS: dict[str, dict[str, Classification]] = {
     # Suppliers.  A supplier refund arrives as an inflow and is shown as other inflow.
     "511002": {_OUT: _c("outflow", "suppliers"), _IN: _c("inflow", "other_operating_inflow")},
     "512001": {_OUT: _c("outflow", "suppliers"), _IN: _c("inflow", "other_operating_inflow")},
-    "511008": {_OUT: _c("outflow", "suppliers")},
+    # «حساب پرداختنی ارزی»: foreign suppliers paid from the FX cash desk (proforma prepayments).
+    "511008": {_OUT: _c("outflow", "imports")},
     "121003": {_OUT: _c("outflow", "suppliers")},
     "121006": {_OUT: _c("outflow", "suppliers")},  # سایر پیش‌پرداخت‌ها — pending finance confirmation
     "124046": {_OUT: _c("outflow", "suppliers"), _IN: _c("inflow", "other_operating_inflow")},
@@ -186,13 +188,16 @@ KARAMAD_ACCOUNTS: dict[str, dict[str, Classification]] = {
     "3701": _both(_c("financing", "shareholders")),
     "3702": _both(_c("financing", "shareholders")),
     "3709": _both(_c("financing", "shareholders")),
-    # Management decision: payroll comes only from Rahkaran; Karamad payroll is ignored.
-    "3220": _both(_c("excluded", "karamad_payroll_ignored")),
-    "3216": _both(_c("excluded", "karamad_payroll_ignored")),
-    "3214": _both(_c("excluded", "karamad_payroll_ignored")),
-    "3226": _both(_c("excluded", "karamad_payroll_ignored")),
-    "3222": _both(_c("excluded", "karamad_payroll_ignored")),
-    "8124": _both(_c("excluded", "karamad_payroll_ignored")),
+    # Zarin's payroll (Karamad's payroll module) is counted in the payroll section; its
+    # payments here (net pay, insurance, payroll tax, bonuses, severance) are never counted twice.
+    "3220": _both(_c("excluded", "payroll_section")),
+    "3238": _both(_c("excluded", "payroll_section")),
+    "3221": _both(_c("excluded", "payroll_section")),
+    "3216": _both(_c("excluded", "payroll_section")),
+    "3214": _both(_c("excluded", "payroll_section")),
+    "3226": _both(_c("excluded", "payroll_section")),
+    "3222": _both(_c("excluded", "payroll_section")),
+    "8124": _both(_c("excluded", "payroll_section")),
     "1111": _both(INTER_BANK),
     "1113": _both(INTER_BANK),
     "9512": _both(_c("review", "unknown_deposit")),

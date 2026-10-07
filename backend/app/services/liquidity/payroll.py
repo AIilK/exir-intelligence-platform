@@ -2,12 +2,12 @@
 
 Rahkaran (HCM3) holds اکسیر، کادوس and فراز بهداشت, split by each employee's social-insurance
 workshop in the payroll month.  Karamad's payroll module belongs entirely to زرین کالای کادوس,
-whose sales staff are paid a monthly commission («اضافات»).  The forecast still uses the
-Rahkaran total only; Zarin and commissions are history, no forecast yet.  Rahkaran months
+whose sales staff are paid a monthly commission («اضافات»).  The forecast repeats each group's
+last complete month (commission included, not modelled yet) on its own usual pay day.  Rahkaran months
 are grouped by ``PayCalcItem.IssueYearMonth`` (one row per employee and factor per month,
 verified on live data).
 
-Grand total = net pay + social insurance (employee and employer share) + payroll tax,
+Grand total = net pay + employer's social insurance share (employee share and payroll tax are withheld, not a company cost),
 i.e. all cash that leaves the company for a payroll month.  The forecast places the last
 fully calculated month's total, in one lump, on the usual pay day of each coming month.
 """
@@ -86,6 +86,18 @@ ZARIN_PAYROLL_SQL = text("""
     GROUP BY CAST([FiscalName] AS int), [MonthRef]
 """)
 
+# Settlement of «حقوق و دستمزد پرداختی/حقوق پرداختنی» in Karamad's books: one large line a
+# month on the pay day.  Used only to find Zarin's usual pay day.
+ZARIN_PAYMENTS_SQL = text("""
+    SELECT CAST(v.[DateE] AS date) AS [Day], SUM(l.[Debtor]) AS [Amount]
+    FROM dbo.[tblVoucherLines] AS l
+    INNER JOIN dbo.[tblVoucher] AS v ON v.[ID] = l.[VoucherRef]
+    INNER JOIN dbo.[tblSL] AS sl ON sl.[ID] = l.[SLRef]
+    WHERE sl.[Code] IN (3220, 3238) AND l.[Debtor] > 0 AND ISNULL(l.[isDeleted], 0) = 0
+      AND v.[DateE] >= :date_from
+    GROUP BY CAST(v.[DateE] AS date)
+""")
+
 # Rahkaran companies, matched in this order on the insurance workshop's name.
 RAHKARAN_COMPANIES = (("faraz", "فراز", "فراز بهداشت"), ("exir", "اکسیر", "اکسیر"), ("kadus", "کادوس", "کادوس"))
 UNINSURED_COMPANY = ("uninsured", "بدون بیمه (راهکاران)")
@@ -158,6 +170,12 @@ def fetch_zarin_payroll_rows(from_year_month: int) -> list[dict[str, Any]]:
         return [dict(r) for r in connection.execute(ZARIN_PAYROLL_SQL, {"from_year_month": from_year_month}).mappings()]
 
 
+def fetch_zarin_payments(date_from: date) -> list[dict[str, Any]]:
+    from app.database.karamad_sqlserver import get_karamad_sqlserver_engine
+    with get_karamad_sqlserver_engine().connect() as connection:
+        return [dict(r) for r in connection.execute(ZARIN_PAYMENTS_SQL, {"date_from": date_from}).mappings()]
+
+
 def rahkaran_company(workshop: str | None) -> tuple[str, str]:
     for key, needle, label in RAHKARAN_COMPANIES:
         if needle in (workshop or ""):
@@ -182,7 +200,9 @@ def _mark_complete(months: list[dict[str, Any]]) -> None:
 
 def _month_item(ym: int, headcount: int, net: float, employee_ins: float, employer_ins: float,
                 tax: float) -> dict[str, Any]:
-    insurance = employee_ins + employer_ins
+    # Management decision (1405/07/14): the employee's insurance share and the payroll tax are
+    # withheld from the salary and are not a company cost, so the total is net pay + the
+    # employer's insurance share; both are kept in the payload for reference.
     return {
         "year_month": ym,
         "month": _month_label(ym),
@@ -190,10 +210,10 @@ def _month_item(ym: int, headcount: int, net: float, employee_ins: float, employ
         "net_pay_rial": _round(net),
         "employee_insurance_rial": _round(employee_ins),
         "employer_insurance_rial": _round(employer_ins),
-        "insurance_rial": _round(insurance),
+        "insurance_rial": _round(employer_ins),
         "tax_rial": _round(tax),
-        "insurance_and_tax_rial": _round(insurance + tax),
-        "total_rial": _round(net + insurance + tax),
+        "insurance_and_tax_rial": _round(employer_ins + tax),
+        "total_rial": _round(net + employer_ins),
     }
 
 
@@ -220,12 +240,14 @@ class PayrollService:
         fetch_rows: Callable[[int], list[dict[str, Any]]] = fetch_payroll_rows,
         fetch_payments: Callable[[date], list[dict[str, Any]]] = fetch_payroll_payments,
         fetch_zarin: Callable[[int], list[dict[str, Any]]] = fetch_zarin_payroll_rows,
+        fetch_zarin_payments: Callable[[date], list[dict[str, Any]]] = fetch_zarin_payments,
         cache_ttl_seconds: int = CACHE_TTL_SECONDS,
     ):
         self.today = today or date.today()
         self.fetch_rows = fetch_rows
         self.fetch_payments = fetch_payments
         self.fetch_zarin = fetch_zarin
+        self.fetch_zarin_payments = fetch_zarin_payments
         self.cache_ttl_seconds = cache_ttl_seconds
 
     def _cached(self, name: str, loader: Callable[[], Any], refresh: bool) -> Any:
@@ -312,10 +334,13 @@ class PayrollService:
 
     # -- pay day --------------------------------------------------------------
 
-    def _pay_day(self, refresh: bool) -> dict[str, Any]:
+    def _pay_day(self, refresh: bool, zarin: bool = False) -> dict[str, Any]:
         """Usual Jalali day of month of the largest payroll payment in each recent month."""
         since = self.today - timedelta(days=31 * (PAY_DAY_HISTORY_MONTHS + 1))
-        payments = self._cached("payroll_payments", lambda: self.fetch_payments(since), refresh)
+        if zarin:
+            payments = self._cached("zarin_payroll_payments", lambda: self.fetch_zarin_payments(since), refresh)
+        else:
+            payments = self._cached("payroll_payments", lambda: self.fetch_payments(since), refresh)
         current_month = _jalali(self.today)[:2]
         largest: dict[tuple[int, int], tuple[float, date]] = {}
         for row in payments:
@@ -334,19 +359,36 @@ class PayrollService:
             "observed": [{"month": f"{ym[0]:04d}/{ym[1]:02d}", "date": day.isoformat(),
                           "date_jalali": format_jalali_date(day), "amount_rial": _round(amount)}
                          for ym, (amount, day) in recent],
-            "rule": "روز ماه شمسیِ بزرگ‌ترین پرداخت حقوق (عامل ۵۱۲۰۰۲) در هر یک از ۶ ماه اخیر؛ میانه این روزها.",
+            "rule": ("روز ماه شمسیِ بزرگ‌ترین تسویه «حقوق و دستمزد پرداختی» (۳۲۲۰/۳۲۳۸) کارآمد در هر یک از ۶ ماه اخیر؛ میانه این روزها."
+                     if zarin else "روز ماه شمسیِ بزرگ‌ترین پرداخت حقوق (عامل ۵۱۲۰۰۲) در هر یک از ۶ ماه اخیر؛ میانه این روزها."),
         }
 
     # -- forecast -------------------------------------------------------------
 
-    def schedule(self, horizon_days: int, refresh: bool = False) -> list[dict[str, Any]]:
-        """Expected payroll outflows inside [today, today + horizon_days)."""
-        months = self._months(refresh)
-        complete = [m for m in months if m["complete"]]
-        pay_day = self._pay_day(refresh)["usual_day_of_month"]
-        if not complete or pay_day is None:
+    def schedule(self, horizon_days: int, refresh: bool = False, channel: str = "all") -> list[dict[str, Any]]:
+        """Expected payroll outflows inside [today, today + horizon_days).
+
+        Each company group's last complete month, once a month on its own usual pay day:
+        Rahkaran (B2B) and Zarin (Karamad, hybrid).  Zarin is skipped when Karamad is down.
+        """
+        items: list[dict[str, Any]] = []
+        if channel in ("b2b", "all"):
+            complete = [m for m in self._months(refresh) if m["complete"]]
+            items += self._monthly_items(horizon_days, complete[-1] if complete else None,
+                                         self._pay_day(refresh)["usual_day_of_month"], "rahkaran", "راهکاران")
+        if channel in ("hybrid", "all"):
+            try:
+                zarin = [m for m in self._zarin(refresh)["months"] if m["complete"]]
+                pay_day = self._pay_day(refresh, zarin=True)["usual_day_of_month"]
+            except Exception:
+                zarin, pay_day = [], None
+            items += self._monthly_items(horizon_days, zarin[-1] if zarin else None, pay_day, "zarin", ZARIN_COMPANY[1])
+        return sorted(items, key=lambda i: i["date"])
+
+    def _monthly_items(self, horizon_days: int, basis: dict[str, Any] | None, pay_day: int | None,
+                       group: str, label: str) -> list[dict[str, Any]]:
+        if basis is None or pay_day is None:
             return []
-        basis = complete[-1]
         end = self.today + timedelta(days=horizon_days)
         year, month, _ = _jalali(self.today)
         items = []
@@ -361,6 +403,8 @@ class PayrollService:
                     "payroll_month": f"{payroll_month[0]:04d}/{payroll_month[1]:02d}",
                     "amount_rial": basis["total_rial"],
                     "basis_month": basis["month"],
+                    "group": group,
+                    "label": label,
                 })
         return items
 
@@ -438,7 +482,7 @@ class PayrollService:
             "in_progress_months": [{"month": m["month"], "headcount": m["headcount"]} for m in in_progress],
             "pay_day": pay_day,
             "forecast": schedule,
-            "rule": "اکسیر، کادوس و فراز از راهکاران (HCM3) به تفکیک کارگاه بیمه هر کارمند در همان ماه؛ کارکنان بدون کارگاه بیمه جدا آمده‌اند. زرین از حقوق کارآمد؛ پورسانت فروش زرین = «اضافات» فیش هر ماه. جمع کل = خالص پرداختی + بیمه سهم کارمند و کارفرما + مالیات حقوق. پیش‌بینی پرداخت فعلاً فقط حقوق راهکاران است (جمع آخرین ماه کامل روی روز معمول پرداخت) و برای زرین و پورسانت پیش‌بینی نداریم.",
+            "rule": "اکسیر، کادوس و فراز از راهکاران به تفکیک کارگاه بیمه هر کارمند در همان ماه؛ کارکنان بدون کارگاه بیمه جدا آمده‌اند. زرین از حقوق کارآمد؛ پورسانت فروش زرین = «اضافات» فیش هر ماه. جمع کل = خالص پرداختی + بیمه سهم کارفرما؛ بیمه سهم کارمند و مالیات حقوق از حقوق کسر می‌شوند و هزینه شرکت حساب نمی‌شوند. در پیش‌بینی نقدینگی، جمع آخرین ماه کامل راهکاران و زرین (با همان پورسانت ثبت‌شده) هر کدام روی روز معمول پرداخت خودش می‌آید؛ پورسانت ماه‌های آینده فعلاً مدل نمی‌شود.",
         }
         return {
             "status": "success", "as_of": self.today.isoformat(), "as_of_jalali": format_jalali_date(self.today),

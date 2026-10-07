@@ -111,7 +111,6 @@ def test_bank_accounts_payees_and_filters():
     assert (melat["overdue_rial"], melat["next_7_days_rial"], melat["next_30_days_rial"], melat["next_90_days_rial"]) == (
         30, 100, 500, 1499)
     assert melat["needs_review_rial"] == 70
-    assert melat["balance_rial"] is None
     # «الف»: 30 + 100 + 200 + 50 = 380 (its 200-day-old cheque is under review); «ب»: 400.
     assert [(p["payee_name"], p["amount_rial"]) for p in data["top_payees"]] == [
         ("تأمین‌کننده ب", 400), ("تأمین‌کننده الف", 380)]
@@ -157,3 +156,14 @@ def test_cheque_to_its_own_drawing_account_is_a_transfer_not_outflow():
     assert data["own_account_transfers"]["in_forecast"] is False
     assert [p["payee_name"] for p in data["top_payees"]] == ["erbatur - پرفرم 25102022"]
     assert sum(service.schedule(30).values()) == 70
+
+
+def test_cheques_drawn_on_a_shareholders_personal_account_are_tagged():
+    rahkaran = [_row(30, 5, 100, bank="سپه", account="925800096659"), _row(31, 5, 50, bank="ملت", account="9004173558")]
+    service = IssuedChequeService(today=TODAY, fetchers={"rahkaran": lambda: list(rahkaran), "karamad": lambda: []},
+                                  fetch_personal_titles=lambda: ["سپه  جاری 925800096659 نادر علیزاده -  اشتهارد کد 925"])
+    accounts = {a["account_number"]: a for a in service.report(horizon_days=30)["data"]["by_bank_account"]}
+    assert accounts["925800096659"]["personal_account"] is True
+    assert accounts["9004173558"]["personal_account"] is False
+    # still a normal outflow until management decides otherwise
+    assert accounts["925800096659"]["next_7_days_rial"] == 100

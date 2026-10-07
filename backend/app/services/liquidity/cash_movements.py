@@ -43,6 +43,8 @@ WEEKDAY_LABELS = {5: "شنبه", 6: "یکشنبه", 0: "دوشنبه", 1: "سه�
 WEEKDAY_ORDER = (5, 6, 0, 1, 2, 3, 4)
 FRIDAY = 4
 
+SOURCES_PER_GROUP = 6
+
 HISTORY_DAYS = 400  # enough for a 12-Jalali-month trend and a 365-day base period
 CACHE_TTL_SECONDS = 300
 
@@ -78,7 +80,7 @@ _RAHKARAN_PART = """
     SELECT CAST(h.[Date] AS date) AS [Day], N'{direction}' AS [Direction], N'{method}' AS [Method],
            f.[Number] AS [AccountCode], COALESCE(sl.[Title], f.[Name]) AS [AccountName],
            dl.[Code] AS [CounterpartCode], dl.[Title] AS [CounterpartName],
-           {note} AS [Note], SUM(d.[Amount]) AS [Amount], COUNT_BIG(*) AS [RowCount]
+           {note} AS [Note], SUM(COALESCE(d.[CurrencyAmount], d.[Amount])) AS [Amount], COUNT_BIG(*) AS [RowCount]
     FROM RPA3.[{detail}] AS d
     INNER JOIN RPA3.[{header}] AS h ON h.[{header_id}] = d.[{header_ref}]
     LEFT JOIN RPA3.[CashFlowFactor] AS f ON f.[CashFlowFactorID] = d.[CashFlowFactorRef]
@@ -87,6 +89,9 @@ _RAHKARAN_PART = """
     WHERE h.[ApproveState] = 3 AND h.[Date] >= :date_from AND h.[Date] < :date_to_exclusive
     GROUP BY CAST(h.[Date] AS date), f.[Number], COALESCE(sl.[Title], f.[Name]), dl.[Code], dl.[Title]{note_group}
 """
+
+# Foreign-currency cash desk rows (دلار/یورو) carry the FX units in ``Amount`` and the rial
+# equivalent in ``CurrencyAmount``; rial rows have both equal.  The rial value is always used.
 
 # A cheque cashed in (e.g. by the collection agent) is already counted by the cheque
 # sections; the description is the only field that says so.
@@ -254,6 +259,68 @@ def _daily_stats(daily: dict[date, float], start: date, end_exclusive: date) -> 
     }
 
 
+def _flow_group(row: ClassifiedMovement, direction: str) -> str | None:
+    """The in/out table group of a movement (user decision 2026-10-07): inflow = customer
+    collections only; outflow = the operating categories.  Shareholders, the hybrid
+    settlement and other inflows are in neither the tables nor the forecast."""
+    c = row.classification
+    if c.section != direction:
+        return None
+    if direction == "inflow" and c.category != "customer_collection":
+        return None
+    return c.category
+
+
+def _flow_breakdown(rows: list[ClassifiedMovement], start: date, end: date, direction: str) -> dict[str, Any]:
+    """Every amount of the period by broad group, with where it came from (system, method, account).
+    Its working-day mean is the forecast's daily estimate."""
+    groups: dict[str, dict[str, Any]] = {}
+    daily: dict[date, float] = defaultdict(float)
+    for row in rows:
+        m = row.movement
+        if not start <= m.day < end:
+            continue
+        key = _flow_group(row, direction)
+        if key is None:
+            continue
+        amount = row.signed_amount  # a returned FX block reduces imports
+        daily[m.day] += amount
+        g = groups.setdefault(key, {"rahkaran": 0.0, "karamad": 0.0, "bank": 0.0, "cash": 0.0,
+                                    "count": 0, "sources": defaultdict(float)})
+        g[m.system] += amount
+        g[m.method] += amount
+        g["count"] += m.count
+        g["sources"][(m.system, m.account_code, m.account_name)] += amount
+
+    total = sum(g["rahkaran"] + g["karamad"] for g in groups.values())
+    items = []
+    for key, g in groups.items():
+        amount = g["rahkaran"] + g["karamad"]
+        ranked = sorted(g["sources"].items(), key=lambda kv: -abs(kv[1]))
+        sources = [{"system": system, "account_code": code, "account_name": name, "amount_rial": _round(value)}
+                   for (system, code, name), value in ranked[:SOURCES_PER_GROUP]]
+        rest = sum(value for _, value in ranked[SOURCES_PER_GROUP:])
+        items.append({
+            "group": key,
+            "label": CATEGORY_LABELS.get(key, key),
+            "total_rial": _round(amount),
+            "share_percent": round(amount / total * 100, 1) if total else None,
+            "rahkaran_rial": _round(g["rahkaran"]),
+            "karamad_rial": _round(g["karamad"]),
+            "bank_rial": _round(g["bank"]),
+            "cash_rial": _round(g["cash"]),
+            "row_count": g["count"],
+            "sources": sources,
+            "other_sources_rial": _round(rest) if len(ranked) > SOURCES_PER_GROUP else None,
+        })
+    items.sort(key=lambda i: -i["total_rial"])
+    return {
+        "items": items,
+        "total_rial": _round(total),
+        "daily": _daily_stats(daily, start, end),
+    }
+
+
 def _labelled_totals(totals: dict[str, float], key: str, labels: dict[str, str]) -> list[dict[str, Any]]:
     return [{key: k, "label": labels.get(k, k), "amount_rial": _round(v)}
             for k, v in sorted(totals.items(), key=lambda kv: -kv[1])]
@@ -336,20 +403,20 @@ class CashMovementService:
         }
 
     def _month_comparison(self, rows: list[ClassifiedMovement]) -> dict[str, Any]:
-        """Current Jalali month-to-date vs the same number of days of the previous month."""
-        year, month = _jalali_ym(self.today)
-        current_start = _jalali_month_start(year, month)
-        elapsed = (self.today - current_start).days
-        previous_start = _jalali_month_start(*_previous_ym(year, month))
-        previous_end = min(previous_start + timedelta(days=elapsed), current_start)
-        current = sum(r.signed_amount for r in rows if current_start <= r.movement.day < self.today)
-        previous = sum(r.signed_amount for r in rows if previous_start <= r.movement.day < previous_end)
+        """Last complete Jalali month vs the month before it (a partial month says nothing
+        about lumpy payments such as FX blocks or month-end tax)."""
+        last = _previous_ym(*_jalali_ym(self.today))
+        before = _previous_ym(*last)
+        last_start, last_end = _jalali_month_start(*last), _jalali_month_start(*_jalali_ym(self.today))
+        before_start = _jalali_month_start(*before)
+        current = sum(r.signed_amount for r in rows if last_start <= r.movement.day < last_end)
+        previous = sum(r.signed_amount for r in rows if before_start <= r.movement.day < last_start)
         return {
-            "current_month": _month_label(year, month),
-            "days_compared": elapsed,
-            "current_month_to_date_rial": _round(current),
-            "previous_month_same_period_rial": _round(previous),
-            "change_percent": _change_percent(current, previous) if elapsed else None,
+            "month": _month_label(*last),
+            "previous_month": _month_label(*before),
+            "month_rial": _round(current),
+            "previous_month_rial": _round(previous),
+            "change_percent": _change_percent(current, previous),
         }
 
     def _monthly_trend(self, rows: list[ClassifiedMovement], key: Callable[[ClassifiedMovement], str],
@@ -412,12 +479,15 @@ class CashMovementService:
 
         other = sum(r.signed_amount for r in inflow
                     if r.classification.category == "other_operating_inflow" and start <= r.movement.day < end)
+        breakdown = _flow_breakdown([r for r in rows if method is None or r.movement.method == method],
+                                    start, end, "inflow")
         data = {
             "base_period": self._period(start, end),
             "customer_collection": stats,
             "forecast_basis": {
-                "median_daily_working_rial": stats["median_daily_rial"],
-                "rule": "میانه ورودی روزانه در روزهای کاری (بدون جمعه) × روزهای کاری افق؛ برچسب «برآوردی».",
+                "daily_working_rial": breakdown["daily"]["mean_daily_rial"],
+                "median_daily_rial": breakdown["daily"]["median_daily_rial"],
+                "rule": "میانگین وصول روزانه از مشتری در روزهای کاری (بدون جمعه) × روزهای کاری افق؛ برچسب «برآوردی».",
             },
             "month_comparison": self._month_comparison(customer),
             "by_method": _labelled_totals(by_method, "method", METHOD_LABELS),
@@ -430,7 +500,8 @@ class CashMovementService:
             "monthly_trend": self._monthly_trend(customer, lambda r: SYSTEM_CHANNEL[r.movement.system]),
             "other_operating_inflow_rial": _round(other),
             "hybrid_settlement": self._settlement(rows, start, end, channel),
-            "rule": "فقط وصول از مشتری نهایی (حواله و نقد) در میانگین می‌آید؛ چک، تسویه هیبرید با شرکت، انتقال بین‌بانکی، وام و سهامداران جدا هستند.",
+            "breakdown": breakdown,
+            "rule": "ورودی فقط وصول از مشتری نهایی (حواله و نقد) است و همین در میانگین و پیش‌بینی می‌آید. سهامداران، تسویه هیبرید با شرکت، فروش مواد اولیه و سایر ورودی‌ها، چک، انتقال بین‌بانکی، وام و واریزی نامشخص حساب نمی‌شوند.",
         }
         return self._envelope({"base_days": (end - start).days, "channel": channel, "method": method},
                               data, sources, warnings)
@@ -470,20 +541,23 @@ class CashMovementService:
                 "month_comparison": self._month_comparison([r for r in outflow if r.classification.category == cat]),
             })
         categories.sort(key=lambda c: -c["total_rial"])
+        breakdown = _flow_breakdown(rows, start, end, "outflow")
 
         data = {
             "base_period": self._period(start, end),
             "total": stats,
             "forecast_basis": {
-                "median_daily_working_rial": stats["median_daily_rial"],
-                "rule": "میانه خروجی روزانه در روزهای کاری (بدون جمعه) × روزهای کاری افق؛ برچسب «برآوردی».",
+                "daily_working_rial": breakdown["daily"]["mean_daily_rial"],
+                "median_daily_rial": breakdown["daily"]["median_daily_rial"],
+                "rule": "میانگین خروجی روزانه در روزهای کاری (بدون جمعه) × روزهای کاری افق؛ برچسب «برآوردی». پرداخت‌های درشت و نامنظم (واردات، تأمین‌کننده) فقط در میانگین دیده می‌شوند.",
             },
             "month_comparison": self._month_comparison(outflow),
             "categories": categories,
             "by_channel": _labelled_totals(by_channel, "channel", CHANNEL_LABELS),
             "monthly_trend": self._monthly_trend(outflow, lambda r: r.classification.category),
             "hybrid_settlement": self._settlement(rows, start, end, channel),
-            "rule": "پرداخت چکی (بخش ۲)، حقوق (بخش ۵)، تسویه هیبرید با شرکت، انتقال بین‌بانکی و برداشت سهامداران در این بخش نیستند؛ تنخواه فقط یک‌بار و هنگام شارژ حساب می‌شود.",
+            "breakdown": breakdown,
+            "rule": "خروجی فقط خروجی‌های عملیاتی است و همین در میانگین و پیش‌بینی می‌آید. برداشت سهامداران، پرداخت هیبرید به شرکت‌های گروه و انتقال بین‌بانکی حساب نمی‌شوند؛ چک پرداختی و حقوق در پیش‌بینی جدا حساب می‌شوند؛ تنخواه فقط یک‌بار و هنگام شارژ حساب می‌شود.",
         }
         return self._envelope({"base_days": (end - start).days, "channel": channel, "category": category},
                               data, sources, warnings)

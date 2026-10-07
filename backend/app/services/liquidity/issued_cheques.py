@@ -3,9 +3,9 @@
 Management rules:
 - every open issued cheque is a certain outflow; there is no collection adjustment;
 - overdue open cheques up to 20 days land on today's outflow and get their own card.
-  Older ones are not counted: Rahkaran keeps thousands of cheques «open» for years (1,645B
-  toman older than 90 days on 1405/07/08) that were paid but never posted, so they go to a
-  «needs status review» list for treasury instead;
+  Older ones are not counted: they go to a «needs status review» list for treasury.  A
+  cheque cleared with Rahkaran's «DurationChange» document is paid, not open (that
+  document closed ~6,000 cheques the status text alone missed);
 - payment orders are not included, only cheques actually issued;
 - guarantee cheques are excluded;
 - cheques to «سهامداران» are drawn on the shareholders' personal accounts and payable to the
@@ -34,6 +34,7 @@ from typing import Any, Callable
 
 from sqlalchemy import text
 
+from app.services.liquidity.bank_balances import PERSONAL_PATTERNS, account_numbers
 from app.services.liquidity.cash_movements import CHANNEL_LABELS, CHANNEL_SYSTEMS, SYSTEM_CHANNEL, SalesChannel
 from app.utils.jalali import format_jalali_date
 
@@ -66,6 +67,17 @@ RAHKARAN_OPEN_ISSUED_SQL = text("""
     WHERE note.[NoteType] = 1
       AND note.[State] = 11
       AND status_link.[StatusDocumentID] IS NULL
+      -- Rahkaran clears an issued cheque with an approved «DurationChange» document that keeps
+      -- the due date («وصول چک», «پرداخت چک», …; the text is on the header, not the line).
+      -- The note itself stays in State 11, so without this ~6,000 paid cheques look open.
+      AND NOT EXISTS (
+          SELECT 1
+          FROM RPA3.[DurationChangePayableNote] AS dcp
+          INNER JOIN RPA3.[DurationChange] AS dc ON dc.[DurationChangeID] = dcp.[DurationChangeRef]
+          WHERE dcp.[PayableNoteRef] = note.[PayableNoteID]
+            AND dc.[ApproveState] = 3
+            AND CAST(dcp.[DueDate] AS date) = CAST(note.[DueDate] AS date)
+      )
       AND note.[NormalORGuarantee] = 1
       AND note.[DueDate] IS NOT NULL
       AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
@@ -84,6 +96,18 @@ KARAMAD_OPEN_ISSUED_SQL = text("""
       AND [DueDate] IS NOT NULL
       AND ISNULL([SLName], N'') NOT LIKE N'%تضمین%'
 """)
+
+
+# Rahkaran bank-account DLs named after a shareholder («سپه جاری 925800096659 نادر علیزاده»):
+# cheques drawn on them are labelled «شخصی» in the bank-account table.
+PERSONAL_ACCOUNTS_SQL = text("SELECT [Title] FROM FIN3.[DL] WHERE " + " OR ".join(
+    f"[Title] LIKE N'%{pattern}%'" for pattern in PERSONAL_PATTERNS))
+
+
+def fetch_personal_account_titles() -> list[str]:
+    from app.database.sqlserver import get_sqlserver_engine
+    with get_sqlserver_engine().connect() as connection:
+        return [r[0] for r in connection.execute(PERSONAL_ACCOUNTS_SQL)]
 
 
 def _as_date(value: Any) -> date | None:
@@ -143,10 +167,34 @@ def _public(cheque: dict[str, Any]) -> dict[str, Any]:
 
 class IssuedChequeService:
     def __init__(self, today: date | None = None, fetchers: dict[str, Fetcher] | None = None,
-                 cache_ttl_seconds: int = CACHE_TTL_SECONDS):
+                 cache_ttl_seconds: int = CACHE_TTL_SECONDS,
+                 fetch_personal_titles: Callable[[], list[str]] | None = None):
         self.today = today or date.today()
         self.fetchers = fetchers or DEFAULT_FETCHERS
         self.cache_ttl_seconds = cache_ttl_seconds
+        # Injected fetchers (tests) default to no personal accounts instead of the database.
+        self.fetch_personal_titles = fetch_personal_titles or (
+            fetch_personal_account_titles if fetchers is None else (lambda: []))
+
+    def _personal_numbers(self, refresh: bool) -> set[str]:
+        """Account numbers of the shareholders' personal accounts; empty if Rahkaran is down."""
+        try:
+            titles = self._load_named("personal_accounts", self.fetch_personal_titles, refresh)
+        except Exception:
+            return set()
+        return {number for title in titles for number in account_numbers(title)}
+
+    def _load_named(self, name: str, loader: Callable[[], Any], refresh: bool) -> Any:
+        key = (name, self.today)
+        now = time.monotonic()
+        with _cache_lock:
+            hit = _cache.get(key)
+            if hit and not refresh and now - hit[0] < self.cache_ttl_seconds:
+                return hit[1]
+        value = loader()
+        with _cache_lock:
+            _cache[key] = (now, value)
+        return value
 
     def _load(self, system: str, refresh: bool) -> list[dict[str, Any]]:
         key = (system, self.today)
@@ -308,6 +356,13 @@ class IssuedChequeService:
                          "weekday": day.weekday(), **self._sum(items)})
         peak = max(days, key=lambda d: d["amount_rial"], default=None)
 
+        personal_numbers = self._personal_numbers(refresh)
+
+        def is_personal(cheque: dict[str, Any]) -> bool:
+            digits = re.sub(r"\D", "", cheque["account_number"] or "")
+            return cheque["system"] == "rahkaran" and len(digits) >= 6 and any(
+                n.endswith(digits) or digits.endswith(n) for n in personal_numbers)
+
         accounts: dict[str, dict[str, Any]] = {}
         for c in counted + stale:
             key = c["bank_account_key"]
@@ -316,8 +371,7 @@ class IssuedChequeService:
                 "bank_name": c["bank_name"], "account_number": c["account_number"],
                 "overdue_rial": 0.0, "next_7_days_rial": 0.0, "next_30_days_rial": 0.0,
                 "next_90_days_rial": 0.0, "open_count": 0, "needs_review_rial": 0.0,
-                # Filled from bank balances in the summary step (step 5).
-                "balance_rial": None, "coverage_percent": None,
+                "personal_account": is_personal(c),
             })
             d = c["days_to_due"]
             if self._needs_review(c):

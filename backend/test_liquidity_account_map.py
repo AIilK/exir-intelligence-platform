@@ -28,6 +28,13 @@ def test_shareholders_and_loans_are_financing_but_installments_are_outflow():
     assert _pair(classify("rahkaran", "outflow", "412001")) == ("outflow", "loan_installments", 1)
 
 
+def test_fx_cash_desk_export_receipts_and_foreign_supplier_payments():
+    assert _pair(classify("rahkaran", "inflow", "123010")) == ("inflow", "customer_collection", 1)
+    assert _pair(classify("rahkaran", "outflow", "511008")) == ("outflow", "imports", 1)
+    # dollars from/to the shareholders stay financing, like every shareholder movement
+    assert _pair(classify("rahkaran", "inflow", "512029", "950031")) == ("financing", "shareholders", 1)
+
+
 def test_currency_blocking_is_imports_net_of_returns():
     assert _pair(classify("rahkaran", "outflow", "116001")) == ("outflow", "imports", 1)
     assert _pair(classify("rahkaran", "inflow", "116001")) == ("outflow", "imports", -1)
@@ -60,10 +67,11 @@ def test_fx_bought_by_the_hybrid_for_the_company_is_imports():
     assert _pair(classify("karamad", "outflow", "3112", note="fx_purchase")) == ("outflow", "imports", 1)
 
 
-def test_payroll_counted_once_and_karamad_payroll_ignored():
+def test_payroll_of_both_systems_is_counted_once_in_the_payroll_section():
     assert _pair(classify("rahkaran", "outflow", "512002")) == ("excluded", "payroll_section", 1)
-    assert _pair(classify("karamad", "outflow", "3220")) == ("excluded", "karamad_payroll_ignored", 1)
-    assert _pair(classify("karamad", "outflow", "3216")) == ("excluded", "karamad_payroll_ignored", 1)
+    assert _pair(classify("karamad", "outflow", "3220")) == ("excluded", "payroll_section", 1)
+    assert _pair(classify("karamad", "outflow", "3216")) == ("excluded", "payroll_section", 1)
+    assert _pair(classify("karamad", "outflow", "3238")) == ("excluded", "payroll_section", 1)
 
 
 def test_petty_cash_staff_advances_and_expense_fallbacks():
