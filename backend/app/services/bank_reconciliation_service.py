@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Iterable
 import csv
 from datetime import date, datetime, timedelta
@@ -1027,6 +1028,110 @@ def _cheque_serial_matches(
     return any(token in bank_text for token in item_tokens)
 
 
+# بانک سپه سریال چک را به شکل «چ ش/سری/سریال» در شرح می‌آورد.
+_BANK_CHEQUE_SERIAL_PATTERN = re.compile(r"چ\s*ش\s*/\s*\d+\s*/\s*(\d{4,})")
+
+
+def _bank_cheque_serials(bank_row: dict[str, Any]) -> set[str]:
+    """Explicit cheque serials stated by the bank (leading zeros removed)."""
+
+    raw = unicodedata.normalize(
+        "NFKC",
+        str(bank_row.get("description") or ""),
+    ).translate(_PERSIAN_DIGITS)
+    serials = {
+        serial.lstrip("0")
+        for serial in _BANK_CHEQUE_SERIAL_PATTERN.findall(raw)
+    }
+    cheque_number = re.sub(
+        r"\D",
+        "",
+        str(bank_row.get("cheque_number") or "").translate(_PERSIAN_DIGITS),
+    )
+    if len(cheque_number) >= 5:
+        serials.add(cheque_number.lstrip("0"))
+    return {serial for serial in serials if serial}
+
+
+def _transaction_cheque_serials(transaction: dict[str, Any]) -> set[str]:
+    """Serial candidates of a Rahkaran cheque event.
+
+    ItemNumber شامل سریال، سری و شناسه صیادی است و ترتیب آن در همه منابع یکسان
+    نیست؛ توکن‌های ۵ تا ۱۲ رقمی (بدون شناسه ۱۶ رقمی صیادی) نامزد سریال‌اند.
+    """
+
+    if transaction.get("transaction_type") not in {
+        "received_cheque_status",
+        "issued_cheque_status",
+    }:
+        return set()
+    return {
+        token.lstrip("0")
+        for token in re.findall(r"\d+", str(transaction.get("item_number") or ""))
+        if 5 <= len(token.lstrip("0")) <= 12
+    }
+
+
+def _cheque_serial_contradicts(
+    bank_row: dict[str, Any],
+    transaction: dict[str, Any],
+) -> bool:
+    """Bank names one cheque serial and the Rahkaran cheque has another."""
+
+    transaction_serials = _transaction_cheque_serials(transaction)
+    if not transaction_serials:
+        return False
+    bank_serials = _bank_cheque_serials(bank_row)
+    return bool(bank_serials) and not (transaction_serials & bank_serials)
+
+
+def _cheque_serial_token_matches(
+    bank_row: dict[str, Any],
+    transaction: dict[str, Any],
+) -> bool:
+    """Rahkaran cheque serial appears as a whole number token in bank text."""
+
+    transaction_serials = _transaction_cheque_serials(transaction)
+    if not transaction_serials:
+        return False
+    bank_text = unicodedata.normalize(
+        "NFKC",
+        " ".join(
+            str(bank_row.get(key) or "")
+            for key in ("description", "reference", "cheque_number")
+        ),
+    ).translate(_PERSIAN_DIGITS)
+    return bool(
+        transaction_serials
+        & {token.lstrip("0") for token in re.findall(r"\d+", bank_text)}
+    )
+
+
+def _document_lists_bank_serial(
+    bank_row: dict[str, Any],
+    transaction: dict[str, Any],
+) -> bool:
+    """Receipt/payment text lists the bank's cheque serial.
+
+    نمونه: سند دریافت «نقد کردن چکهای 956902-...-857248» که سریال‌ها را در
+    شرح آورده و ItemNumber آن سریال چک نیست.
+    """
+
+    if transaction.get("transaction_type") not in {"receipt", "payment"}:
+        return False
+    bank_serials = _bank_cheque_serials(bank_row)
+    if not bank_serials:
+        return False
+    text_value = unicodedata.normalize(
+        "NFKC",
+        str(transaction.get("description") or ""),
+    ).translate(_PERSIAN_DIGITS)
+    document_tokens = {
+        token.lstrip("0") for token in re.findall(r"\d{4,}", text_value)
+    }
+    return bool(bank_serials & document_tokens)
+
+
 def _reference_matches(
     bank_row: dict[str, Any],
     transaction: dict[str, Any],
@@ -1215,6 +1320,10 @@ def _is_received_cheque_collection_transaction(transaction: dict[str, Any]) -> b
             for key in ("description", "reference_ref")
         )
     )
+    # «مشکوک الوصول / سنواتی و مشکوک وصول» نام گروه طرف‌حساب در اسناد «برگ
+    # دریافت چک» است، نه رویداد وصول.
+    for label in ("مشکوک الوصول", "مشکوکالوصول", "مشکوک وصول"):
+        normalized = normalized.replace(label, " ")
     markers = (
         "وصولی",
         "وصول",
@@ -1239,7 +1348,12 @@ def _transaction_type_is_compatible(
         # خود ردیف بانک باید صراحتاً رویداد چک باشد. فیلتر SQL فقط رویدادهای
         # تاییدشده و محتملِ وصول را وارد Candidate می‌کند؛ سریال/شرح/مبلغ/تاریخ
         # در امتیازدهی برای انتخاب یکتا استفاده می‌شوند.
-        return _is_bank_cheque_event(bank_row)
+        # چک هم‌بانک (مثلاً سپه به سپه) در صورت‌حساب به شکل «انتقال وجه ... از
+        # 0149 679540» می‌آید؛ اگر سریال چک راهکاران به‌صورت عدد مستقل در
+        # متن بانک باشد، رویداد چکی محسوب می‌شود.
+        return _is_bank_cheque_event(bank_row) or _cheque_serial_token_matches(
+            bank_row, transaction
+        )
     if transaction.get("transaction_type") == "issued_cheque_status":
         if _is_bank_issued_cheque_event(bank_row):
             return True
@@ -1277,11 +1391,17 @@ def _candidate_score(
         return None
     if abs(transaction["amount"] - bank_row["amount"]) > Decimal("0.01"):
         return None
+    # بانک سریال چک را صریحاً گفته و چک راهکاران سریال دیگری دارد؛ این دو
+    # یک چک نیستند، حتی اگر مبلغ و تاریخ برابر باشد.
+    if _cheque_serial_contradicts(bank_row, transaction):
+        return None
 
     day_difference = _closest_day_difference(bank_row, transaction)
     if day_difference is None:
         return None
-    cheque_serial_match = _cheque_serial_matches(bank_row, transaction)
+    cheque_serial_match = _cheque_serial_matches(
+        bank_row, transaction
+    ) or _document_lists_bank_serial(bank_row, transaction)
     # تاریخ ثبت تغییر وضعیت چک صادرشده در راهکاران همیشه تاریخ برداشت بانک
     # نیست. در نمونه واقعی بانک تجارت، ثبت وضعیت تا ۳۷ روز بعد انجام شده است.
     # وقتی حساب، جهت، مبلغ و سریال چک همگی دقیق‌اند، فاصله زمانی تا ۴۵ روز
@@ -1369,6 +1489,8 @@ def _review_candidate_score(
 
     expected_effect = 1 if bank_row["direction"] == "deposit" else 2
     if transaction["effect"] != expected_effect:
+        return None
+    if _cheque_serial_contradicts(bank_row, transaction):
         return None
 
     day_difference = _closest_day_difference(bank_row, transaction)
@@ -1478,6 +1600,7 @@ def _serialize_transaction(transaction: dict[str, Any]) -> dict[str, Any]:
         "counterpart_account_ref": transaction.get("counterpart_account_ref"),
         "counterpart_account_name": transaction.get("counterpart_account_name"),
         "member_transaction_ids": transaction.get("member_transaction_ids", []),
+        "member_documents": transaction.get("member_documents", []),
     }
 
 
@@ -1496,6 +1619,8 @@ def _is_fee_text(value: Any) -> bool:
         "هزینه حسابرسی",
         # Bank Mellat cheque assignment/service-fee wording.
         "واگذاری چک",
+        # Bank Sepah: «دريافت وجه واگذاري و واگذاري» بدون واژه کارمزد.
+        "دریافت وجه واگذاری",
     )
     return any(description in normalized for description in fee_descriptions)
 
@@ -1589,7 +1714,35 @@ def _match_bank_reversal_pairs(
             and candidates[1][0] == 1
             and candidates[1][1] >= candidates[0][1] - 0.05
         ):
-            continue
+            tied = [
+                candidate
+                for candidate in candidates
+                if candidate[0] == 1
+                and candidate[1] >= candidates[0][1] - 0.05
+            ]
+            # برداشت‌های هم‌مبلغ، هم‌روز و هم‌شرح از هم قابل تفکیک نیستند؛
+            # انتخاب هر کدام نتیجه یکسانی دارد. نزدیک‌ترین برداشت قبل از برگشت
+            # انتخاب می‌شود (نمونه: دو کارمزد ۵٬۰۰۰ پل و یک برگشت).
+            if (
+                len(
+                    {
+                        _normalize_text(candidate[3].get("description"))
+                        for candidate in tied
+                    }
+                )
+                != 1
+            ):
+                continue
+            preceding = [
+                candidate
+                for candidate in tied
+                if candidate[3]["row_number"] < reversal["row_number"]
+            ]
+            candidates = [
+                max(preceding, key=lambda candidate: candidate[3]["row_number"])
+                if preceding
+                else min(tied, key=lambda candidate: candidate[3]["row_number"])
+            ]
 
         _, _, withdrawal_index, withdrawal = candidates[0]
         used_withdrawals.add(withdrawal_index)
@@ -1792,6 +1945,54 @@ def _aggregate_fee_documents(
     return aggregates
 
 
+def _combine_fee_documents(
+    bank_date: date,
+    documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge several same-day Rahkaran fee documents into one match target."""
+
+    ordered = sorted(documents, key=lambda document: str(document.get("document_number") or ""))
+    first = ordered[0]
+    return {
+        **first,
+        "transaction_id": f"fee_documents:{bank_date.isoformat()}",
+        "document_id": None,
+        "document_number": " + ".join(
+            str(document.get("document_number") or "") for document in ordered
+        ),
+        "item_number": " + ".join(
+            str(document.get("item_number") or "")
+            for document in ordered
+            if document.get("item_number") not in (None, "")
+        ),
+        "amount": sum((document["amount"] for document in ordered), Decimal("0")),
+        "entry_amount": sum(
+            (document.get("entry_amount", document["amount"]) for document in ordered),
+            Decimal("0"),
+        ),
+        "gl_amount": sum(
+            (document.get("gl_amount", Decimal("0")) for document in ordered),
+            Decimal("0"),
+        ),
+        "description": " | ".join(
+            f"سند {document.get('document_number')}: {document['amount']:,.0f}"
+            for document in ordered
+        ),
+        "member_transaction_ids": [
+            member_id
+            for document in ordered
+            for member_id in document.get("member_transaction_ids", [])
+        ],
+        "member_documents": [
+            {
+                "document_number": document.get("document_number"),
+                "amount": float(document["amount"]),
+            }
+            for document in ordered
+        ],
+    }
+
+
 def _match_daily_fee_groups(
     bank_rows: list[dict[str, Any]],
     transactions: list[dict[str, Any]],
@@ -1922,6 +2123,24 @@ def _match_daily_fee_groups(
                 if len(full_group_candidates) == 1:
                     date_documents.remove(selected)
                 break
+
+            # خزانه گاهی کارمزدهای یک روز را در چند سند جدا ثبت می‌کند (مثلاً
+            # کارمزد واگذاری چک در یک سند و کارمزد پایا/پل در سند دیگر). اگر
+            # جمع همه اسناد کارمزد همان روز با جمع کارمزدهای بانک برابر باشد،
+            # کل گروه سندخورده است.
+            if len(date_documents) > 1:
+                combined_total = sum(
+                    (document["amount"] for document in date_documents),
+                    Decimal("0"),
+                )
+                if abs(combined_total - group_total) <= Decimal("0.01"):
+                    store_group_result(
+                        group,
+                        _combine_fee_documents(bank_date, date_documents),
+                        [],
+                    )
+                    date_documents = []
+                    break
 
             # گاهی یک کارمزد سند مستقل دارد و بقیه کارمزدهای همان روز در یک
             # سند تجمیعی ثبت شده‌اند. ابتدا جفت مبلغ یکتای مستقل را جدا می‌کنیم
@@ -2541,6 +2760,326 @@ def _match_bank_rows(
     return ordered_results, used_transactions
 
 
+_FEE_KINDS = (
+    ("ساتنا", "کارمزد ساتنا"),
+    ("پایا", "کارمزد پایا"),
+    ("دستور پرداخت سمت متعهد", "کارمزد پل (دستور پرداخت)"),
+    ("واگذاری", "کارمزد واگذاری چک"),
+)
+
+
+def _fee_kind(description: Any) -> str:
+    normalized = _normalize_text(description)
+    for marker, label in _FEE_KINDS:
+        if marker in normalized:
+            return label
+    return "سایر کارمزد بانکی"
+
+
+def _attach_fee_details(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Tag each bank fee with its kind and the transfer it was charged for.
+
+    بانک کارمزد پایا/پل/ساتنا را بلافاصله کنار گردش اصلی و با همان تاریخ و
+    ساعت ثبت می‌کند؛ کارمزد واگذاری چک هنگام تحویل چک به بانک کسر می‌شود و
+    گردش اصلی در صورت‌حساب ندارد.
+    """
+
+    for result in results:
+        result.setdefault("is_fee", False)
+        result.setdefault("fee_amount", 0.0)
+        result.setdefault("fee_row_numbers", [])
+
+    by_kind: dict[str, dict[str, Any]] = {}
+    for index, result in enumerate(results):
+        if result.get("direction") != "withdrawal" or not _is_fee_text(
+            result.get("description")
+        ):
+            continue
+        kind = _fee_kind(result.get("description"))
+        result["is_fee"] = True
+        result["fee_kind"] = kind
+        if result.get("business_status") == "reversed":
+            result["fee_note"] = "کارمزد توسط بانک برگشت خورده است"
+            continue
+
+        summary = by_kind.setdefault(
+            kind,
+            {"kind": kind, "count": 0, "amount": 0.0, "posted_count": 0},
+        )
+        summary["count"] += 1
+        summary["amount"] += float(result["amount"])
+        if result.get("business_status") == "posted":
+            summary["posted_count"] += 1
+
+        parent = None
+        if result.get("time"):
+            for offset in (1, -1, 2, -2, 3, -3):
+                neighbour_index = index - offset
+                if not 0 <= neighbour_index < len(results):
+                    continue
+                neighbour = results[neighbour_index]
+                if (
+                    neighbour.get("bank_date") == result.get("bank_date")
+                    and neighbour.get("time") == result.get("time")
+                    and not _is_fee_text(neighbour.get("description"))
+                    and not _is_reversal_text(neighbour.get("description"))
+                ):
+                    parent = neighbour
+                    break
+        if parent is None:
+            result["fee_parent_row_number"] = None
+            if kind == "کارمزد واگذاری چک":
+                result["fee_note"] = "کارمزد تحویل هر برگ چک به بانک (گردش اصلی در صورت‌حساب ندارد)"
+            continue
+        result["fee_parent_row_number"] = parent["row_number"]
+        result["fee_parent_amount"] = parent["amount"]
+        result["fee_parent_description"] = parent.get("description", "")
+        result["fee_rate_percent"] = (
+            round(float(result["amount"]) / float(parent["amount"]) * 100, 4)
+            if parent.get("amount")
+            else None
+        )
+        parent["fee_amount"] = float(parent.get("fee_amount") or 0) + float(
+            result["amount"]
+        )
+        parent["fee_row_numbers"].append(result["row_number"])
+        parent["related_fee_kind"] = kind
+
+    return {
+        "by_kind": sorted(by_kind.values(), key=lambda item: -item["amount"]),
+        "total_count": sum(item["count"] for item in by_kind.values()),
+        "total_amount": sum(item["amount"] for item in by_kind.values()),
+    }
+
+
+def _load_book_ledger(
+    connection: Any,
+    bank_account: Any,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """GL lines of the bank account's level-4 DL for the statement fiscal year."""
+
+    account_digits = re.sub(r"\D", "", _as_text(bank_account["Number"]))
+    dl_rows = connection.execute(
+        text(
+            """
+            SELECT DLID, Code, Title
+            FROM FIN3.DL
+            WHERE ReferenceID = :bank_account_id
+            """
+        ),
+        {"bank_account_id": bank_account["BankAccountID"]},
+    ).mappings().all()
+    dl_row = next(
+        (
+            row
+            for row in dl_rows
+            if account_digits
+            and account_digits in re.sub(r"\D", "", _as_text(row["Title"]))
+        ),
+        None,
+    )
+    if dl_row is None:
+        return {
+            "available": False,
+            "message": "تفصیلی حساب بانک در راهکاران با شماره حساب پیدا نشد.",
+        }
+    lines = connection.execute(
+        text(
+            """
+            SELECT
+                v.Date AS VoucherDate,
+                v.Number AS VoucherNumber,
+                vi.RowNumber,
+                ISNULL(vi.Debit, 0) AS Debit,
+                ISNULL(vi.Credit, 0) AS Credit,
+                vi.Description
+            FROM FIN3.VoucherItem vi
+            INNER JOIN FIN3.Voucher v
+                ON v.VoucherID = vi.VoucherRef
+            WHERE vi.DLLevel4 = :dl_code
+              AND v.FiscalYearRef IN (
+                  SELECT DISTINCT FiscalYearRef
+                  FROM FIN3.Voucher
+                  WHERE Date >= :start_date AND Date < :end_date
+              )
+              AND v.Date < :end_date
+            ORDER BY v.Date, v.Number, vi.RowNumber
+            """
+        ),
+        {
+            "dl_code": dl_row["Code"],
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    ).mappings().all()
+    running = Decimal("0")
+    ledger_lines = []
+    for line in lines:
+        net = Decimal(str(line["Debit"] or 0)) - Decimal(str(line["Credit"] or 0))
+        running += net
+        voucher_date = line["VoucherDate"]
+        if isinstance(voucher_date, datetime):
+            voucher_date = voucher_date.date()
+        ledger_lines.append(
+            {
+                "date": voucher_date,
+                "voucher_number": _as_text(line["VoucherNumber"]),
+                "net": net,
+                "balance": running,
+            }
+        )
+    return {
+        "available": True,
+        "dl_code": _as_text(dl_row["Code"]),
+        "dl_title": _as_text(dl_row["Title"]),
+        "lines": ledger_lines,
+    }
+
+
+def _attach_balances(
+    results: list[dict[str, Any]],
+    ledger: dict[str, Any],
+) -> dict[str, Any]:
+    """Bank vs Rahkaran book balance, per day and through each matched document."""
+
+    if not ledger.get("available"):
+        return {
+            "available": False,
+            "message": ledger.get("message", ""),
+        }
+    lines: list[dict[str, Any]] = ledger["lines"]
+    line_dates = [line["date"] for line in lines]
+
+    def book_balance_at_end_of(day: date) -> Decimal:
+        position = bisect_right(line_dates, day) - 1
+        return lines[position]["balance"] if position >= 0 else Decimal("0")
+
+    ascending = (
+        not results
+        or results[0]["bank_date"] <= results[-1]["bank_date"]
+    )
+    bank_end_of_day: dict[str, float] = {}
+    for result in results if ascending else reversed(results):
+        if result.get("balance") is not None:
+            bank_end_of_day[result["bank_date"]] = result["balance"]
+
+    daily = []
+    for bank_day, bank_balance in sorted(bank_end_of_day.items()):
+        book_balance = book_balance_at_end_of(date.fromisoformat(bank_day))
+        difference = Decimal(str(bank_balance)) - book_balance
+        daily.append(
+            {
+                "date": bank_day,
+                "date_jalali": format_jalali_date(date.fromisoformat(bank_day)),
+                "bank_balance": float(bank_balance),
+                "book_balance": float(book_balance),
+                "difference": float(difference),
+                "matched": abs(difference) <= Decimal("0.01"),
+            }
+        )
+    daily_by_date = {item["date"]: item for item in daily}
+
+    used_lines: set[int] = set()
+    line_by_transaction: dict[str, int | None] = {}
+
+    def find_line(amount: Decimal, sign: int, days: set[date]) -> int | None:
+        for position, line in enumerate(lines):
+            if position in used_lines or line["date"] not in days:
+                continue
+            if abs(line["net"] - sign * amount) <= Decimal("0.01"):
+                used_lines.add(position)
+                return position
+        return None
+
+    for result in results:
+        day_item = daily_by_date.get(result["bank_date"])
+        if day_item:
+            result["bank_day_end_balance"] = day_item["bank_balance"]
+            result["book_day_end_balance"] = day_item["book_balance"]
+            result["day_balance_difference"] = day_item["difference"]
+            result["day_balance_matched"] = day_item["matched"]
+            if result.get("business_status") == "unposted" and day_item["matched"]:
+                result["reasons"] = list(result.get("reasons") or []) + [
+                    "مانده پایان روز بانک با مانده دفتر راهکاران برابر است؛ "
+                    "سند احتمالاً به شکل تجمیعی یا با شرح متفاوت ثبت شده است"
+                ]
+
+        transaction = result.get("matched_transaction")
+        if not transaction or result.get("business_status") not in {
+            "posted",
+            "needs_review",
+            "internal_transfer",
+        }:
+            continue
+        transaction_id = transaction["transaction_id"]
+        if transaction_id not in line_by_transaction:
+            days = {
+                date.fromisoformat(value[:10])
+                for value in (
+                    transaction.get("booking_date"),
+                    transaction.get("settlement_date"),
+                )
+                if value
+            }
+            members = transaction.get("member_documents") or [
+                {"amount": transaction["amount"]}
+            ]
+            sign = 1 if transaction.get("effect") == 1 else -1
+            positions = [
+                find_line(Decimal(str(member["amount"])), sign, days)
+                for member in members
+            ]
+            line_by_transaction[transaction_id] = (
+                max(positions)
+                if positions and all(position is not None for position in positions)
+                else None
+            )
+        position = line_by_transaction[transaction_id]
+        if position is not None:
+            line = lines[position]
+            result["book_balance_after_document"] = float(line["balance"])
+            result["book_voucher_number"] = line["voucher_number"]
+            result["book_balance_basis"] = "سطر سند حسابداری"
+        elif transaction.get("booking_date"):
+            booking_day = date.fromisoformat(transaction["booking_date"][:10])
+            result["book_balance_after_document"] = float(
+                book_balance_at_end_of(booking_day)
+            )
+            result["book_voucher_number"] = None
+            result["book_balance_basis"] = "پایان روز سند"
+
+    unmatched_days = [item for item in daily if not item["matched"]]
+    return {
+        "available": True,
+        "dl_code": ledger["dl_code"],
+        "dl_title": ledger["dl_title"],
+        "day_count": len(daily),
+        "matched_day_count": len(daily) - len(unmatched_days),
+        "unmatched_day_count": len(unmatched_days),
+        "first_unmatched_date": (
+            unmatched_days[0]["date"] if unmatched_days else None
+        ),
+        "first_unmatched_date_jalali": (
+            unmatched_days[0]["date_jalali"] if unmatched_days else None
+        ),
+        "last_matched_date_jalali": next(
+            (
+                item["date_jalali"]
+                for item in reversed(daily)
+                if item["matched"]
+                and (
+                    not unmatched_days
+                    or item["date"] < unmatched_days[0]["date"]
+                )
+            ),
+            None,
+        ),
+        "daily": daily,
+    }
+
+
 def reconcile_bank_statement(
     *,
     content: bytes,
@@ -2873,6 +3412,36 @@ def reconcile_bank_statement(
           AND COALESCE(tr.PaymentDate, td.Date) >= :start_date
           AND COALESCE(tr.PaymentDate, td.Date) < :end_date
 
+        UNION ALL
+
+        -- واریز وجه نقد صندوق به بانک (انتقال از صندوق به بانک) در
+        -- TransferCashMoney ثبت می‌شود، نه ReceiptDeposit یا TransferDeposit.
+        SELECT
+            N'cash_transfer_in' AS TransactionType,
+            tcm.TransferCashMoneyID AS ItemID,
+            tr.TransferID AS DocumentID,
+            tr.Number AS DocumentNumber,
+            tr.Date AS DocumentDate,
+            COALESCE(tcm.ReceiptDepositDate, tr.ReceiptDate, tr.Date) AS ItemDate,
+            COALESCE(
+                tcm.ReceiptOperationalCurrencyAmount,
+                tcm.ReceiptAmount
+            ) AS Amount,
+            tcm.ReceiptAmount AS CurrencyAmount,
+            tcm.ReceiptOperationalCurrencyAmount AS BaseCurrencyAmount,
+            tcm.ReceiptDepositNumber AS ItemNumber,
+            COALESCE(tcm.Description, N'') AS ItemDescription,
+            COALESCE(tr.Description, N'') AS DocumentDescription,
+            CAST(NULL AS bigint) AS AccountRef,
+            CAST(NULL AS nvarchar(1024)) AS CounterpartAccountName
+        FROM RPA3.TransferCashMoney tcm
+        INNER JOIN RPA3.Transfer tr
+            ON tr.TransferID = tcm.TransferRef
+        WHERE tcm.DestinationBankAccountRef = :bank_account_id
+          AND tr.State = 3
+          AND COALESCE(tcm.ReceiptDepositDate, tr.ReceiptDate, tr.Date) >= :start_date
+          AND COALESCE(tcm.ReceiptDepositDate, tr.ReceiptDate, tr.Date) < :end_date
+
         ORDER BY ItemDate, TransactionType, ItemID
         """
     )
@@ -2945,6 +3514,19 @@ def reconcile_bank_statement(
             transaction_query,
             parameters,
         ).mappings().all()
+        # کنترل مانده: خطای خواندن دفتر نباید مغایرت‌گیری تراکنش‌ها را متوقف کند.
+        try:
+            book_ledger = _load_book_ledger(
+                connection,
+                bank_account,
+                start_date,
+                end_date,
+            )
+        except Exception as error:  # noqa: BLE001
+            book_ledger = {
+                "available": False,
+                "message": f"خواندن مانده دفتر راهکاران ممکن نشد: {error}",
+            }
 
     transactions: list[dict[str, Any]] = []
     for row in transaction_rows:
@@ -2989,6 +3571,8 @@ def reconcile_bank_statement(
                     else "transfer_deposit_amount"
                     if transaction_type
                     in {"bank_transfer_in", "bank_transfer_out"}
+                    else "transfer_cash_money_amount"
+                    if transaction_type == "cash_transfer_in"
                     else "receipt_payment_deposit_amount"
                 ),
                 "effect": (
@@ -2998,6 +3582,7 @@ def reconcile_bank_statement(
                         "receipt",
                         "received_cheque_status",
                         "bank_transfer_in",
+                        "cash_transfer_in",
                     }
                     else 2
                 ),
@@ -3010,6 +3595,7 @@ def reconcile_bank_statement(
                         "issued_cheque_status": "PayableNoteTransaction",
                         "bank_transfer_in": "TransferDeposit",
                         "bank_transfer_out": "TransferDeposit",
+                        "cash_transfer_in": "TransferCashMoney",
                     }[transaction_type]
                 ),
                 "reference_ref": " ".join(
@@ -3029,6 +3615,8 @@ def reconcile_bank_statement(
         result["bank_date_jalali"] = format_jalali_date(
             result.get("bank_date")
         )
+    fee_summary = _attach_fee_details(results)
+    book_balance = _attach_balances(results, book_ledger)
     file_info["statement_period_jalali"] = (
         f"{format_jalali_date(min(row['date'] for row in bank_rows))} تا "
         f"{format_jalali_date(max(row['date'] for row in bank_rows))}"
@@ -3310,7 +3898,9 @@ def reconcile_bank_statement(
             "counts": counts,
             "amounts": amounts,
             "unmatched_erp_count": len(unmatched_erp),
+            "fee_summary": fee_summary,
         },
+        "book_balance": book_balance,
         "rows": results,
         "unmatched_erp_transactions": unmatched_erp,
         "unmatched_raahkaran_items": unmatched_erp,

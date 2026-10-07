@@ -173,6 +173,145 @@ class KaramadDistributionService:
             "undistributed": sorted(undistributed, key=lambda x: -(x["days_waiting"] or 0)),
         }
 
+    # ------------------------------------------------------------- per-invoice timeline
+    def timeline(self, days: int = 14) -> dict[str, Any]:
+        """زمان‌بندی توزیع هر فاکتور: تاریخ فاکتور، ثبت در سیستم، ثبت حواله خروج و تاریخ خروج.
+
+        - ثبت فاکتور = tblFactorF.CreateDate (ساعت واقعی ثبت؛ ممکن است بعد از تاریخ فاکتور باشد).
+        - ثبت حواله خروج = اولین «ذخیره خروج کالا از انبار با شناسه{ID}» در tblUsersLogs؛
+          tblExit خودش زمان ثبت ندارد. چند ذخیره = حواله بعداً ویرایش شده است.
+        - لاگ‌هایی که ساعت کامپیوترشان اشتباه است (مثلاً سال ۲۰۴۹) کنار گذاشته می‌شوند.
+        """
+        safe_days = max(1, min(int(days), 90))
+        key = ("timeline", safe_days)
+        with _lock:
+            hit = _month_cache.get(key)
+            if hit and time.time() - hit[0] < CACHE_SECONDS:
+                return hit[1]
+        data = self._timeline(safe_days)
+        with _lock:
+            _month_cache[key] = (time.time(), data)
+        return data
+
+    def _timeline(self, days: int) -> dict[str, Any]:
+        from datetime import datetime, timedelta
+        today = date.today()
+        start = today - timedelta(days=days)
+        prefix = "ذخیره خروج کالا از انبار با شناسه"
+        with self.engine.connect() as connection:
+            rows = connection.execute(text(
+                """
+                WITH inv AS (
+                    SELECT f.[ID], f.[Code], f.[DateE], f.[CreateDate], f.[FactorPriceP], f.[ExitRef], f.[UserRef],
+                           f.[BranchRef], f.[CustomerRef], f.[VisitorRef]
+                    FROM dbo.[tblFactorF] f
+                    WHERE f.[DateE] >= :start AND f.[FactorPriceP] >= :min_amount
+                      AND NOT EXISTS (SELECT 1 FROM dbo.[tblFactorB] rb WHERE rb.[FactorFRef] = f.[ID]
+                                      GROUP BY rb.[FactorFRef] HAVING SUM(rb.[FactorPriceP]) >= f.[FactorPriceP])
+                ),
+                exit_log AS (
+                    SELECT s.[ExitID], MIN(s.[Date]) AS FirstSave, MAX(s.[Date]) AS LastSave, COUNT(*) AS Saves
+                    FROM (
+                        SELECT l.[Date],
+                               TRY_CONVERT(int, LTRIM(RTRIM(REPLACE(SUBSTRING(l.[Description], LEN(:prefix) + 1, 30), N'-', N'')))) AS ExitID
+                        FROM dbo.[tblUsersLogs] l
+                        WHERE l.[Description] LIKE :prefix + N'%'
+                          AND l.[Date] >= DATEADD(day, -3, :start) AND l.[Date] < DATEADD(day, 1, GETDATE())
+                    ) s
+                    WHERE s.[ExitID] IS NOT NULL
+                    GROUP BY s.[ExitID]
+                )
+                SELECT i.[ID], i.[Code], i.[DateE], i.[CreateDate], i.[FactorPriceP],
+                       b.[Name] AS BranchName, cu.[Name] AS CustomerName, cu.[Code] AS CustomerCode,
+                       v.[Name] AS VisitorName, iu.[Name] AS InvoiceUser,
+                       e.[ID] AS ExitID, e.[Code] AS ExitCode, e.[DateE] AS ExitDate, e.[DisDateE] AS DistributionDate,
+                       e.[Status] AS ExitStatus, eu.[Name] AS ExitUser,
+                       dl.[Name] AS DeliverName, dl2.[Name] AS Deliver2Name, dr.[Name] AS DriverName,
+                       lg.[FirstSave], lg.[LastSave], lg.[Saves],
+                       (SELECT COUNT(*) FROM dbo.[tblFactorF] ff WHERE ff.[ExitRef] = e.[ID]) AS ExitInvoiceCount
+                FROM inv i
+                LEFT JOIN dbo.[tblBranch] b ON b.[ID] = i.[BranchRef]
+                LEFT JOIN dbo.[tblCustomer] cu ON cu.[ID] = i.[CustomerRef]
+                LEFT JOIN dbo.[tblVisitor] v ON v.[ID] = i.[VisitorRef]
+                LEFT JOIN dbo.[tblUser] iu ON iu.[ID] = i.[UserRef]
+                LEFT JOIN dbo.[tblExit] e ON e.[ID] = i.[ExitRef]
+                LEFT JOIN dbo.[tblUser] eu ON eu.[ID] = e.[UserRef]
+                LEFT JOIN dbo.[tblDeliver] dl ON dl.[ID] = e.[DeliverRef]
+                LEFT JOIN dbo.[tblDeliver] dl2 ON dl2.[ID] = e.[Deliver2Ref]
+                LEFT JOIN dbo.[tblDriver] dr ON dr.[ID] = e.[DriverRef]
+                LEFT JOIN exit_log lg ON lg.[ExitID] = e.[ID]
+                ORDER BY i.[CreateDate] DESC, i.[ID] DESC
+                """
+            ), {"start": start, "min_amount": MIN_LAST_INVOICE_AMOUNT_RIAL, "prefix": prefix}).mappings().all()
+
+        def stamp(value: Any) -> dict[str, Any] | None:
+            if not isinstance(value, datetime):
+                return None
+            return {"iso": value.isoformat(timespec="minutes"), "date_jalali": format_jalali_date(value),
+                    "time": value.strftime("%H:%M")}
+
+        def hours_between(a: Any, b: Any) -> float | None:
+            if not isinstance(a, datetime) or not isinstance(b, datetime):
+                return None
+            return round(max(0.0, (b - a).total_seconds() / 3600.0), 1)
+
+        invoices = []
+        for r in rows:
+            invoice_date = _as_date(r["DateE"])
+            exit_date = _as_date(r["ExitDate"])
+            created = r["CreateDate"]
+            exit_saved = r["FirstSave"]
+            if r["ExitID"] is None:
+                stage = "waiting"
+            elif exit_date and exit_date > today:
+                stage = "scheduled"
+            else:
+                stage = "dispatched"
+            invoices.append({
+                "invoice_id": int(r["ID"]),
+                "number": _text(r["Code"]),
+                "branch_name": _text(r["BranchName"]),
+                "customer_name": _text(r["CustomerName"]),
+                "customer_code": _text(r["CustomerCode"]),
+                "visitor_name": _text(r["VisitorName"]),
+                "amount_rial": _num(r["FactorPriceP"]),
+                "stage": stage,
+                "invoice_date_jalali": format_jalali_date(invoice_date),
+                "invoice_created": stamp(created),
+                "invoice_user": _text(r["InvoiceUser"]),
+                "exit_id": int(r["ExitID"]) if r["ExitID"] is not None else None,
+                "exit_code": _text(r["ExitCode"]),
+                "exit_registered": stamp(exit_saved),
+                "exit_last_edit": stamp(r["LastSave"]) if (r["Saves"] or 0) > 1 else None,
+                "exit_save_count": int(r["Saves"] or 0),
+                "exit_user": _text(r["ExitUser"]),
+                "exit_date_jalali": format_jalali_date(exit_date),
+                "distribution_date_jalali": format_jalali_date(r["DistributionDate"]),
+                "exit_status": None if r["ExitStatus"] is None else int(bool(r["ExitStatus"])),
+                "exit_invoice_count": int(r["ExitInvoiceCount"] or 0),
+                "deliver_name": _text(r["DeliverName"]),
+                "deliver2_name": _text(r["Deliver2Name"]),
+                "driver_name": _text(r["DriverName"]),
+                "registration_delay_days": (created.date() - invoice_date).days
+                if isinstance(created, datetime) and invoice_date else None,
+                "hours_to_exit_registration": hours_between(created, exit_saved),
+                "days_invoice_to_exit": max(0, (exit_date - invoice_date).days) if exit_date and invoice_date else None,
+                "days_waiting": (today - invoice_date).days if stage == "waiting" and invoice_date else None,
+            })
+        return {
+            "status": "success",
+            "days": days,
+            "from_date_jalali": format_jalali_date(start),
+            "to_date_jalali": format_jalali_date(today),
+            "branches": sorted({x["branch_name"] for x in invoices if x["branch_name"]}),
+            "invoices": invoices,
+            "notes": [
+                "ثبت فاکتور = ساعت واقعی ثبت در کارآمد؛ ثبت حواله = اولین ذخیره حواله خروج در لاگ کاربران کارآمد.",
+                "تاریخ خروج = تاریخ حواله خروج؛ تاریخ توزیع = تاریخ توزیع روی همان حواله.",
+                "فاکتورهای صفر/جایزه‌ای و فاکتورهای کاملاً مرجوع‌شده نمایش داده نمی‌شوند.",
+            ],
+        }
+
     def _overview(self) -> dict[str, Any]:
         today = date.today()
         with self.engine.connect() as connection:

@@ -10,6 +10,8 @@ import "./monthly-excel.css";
 import "./agent.css";
 import "./readability-fix.css";
 import "./customer-reliability.css";
+import "./agents-v171.css";
+import { AgentAlertsCenter, AgentPredictions, AgentTeam, PageAgentCard } from "./page-agents";
 import "./font-size-v36.css";
 import "./drilldown.css";
 import "./folder-automation.css";
@@ -288,6 +290,7 @@ type Case = {
   promises?: any[];
 };
 type Pack = {
+  report_id?: string;
   status?: string;
   generated_at?: string;
   agents?: Record<string, AgentResult>;
@@ -1612,6 +1615,170 @@ function MonthlyDistributionReport() {
   </section>;
 }
 
+// زمان‌بندی توزیع هر فاکتور: تاریخ فاکتور ← ثبت فاکتور ← ثبت حواله خروج ← خروج بار.
+const TIMELINE_STAGES = [
+  ["all", "همه فاکتورها"],
+  ["waiting", "در انتظار حواله خروج"],
+  ["dispatched", "حواله و خروج ثبت شده"],
+  ["scheduled", "خروج برای روزهای آینده"],
+] as const;
+type TimelineStage = (typeof TIMELINE_STAGES)[number][0];
+const TIMELINE_PAGE = 60;
+
+function hoursLabel(hours?: number | null): string {
+  if (hours === null || hours === undefined) return "—";
+  if (hours < 1) return "کمتر از ۱ ساعت";
+  if (hours < 24) return `${fa(Math.round(hours))} ساعت`;
+  const d = Math.floor(hours / 24), h = Math.round(hours % 24);
+  return h ? `${fa(d)} روز و ${fa(h)} ساعت` : `${fa(d)} روز`;
+}
+
+const faDigits = (value: string) => value.replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+const stampLabel = (stamp: any) => stamp ? `${stamp.date_jalali} • ساعت ${faDigits(stamp.time)}` : "";
+
+function TimelineStep({ label, stamp, date, sub, state }: {
+  label: string; stamp?: any; date?: string | null; sub?: string; state: "done" | "pending" | "late";
+}) {
+  return <div className={`dt-step ${state}`}>
+    <i />
+    <small>{label}</small>
+    <b>{stamp?.date_jalali || date || "—"}</b>
+    {stamp?.time && <span>ساعت {faDigits(stamp.time)}</span>}
+    {sub && <em>{sub}</em>}
+  </div>;
+}
+
+function TimelineGap({ text, warn }: { text: string; warn?: boolean }) {
+  return <div className={`dt-gap${warn ? " warn" : ""}`}><span>{text}</span></div>;
+}
+
+function InvoiceDistributionTimeline({ branch, staleDays, onBranch }: { branch: string; staleDays: number; onBranch: (name: string) => void }) {
+  const [days, setDays] = useState(14);
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState("");
+  const [stage, setStage] = useState<TimelineStage>("all");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<"created" | "slowest">("created");
+  const [limit, setLimit] = useState(TIMELINE_PAGE);
+  const [open, setOpen] = useState<number | null>(null);
+  useEffect(() => {
+    let active = true;
+    setData(null); setError("");
+    request(`/distribution/timeline?days=${days}`)
+      .then((d) => { if (active) setData(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "دریافت زمان‌بندی توزیع ناموفق بود"); });
+    return () => { active = false; };
+  }, [days]);
+  useEffect(() => { setLimit(TIMELINE_PAGE); setOpen(null); }, [branch, stage, search, sort, days]);
+
+  const all: any[] = (data?.invoices || []).filter((x: any) => !branch || x.branch_name === branch);
+  const sum = (items: any[]) => items.reduce((s, x) => s + Number(x.amount_rial || 0), 0);
+  const byStage = (k: TimelineStage) => k === "all" ? all : all.filter((x) => x.stage === k);
+  const exited = all.filter((x) => x.hours_to_exit_registration !== null && x.hours_to_exit_registration !== undefined);
+  const hours = exited.map((x) => x.hours_to_exit_registration).sort((a, b) => a - b);
+  const median = hours.length ? hours[Math.floor(hours.length / 2)] : null;
+  const sameDay = exited.filter((x) => x.invoice_created?.date_jalali === x.exit_registered?.date_jalali).length;
+  const leads = all.filter((x) => typeof x.days_invoice_to_exit === "number");
+  const avgLead = leads.length ? leads.reduce((s, x) => s + x.days_invoice_to_exit, 0) / leads.length : 0;
+  const lateRegistered = all.filter((x) => (x.registration_delay_days || 0) > 0);
+  const waitingAge = (x: any) => x.stage === "waiting" ? Number(x.days_waiting || 0) * 24 : Number(x.hours_to_exit_registration ?? 0);
+
+  const q = search.trim().toLocaleLowerCase("fa-IR");
+  const visible = byStage(stage)
+    .filter((x) => !q || [x.number, x.customer_name, x.customer_code, x.visitor_name, x.deliver_name, x.driver_name, x.exit_code]
+      .filter(Boolean).some((v) => String(v).toLocaleLowerCase("fa-IR").includes(q)))
+    .sort((a, b) => sort === "slowest" ? waitingAge(b) - waitingAge(a) : String(b.invoice_created?.iso || "").localeCompare(String(a.invoice_created?.iso || "")));
+
+  return <section className="cf-section dt-section">
+    <div className="cf-title">
+      <div><h3>زمان‌بندی توزیع هر فاکتور{branch ? ` — ${branch}` : ""}</h3>
+        <p>برای هر فاکتور: تاریخ فاکتور، ساعت ثبت در کارآمد، ساعت ثبت حواله خروج و تاریخ خروج بار؛ فاصله هر مرحله روی خط زمان نوشته شده است. روی هر ردیف کلیک کنید تا جزئیات حواله، موزع، راننده و ثبت‌کننده را ببینید.</p></div>
+      <div className="distribution-controls">
+        {data && <label>شعبه: <select value={branch} onChange={(e) => onBranch(e.target.value)}>
+          <option value="">همه شعب</option>{(data.branches || []).map((b: string) => <option key={b} value={b}>{b}</option>)}
+        </select></label>}
+        <label>بازه: <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+          {[7, 14, 30, 60].map((d) => <option key={d} value={d}>{fa(d)} روز اخیر</option>)}
+        </select></label>
+        <label>مرتب‌سازی: <select value={sort} onChange={(e) => setSort(e.target.value as "created" | "slowest")}>
+          <option value="created">جدیدترین ثبت</option><option value="slowest">کندترین توزیع</option>
+        </select></label>
+      </div>
+    </div>
+    {error ? <div className="profile-warning">{error}</div> : !data ? <div className="profile-loading">در حال ساخت خط زمان فاکتورها از کارآمد...</div> : <>
+      <div className="dt-stage-cards">
+        {TIMELINE_STAGES.map(([k, l]) => <button key={k} className={`${stage === k ? "active" : ""} dt-stage-${k}`} onClick={() => setStage(k)}>
+          <small>{l}</small><b>{fa(byStage(k).length)} فاکتور</b><span>{fullToman(sum(byStage(k)))} تومان</span>
+        </button>)}
+      </div>
+      <div className="cf-kpis">
+        <article><small>میانه ثبت فاکتور تا ثبت حواله</small><b>{hoursLabel(median)}</b><span>{fa(exited.length)} فاکتور حواله‌شده</span></article>
+        <article><small>حواله در همان روز ثبت فاکتور</small><b>{fa(exited.length ? Math.round(100 * sameDay / exited.length) : 0)}٪</b><span>{fa(sameDay)} فاکتور</span></article>
+        <article><small>میانگین تاریخ فاکتور تا خروج بار</small><b>{fa(Math.round(avgLead * 10) / 10)} روز</b><span>بر اساس تاریخ حواله خروج</span></article>
+        <article className={lateRegistered.length ? "cf-accent-red" : undefined}><small>فاکتورهایی که دیرتر از تاریخشان ثبت شده‌اند</small><b>{fa(lateRegistered.length)} فاکتور</b><span>ساعت ثبت بعد از روز تاریخ فاکتور</span></article>
+      </div>
+      <section className="cash-bank-toolbar cheque-list-search customer-search-toolbar collection-alert-filters">
+        <div><b>جستجو</b><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="شماره فاکتور، مشتری، ویزیتور، موزع یا کد حواله..." /></div>
+        <small>{fa(visible.length)} فاکتور • {fullToman(sum(visible))} تومان • {data.from_date_jalali} تا {data.to_date_jalali}</small>
+      </section>
+      {visible.length ? <div className="dt-list">
+        {visible.slice(0, limit).map((x) => {
+          const waiting = x.stage === "waiting";
+          const stale = waiting && Number(x.days_waiting || 0) > staleDays;
+          const late = (x.registration_delay_days || 0) > 0;
+          const expanded = open === x.invoice_id;
+          return <article key={x.invoice_id} className={`dt-row${stale ? " stale" : ""}${expanded ? " open" : ""}`}
+            role="button" tabIndex={0} onClick={() => setOpen(expanded ? null : x.invoice_id)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(expanded ? null : x.invoice_id); } }}>
+            <header>
+              <div className="dt-invoice">
+                <b>فاکتور {x.number || "—"}</b>
+                <span className={`dt-badge ${x.stage}`}>{waiting ? `در انتظار حواله • ${fa(x.days_waiting || 0)} روز` : x.stage === "scheduled" ? "خروج در روزهای آینده" : "خارج شده"}</span>
+              </div>
+              <div className="dt-customer"><b>{x.customer_name || "—"}</b><small>کد {x.customer_code || "—"} • ویزیتور: {x.visitor_name || "—"}{branch ? "" : ` • ${x.branch_name || "—"}`}</small></div>
+              <div className="dt-amount"><b>{fullToman(x.amount_rial)}</b><small>تومان</small></div>
+            </header>
+            <div className="dt-track">
+              <TimelineStep label="تاریخ فاکتور" date={x.invoice_date_jalali} state="done" />
+              <TimelineGap text={late ? `${fa(x.registration_delay_days)} روز بعد` : "همان روز"} warn={late} />
+              <TimelineStep label="ثبت فاکتور در سیستم" stamp={x.invoice_created} sub={x.invoice_user || undefined} state={late ? "late" : "done"} />
+              <TimelineGap text={waiting ? `${fa(x.days_waiting || 0)} روز در انتظار` : hoursLabel(x.hours_to_exit_registration)} warn={stale || (x.hours_to_exit_registration || 0) > staleDays * 24} />
+              <TimelineStep label="ثبت حواله خروج" stamp={x.exit_registered} date={waiting ? "ثبت نشده" : undefined}
+                sub={waiting ? undefined : `حواله ${x.exit_code || "—"}${x.exit_save_count > 1 ? ` • ${fa(x.exit_save_count - 1)} بار ویرایش` : ""}`}
+                state={waiting ? (stale ? "late" : "pending") : "done"} />
+              <TimelineGap text={waiting ? "" : x.exit_date_jalali && x.exit_registered?.date_jalali && x.exit_date_jalali !== x.exit_registered.date_jalali ? "تاریخ خروج متفاوت" : "همان روز"} />
+              <TimelineStep label="خروج بار / توزیع" date={waiting ? "—" : x.exit_date_jalali}
+                sub={waiting ? undefined : [x.deliver_name, x.driver_name && x.driver_name !== x.deliver_name ? `راننده: ${x.driver_name}` : ""].filter(Boolean).join(" • ") || undefined}
+                state={waiting ? "pending" : x.stage === "scheduled" ? "pending" : "done"} />
+            </div>
+            {expanded && <dl className="dt-detail" onClick={(e) => e.stopPropagation()}>
+              <div><dt>ثبت‌کننده فاکتور</dt><dd>{x.invoice_user || "—"}</dd></div>
+              <div><dt>ساعت ثبت فاکتور</dt><dd>{stampLabel(x.invoice_created) || "—"}</dd></div>
+              {!waiting && <>
+                <div><dt>کد حواله خروج</dt><dd>{x.exit_code || "—"} <small>({fa(x.exit_invoice_count)} فاکتور در این حواله)</small></dd></div>
+                <div><dt>ثبت‌کننده حواله</dt><dd>{x.exit_user || "—"}</dd></div>
+                <div><dt>اولین ثبت حواله</dt><dd>{stampLabel(x.exit_registered) || "در لاگ کارآمد پیدا نشد"}</dd></div>
+                <div><dt>آخرین ویرایش حواله</dt><dd>{stampLabel(x.exit_last_edit) || "ویرایش نشده"}</dd></div>
+                <div><dt>تاریخ حواله خروج</dt><dd>{x.exit_date_jalali || "—"}</dd></div>
+                <div><dt>تاریخ توزیع</dt><dd>{x.distribution_date_jalali || "—"}</dd></div>
+                <div><dt>موزع</dt><dd>{x.deliver_name || "—"}{x.deliver2_name && x.deliver2_name !== x.deliver_name ? ` • موزع دوم: ${x.deliver2_name}` : ""}</dd></div>
+                <div><dt>راننده</dt><dd>{x.driver_name || "—"}</dd></div>
+                <div><dt>وضعیت حواله در کارآمد</dt><dd>«{fa(x.exit_status ?? 0)}»</dd></div>
+                <div><dt>ثبت فاکتور تا ثبت حواله</dt><dd>{hoursLabel(x.hours_to_exit_registration)}</dd></div>
+              </>}
+              {waiting && <div><dt>وضعیت</dt><dd className={stale ? "cf-debt" : undefined}>{fa(x.days_waiting || 0)} روز از تاریخ فاکتور گذشته و هنوز حواله خروج ندارد</dd></div>}
+            </dl>}
+          </article>;
+        })}
+        {visible.length > limit && <button className="rc-secondary dt-more" onClick={() => setLimit((n) => n + TIMELINE_PAGE)}>
+          نمایش {fa(Math.min(TIMELINE_PAGE, visible.length - limit))} فاکتور دیگر (از {fa(visible.length - limit)} باقی‌مانده)
+        </button>}
+      </div> : <div className="invoice-source-pending">فاکتوری با این فیلترها نیست.</div>}
+      <p className="dt-notes">{(data.notes || []).join(" ")}</p>
+    </>}
+  </section>;
+}
+
 // توزیع بار (Karamad): invoices with no exit document yet, open exits, invoice-to-exit speed, distributors.
 // Clicking a branch scopes the whole page to that hybrid.
 function DistributionPage() {
@@ -1632,8 +1799,12 @@ function DistributionPage() {
     setSelected(name); setSearch(""); setOnlyStale(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  if (error) return <div className="profile-warning">{error}</div>;
-  if (!data) return <div className="profile-loading">در حال دریافت اطلاعات توزیع بار از کارآمد...</div>;
+  // خط زمان فاکتورها درخواست جداگانه دارد و منتظر خلاصه توزیع (کندتر) نمی‌ماند.
+  if (error || !data) return <>
+    {selected && <button className="cheque-back" onClick={() => pick("")}>→ بازگشت به همه شعب</button>}
+    <InvoiceDistributionTimeline branch={selected} staleDays={staleDays} onBranch={pick} />
+    {error ? <div className="profile-warning">{error}</div> : <div className="profile-loading">در حال دریافت خلاصه توزیع بار از کارآمد...</div>}
+  </>;
 
   const inScope = (x: any) => !selected || x.branch_name === selected;
   const allRows: any[] = data.undistributed || [];
@@ -1671,8 +1842,9 @@ function DistributionPage() {
   const scopeLabel = selected || "همه شعب";
 
   return <>
-    {!selected && <MonthlyDistributionReport />}
     {selected && <button className="cheque-back" onClick={() => pick("")}>→ بازگشت به همه شعب</button>}
+    <InvoiceDistributionTimeline branch={selected} staleDays={staleDays} onBranch={pick} />
+    {!selected && <MonthlyDistributionReport />}
     <section className="cf-section">
       <div className="cf-title">
         <div><h3>{selected ? `توزیع بار ${selected}` : "خلاصه توزیع بار"} — سال {String(data.fiscal_year_label).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)])}</h3><p>{(data.notes || []).join(" ")}</p></div>
@@ -1859,13 +2031,18 @@ function CompanyPaymentOrders() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [monthsBack, setMonthsBack] = useState("همه");
+  const [source, setSource] = useState<"all" | "rahkaran" | "karamad">("all");
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    setLoading(true);
-    treasuryRequest("/payment-orders/company?limit=5000")
-      .then(setData).catch((e) => setError(e instanceof Error ? e.message : "خطا در دریافت حواله‌ها"))
-      .finally(() => setLoading(false));
-  }, []);
+    let active = true;
+    setLoading(true); setError(""); setState("همه"); setCategory("همه");
+    treasuryRequest(`/payment-orders/company?limit=5000&source=${source}`)
+      .then((d) => { if (active) setData(d); })
+      .catch((e) => { if (active) setError(e instanceof Error ? e.message : "خطا در دریافت حواله‌ها"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [source]);
+  const sourceLabel = source === "rahkaran" ? "راهکاران" : source === "karamad" ? "کارآمد" : "راهکاران و کارآمد";
   const rows = data?.rows || [];
   const categories = ["همه", ...Array.from(new Set(rows.map((x:any) => x.category))).filter(Boolean)] as string[];
   const states = ["همه", ...Array.from(new Set(rows.map((x:any) => String(x.state)))).filter(Boolean)] as string[];
@@ -1879,9 +2056,11 @@ function CompanyPaymentOrders() {
     };
     return labels[code] || (code ? `وضعیت ${fa(code)}` : "نامشخص");
   };
+  const stateLabels = new Map<string, string>(rows.filter((x:any) => x.state_label && x.source === "karamad").map((x:any) => [String(x.state), x.state_label]));
+  const stateFa = (value:any) => stateLabels.get(String(value)) || paymentOrderStateFa(value);
   const viewRows = rows.filter((x:any) => {
     const q = search.trim().toLowerCase();
-    const hay = `${x.payment_order_number || ""} ${x.counterpart_name || ""} ${x.counterpart_code || ""} ${x.description || ""}`.toLowerCase();
+    const hay = `${x.payment_order_number || ""} ${x.counterpart_name || ""} ${x.counterpart_code || ""} ${x.description || ""} ${x.bank_name || ""} ${x.registered_by || ""}`.toLowerCase();
     const orderDate = String(x.order_date || "").slice(0,10);
     let monthsOk = true;
     if (monthsBack !== "همه" && orderDate) {
@@ -1908,14 +2087,15 @@ function CompanyPaymentOrders() {
     return acc;
   }, {});
   return <section className="company-payments-page">
-    <div className="section-head"><div><small>RAHKARAN · RPA3.PaymentOrder</small><h2>حواله‌های پرداختی شرکت</h2><p>نمای یکپارچه حواله‌های پرداخت راهکاران با تفکیک طرف حساب، دسته، وضعیت و روش پرداخت.</p></div></div>
+    <div className="section-head"><div><small>{source === "karamad" ? "KARAMAD · tblDraftP / tblCashP / tblChequeP" : source === "rahkaran" ? "RAHKARAN · RPA3.PaymentOrder" : "RAHKARAN + KARAMAD"}</small><h2>حواله‌های پرداختی شرکت</h2><p>نمای یکپارچه پرداخت‌های {sourceLabel} با تفکیک طرف حساب، دسته، وضعیت و روش پرداخت.</p></div></div>
     {error && <div className="fd-errors"><span>{error}</span></div>}
-    {loading ? <div className="panel">در حال دریافت حواله‌های راهکاران…</div> : <>
+    {(data?.errors || []).map((m:string) => <div key={m} className="fd-errors"><span>{m}</span></div>)}
+    {loading ? <div className="panel">در حال دریافت پرداخت‌های {sourceLabel}…</div> : <>
       <div className="company-payment-kpis">
         <K t="کل حواله‌ها" v={fa(viewRows.length)} n="مطابق فیلتر فعلی" c="blue" />
         <K t="مبلغ کل" v={fullToman(filteredAmount)} n="تومان · مطابق فیلتر فعلی" c="teal" />
-        <K t="دارای تاریخ تأیید" v={fa(filteredApproved)} n="مطابق فیلتر فعلی" c="green" />
-        <K t="در انتظار تأیید" v={fa(filteredWaiting)} n="مطابق فیلتر فعلی" c="amber" />
+        <K t={source === "karamad" ? "سند حسابداری صادر شده" : "دارای تاریخ تأیید"} v={fa(filteredApproved)} n={source === "rahkaran" ? "مطابق فیلتر فعلی" : "کارآمد: صدور سند حسابداری"} c="green" />
+        <K t={source === "karamad" ? "بدون سند حسابداری" : "در انتظار تأیید"} v={fa(filteredWaiting)} n="مطابق فیلتر فعلی" c="amber" />
         <K t="نقد / بانکی" v={fa(filteredBankCash)} n="تعداد حواله در فیلتر فعلی" c="blue" />
         <K t="چکی" v={fa(filteredCheque)} n="تعداد حواله در فیلتر فعلی" c="red" />
       </div>
@@ -1923,9 +2103,14 @@ function CompanyPaymentOrders() {
         {Object.entries(filteredCategories).map(([name, v]:any) => <button key={name} className={category===name?"active":""} onClick={()=>setCategory(category===name?"همه":name)}><span>{name}</span><b>{fa(v.count)}</b><small>{fullToman(Number(v.amount||0))} تومان</small></button>)}
       </div>
       <div className="company-payment-filters">
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="جستجو: شماره حواله، طرف حساب، شرح…" />
+        <select value={source} onChange={e=>setSource(e.target.value as "all" | "rahkaran" | "karamad")} aria-label="منبع داده" title="منبع داده">
+          <option value="all">راهکاران + کارآمد</option>
+          <option value="rahkaran">فقط راهکاران</option>
+          <option value="karamad">فقط کارآمد</option>
+        </select>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="جستجو: شماره حواله، طرف حساب، شرح، بانک…" />
         <select value={category} onChange={e=>setCategory(e.target.value)}>{categories.map(x=><option key={x}>{x}</option>)}</select>
-        <select value={state} onChange={e=>setState(e.target.value)}>{states.map(x=><option key={x} value={x}>{x==="همه"?"همه وضعیت‌ها":paymentOrderStateFa(x)}</option>)}</select>
+        <select value={state} onChange={e=>setState(e.target.value)}>{states.map(x=><option key={x} value={x}>{x==="همه"?"همه وضعیت‌ها":stateFa(x)}</option>)}</select>
         <select value={monthsBack} onChange={e=>setMonthsBack(e.target.value)} aria-label="بازه چندماهه" title="بازه چندماهه">
           <option value="همه">همه بازه‌ها</option>
           <option value="1">۱ ماه اخیر</option>
@@ -1940,10 +2125,10 @@ function CompanyPaymentOrders() {
         <select value={method} onChange={e=>setMethod(e.target.value)}>{["همه","نقد/بانکی","چکی","ترکیبی","نامشخص"].map(x=><option key={x}>{x}</option>)}</select>
       </div>
       <div className="company-payment-filter-summary"><b>{fa(viewRows.length)} حواله</b><span>{fullToman(filteredAmount)} تومان در فیلتر فعلی</span></div>
-      <div className="table-wrap"><table><thead><tr><th>تاریخ</th><th>شماره حواله</th><th>طرف حساب</th><th>دسته</th><th>وضعیت</th><th>روش</th><th>بانکی</th><th>نقد</th><th>چک</th><th>مبلغ</th><th>شرح</th></tr></thead><tbody>
-        {viewRows.map((x:any)=><tr key={x.payment_order_id}><td>{x.order_date_jalali || x.order_date?.slice(0,10) || "—"}</td><td><b>{x.payment_order_number}</b></td><td>{x.counterpart_name || `#${x.counterpart_ref || "—"}`}</td><td><span className="payment-category-chip">{x.category}</span></td><td>{paymentOrderStateFa(x.state)}</td><td>{x.payment_method}</td><td>{fullToman(Number(x.deposit_amount||0))}</td><td>{fullToman(Number(x.cash_amount||0))}</td><td>{fullToman(Number(x.cheque_amount||0))}</td><td><b>{fullToman(Number(x.calculated_amount||0))}</b></td><td className="payment-description">{x.description || "—"}</td></tr>)}
+      <div className="table-wrap"><table><thead><tr><th>تاریخ</th><th>منبع</th><th>شماره حواله</th><th>طرف حساب</th><th>دسته</th><th>وضعیت</th><th>روش</th><th>بانکی</th><th>نقد</th><th>چک</th><th>مبلغ</th><th>شرح</th></tr></thead><tbody>
+        {viewRows.map((x:any)=><tr key={x.payment_order_id}><td>{x.order_date_jalali || x.order_date?.slice(0,10) || "—"}</td><td><span className={`payment-source-chip ${x.source || "rahkaran"}`}>{x.source_label || "راهکاران"}</span></td><td><b>{x.payment_order_number}</b>{x.payment_kind_label && <small className="payment-subline">{x.payment_kind_label}</small>}</td><td>{x.counterpart_name || `#${x.counterpart_ref || "—"}`}{(x.bank_name || x.registered_by) && <small className="payment-subline">{[x.bank_name, x.registered_by && `ثبت: ${x.registered_by}`].filter(Boolean).join(" • ")}</small>}</td><td><span className="payment-category-chip">{x.category}</span></td><td>{x.source === "karamad" ? x.state_label : paymentOrderStateFa(x.state)}</td><td>{x.payment_method}</td><td>{fullToman(Number(x.deposit_amount||0))}</td><td>{fullToman(Number(x.cash_amount||0))}</td><td>{fullToman(Number(x.cheque_amount||0))}</td><td><b>{fullToman(Number(x.calculated_amount||0))}</b></td><td className="payment-description">{x.description || "—"}</td></tr>)}
       </tbody></table></div>
-      <p className="company-payment-note">دسته‌بندی فعلی مدیریتی و مبتنی بر شرح حواله است. وضعیت‌های ۴ و ۵ هر دو به‌عنوان «وضعیت نهایی» نمایش داده می‌شوند. فیلتر چندماهه نیز در کنار بازه تاریخ دستی قابل استفاده است.</p>
+      <p className="company-payment-note">دسته‌بندی فعلی مدیریتی و مبتنی بر شرح حواله است. وضعیت‌های ۴ و ۵ راهکاران هر دو به‌عنوان «وضعیت نهایی» نمایش داده می‌شوند. در کارآمد هر سند پرداخت (حواله بانکی، پرداخت نقدی صندوق، چک پرداختی) یک ردیف است؛ کارآمد تاریخ تأیید ندارد و «صدور سند حسابداری» به‌جای تأیید آمده، و دسته از روی تفصیلی طرف حساب تعیین می‌شود. فیلتر چندماهه نیز در کنار بازه تاریخ دستی قابل استفاده است.</p>
     </>}
   </section>;
 }
@@ -2119,6 +2304,7 @@ export default function Page() {
             </small>
           </div>
         )}
+        {view === "management" && <PageAgentCard key={pack?.report_id} agentKey="management" />}
         {view === "management" && (
           <Management
             manager={manager}
@@ -2133,6 +2319,7 @@ export default function Page() {
             openAgent={(key) => { setAgentFocus(key); setView("agents"); }}
           />
         )}
+        {view === "management" && <PageAgentCard key={`rec-${pack?.report_id}`} agentKey="reconciliation" defaultCollapsed />}
         {view === "customers" && (selected ? (
           <CustomerProfile c={selected} close={() => setSelected(null)} refresh={load} embedded />
         ) : (
@@ -2146,10 +2333,12 @@ export default function Page() {
             open={setView}
           />
         )}
+        {view === "receivedCheques" && <PageAgentCard key={pack?.report_id} agentKey="received_cheques" />}
         {view === "receivedCheques" && (
           <ChequeSourcePage kind="received" rows={received.length ? received : cheques}
             error={treasuryError} back={() => setView("cheques")} onUpdated={refreshAfterKaramadUpdate} />
         )}
+        {view === "issuedCheques" && <PageAgentCard key={pack?.report_id} agentKey="issued_cheques" />}
         {view === "issuedCheques" && (
           <ChequeSourcePage kind="issued" rows={issued}
             error={treasuryError} back={() => setView("cheques")} onUpdated={refreshAfterKaramadUpdate} />
@@ -2160,9 +2349,10 @@ export default function Page() {
         {view === "cashBank" && (
           <CashBankMovements agent={pack?.agents?.cash_bank_movement} />
         )}
-        {view === "companyPayments" && <CompanyPaymentOrders />}
-        {view === "b2bRemittances" && <B2BCustomerRemittances />}
-        {view === "distribution" && <DistributionPage />}
+        {view === "companyPayments" && <><PageAgentCard key={pack?.report_id} agentKey="company_payments" /><CompanyPaymentOrders /></>}
+        {view === "b2bRemittances" && <><PageAgentCard key={pack?.report_id} agentKey="b2b_remittances" /><B2BCustomerRemittances /></>}
+        {view === "distribution" && <><PageAgentCard key={pack?.report_id} agentKey="distribution" /><DistributionPage /></>}
+        {view === "monthlyExcel" && <PageAgentCard key={pack?.report_id} agentKey="daily_cash_excel" />}
         {view === "monthlyExcel" && (
           <MonthlyExcelAutomation chequeQuality={chequeQuality} />
         )}
@@ -2183,16 +2373,17 @@ export default function Page() {
         )}
         {view === "simulator" && (
           <>
-            <AgentPanel agent={pack?.agents?.scenario} />
+            <PageAgentCard key={pack?.report_id} agentKey="scenario" />
             <Simulator result={scenario} setResult={setScenario} />
           </>
         )}
-        {view === "alerts" && <Alerts rows={alerts} refresh={load} />}
+        {view === "alerts" && <><AgentAlertsCenter key={pack?.report_id} onOpenView={(v) => setView(v as View)} /><Alerts rows={alerts} refresh={load} /></>}
         {view === "history" && <History rows={history} />}
-        {view === "performance" && <Performance data={performance} />}
+        {view === "performance" && <><AgentPredictions key={pack?.report_id} onOpenView={(v) => setView(v as View)} /><Performance data={performance} /></>}
         {view === "settings" && (
           <Settings values={policies} setValues={setPolicies} />
         )}
+        {view === "agents" && <AgentTeam key={pack?.report_id} onOpenView={(v) => setView(v as View)} />}
         {view === "agents" && (
           <Agents agents={pack?.agents} manager={pack?.management_summary} focusKey={agentFocus} />
         )}
@@ -2425,7 +2616,7 @@ function CashBankMovements({ agent }: { agent?: AgentResult }) {
   const cashBranchOptions: string[] = summary.available_branches || [];
   return (
     <div className="cash-bank-page">
-      <AgentPanel agent={agent} />
+      <PageAgentCard agentKey="cash_bank_movement" />
       {<section className="cash-bank-toolbar fd-panel">
         <div>
           <b>بازه گزارش</b>
@@ -2546,6 +2737,10 @@ function CashBankMovements({ agent }: { agent?: AgentResult }) {
         <K t="حواله پرداختی" v={summary.bank_payment_total_rial == null ? "در انتظار گزارش" : fullToman(Number(summary.bank_payment_total_rial))} n={`تومان؛ شامل انتقال بانکی و تنخواه · ${approvalCaption}`} c="amber" />
         <K t="حواله پرداختی بدون انتقال بانکی" v={summary.bank_payment_excluding_transfer_rial == null ? "در انتظار گزارش" : fullToman(Number(summary.bank_payment_excluding_transfer_rial))} n={`تومان؛ کل حواله منهای انتقال بانک‌به‌بانک؛ تنخواه در این عدد باقی است · ${approvalCaption}`} c="red" />
       </section>
+      {Number(summary.karamad_settlement_adjustment_count || 0) > 0 && <p className="company-payment-note">
+        {fa(Number(summary.karamad_settlement_adjustment_count))} ردیف تسویه فاکتور کارآمد که فقط «تخفیف فاکتور» ({fullToman(Number(summary.karamad_settlement_discount_rial || 0))} تومان، حساب «تخفیفات حین تسویه») یا «اضافه فاکتور» ({fullToman(Number(summary.karamad_settlement_surplus_rial || 0))} تومان) داشتند در این گزارش نمی‌آیند؛ این‌ها جابه‌جایی پول نیستند و قبلاً با مبلغ صفر نمایش داده می‌شدند.
+      </p>}
+
       <article className="fd-panel commitment-summary">
         <Heading
           h="تعهدات پرداخت و اثر آن‌ها بر نقدینگی"
@@ -4121,6 +4316,10 @@ function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBac
     <button className="cheque-back" onClick={onBack}>→ بازگشت به انتخاب راهکاران یا کارآمد</button>
     <article className="fd-panel unified-customer-directory">
       <Heading h="هیبرید من‌ها و ویزیتورها — کارآمد" p="هر ردیف یک شعبه و هیبرید من‌های آن است؛ برای دیدن ویزیتورها، فروش، مطالبات و چک‌ها روی ردیف کلیک کنید." />
+      <div className="unrecorded-payments-bar">
+        <div><b>پرداخت‌های ثبت‌نشده احتمالی</b><small>مشتریانی که می‌گویند پرداخت کرده‌اند: واریزهای بی‌صاحب کارآمد، واریزهای ثبت‌شده به نام مشتری دیگر و مشتری پیشنهادی برای هر کدام (ساخت فایل حدود یک دقیقه).</small></div>
+        <a className="rc-primary" href={`${API()}/karamad/unrecorded-payments.xlsx`}>دانلود Excel</a>
+      </div>
       {error && <div className="profile-warning">{error}</div>}
       {!data && !error ? <div className="profile-loading">در حال دریافت شبکه فروش کارآمد...</div> : <>
         <div className="cf-kpis cf-directory-kpis">
@@ -4371,9 +4570,10 @@ function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "br
           ⚠ {fa(reviewRows.length)} فقره چک به مبلغ {money(reviewAmount)} تومان سررسیدشان بیش از {fa(REVIEW_TERM_DAYS)} روز بعد از تاریخ دریافت است و مبلغشان بالای {money(REVIEW_AMOUNT_RIAL)} تومان است؛ نیازمند بررسی بیشتر هستند.
         </div>}
         {chequeRows.length ? <div className="cf-table"><table>
-          <thead><tr><th>شماره چک</th><th>صیاد</th><th>مبلغ</th><th>تاریخ دریافت</th><th>سررسید</th><th>زمان سررسید</th><th>وضعیت</th><th>احتمال برگشت</th><th>بانک</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
+          <thead><tr><th>شماره چک</th><th>مشتری</th><th>صیاد</th><th>مبلغ</th><th>تاریخ دریافت</th><th>سررسید</th><th>زمان سررسید</th><th>وضعیت</th><th>احتمال برگشت</th><th>بانک</th>{kind === "branch" && <th>ویزیتور</th>}</tr></thead>
           <tbody>{chequeRows.map((x: any) => <tr key={x.cheque_id} className={needsChequeReview(x) ? "cf-review-row" : undefined}>
             <td><b>{x.cheque_number || "—"}</b></td>
+            <td><b>{x.customer_name || "—"}</b>{x.customer_code && <small>کد {x.customer_code}</small>}</td>
             <td>{x.sayad_number || "—"}</td>
             <td><b>{money(x.amount_rial || 0)}</b><small>تومان</small>{needsChequeReview(x) && <span className="cf-review-badge">⚠ نیازمند بررسی بیشتر</span>}</td>
             <td>{x.registration_date_jalali || "—"}</td>
@@ -4519,7 +4719,7 @@ function Customers({
 
   if (!customerSource) return (
     <>
-      <AgentPanel agent={agent} />
+      <PageAgentCard agentKey="customer_behavior" />
       <section className="cheque-hub-intro customer-source-intro">
         <div>
           <small>پرونده مشتری</small>
@@ -4548,14 +4748,14 @@ function Customers({
 
   if (customerSource === "karamad") return (
     <>
-      <AgentPanel agent={agent} />
+      <PageAgentCard agentKey="customer_behavior" />
       <SalesNetwork data={network} error={networkError} onBack={() => setCustomerSource(null)} />
     </>
   );
 
   return (
     <>
-      <AgentPanel agent={agent} />
+      <PageAgentCard agentKey="customer_behavior" />
       <button className="cheque-back" onClick={() => { setCustomerSource(null); setBranch(""); setSearch(""); setDebtFilter("all"); }}>→ بازگشت به انتخاب راهکاران یا کارآمد</button>
       <article className="fd-panel unified-customer-directory">
         <Heading
@@ -4719,7 +4919,7 @@ function Cashflow({ cash, agent, openAgent }: { cash?: any; agent?: AgentResult;
   const historicalChange = historical?.current_vs_previous || {};
   return (
     <>
-      <AgentPanel agent={agent} />
+      <PageAgentCard agentKey="cashflow" />
       <section className="cash-bank-toolbar fd-panel">
         <div>
           <b>بازهٔ پیش‌بینی از امروز تا آینده</b>
@@ -5106,7 +5306,7 @@ function Collections({
     <>
       <CollectionAlerts groups={groups} loading={!received.length} openCaseKeys={openCaseKeys} busyKey={busyKey} onCreateCase={createFromAlert} />
       {message && <div className="collection-case-message">{message}</div>}
-      <AgentPanel agent={agent} />
+      <PageAgentCard agentKey="collection" />
       <article className="fd-panel">
         <Heading
           h="ساخت پرونده وصول"
@@ -5261,7 +5461,7 @@ function Representatives({
 }) {
   return (
     <>
-      <AgentPanel agent={agent} />
+      <PageAgentCard agentKey="representative" />
       <div className="fd-kpis">
         <K t="نماینده فعال" v={fa(reps.length)} n="دارای Mapping" c="teal" />
         <K

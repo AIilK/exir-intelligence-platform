@@ -82,4 +82,67 @@
 .distribution-controls select,.distribution-controls input{padding:5px 8px;border-radius:8px;border:1px solid rgba(94,126,151,.35);background:rgba(255,255,255,.04);color:inherit;font:inherit}
 .distribution-controls input{width:64px;text-align:center}
 
+/* زمان‌بندی توزیع هر فاکتور */
+.dt-section .cf-kpis{margin-bottom:14px}
+.dt-stage-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 14px}
+.dt-stage-cards button{display:grid;gap:5px;text-align:right;padding:13px 14px;border-radius:14px;border:1px solid rgba(94,126,151,.25);background:rgba(255,255,255,.035);color:inherit;font:inherit;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.dt-stage-cards button:hover{border-color:rgba(95,168,211,.55)}
+.dt-stage-cards button.active{border-color:#19a994;background:rgba(25,169,148,.12);box-shadow:inset 0 0 0 1px #19a994}
+.dt-stage-cards button.dt-stage-waiting.active{border-color:#e0a43a;background:rgba(224,164,58,.12);box-shadow:inset 0 0 0 1px #e0a43a}
+.dt-stage-cards small{opacity:.72;font-size:12.5px}
+.dt-stage-cards b{font-size:17px}
+.dt-stage-cards span{opacity:.62;font-size:12px}
+.dt-list{display:grid;gap:10px;margin-top:12px}
+.dt-row{display:grid;gap:12px;padding:14px 16px;border:1px solid rgba(94,126,151,.22);border-radius:14px;background:rgba(255,255,255,.03);cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.dt-row:hover,.dt-row:focus-visible{border-color:rgba(95,168,211,.5);background:rgba(95,168,211,.06);outline:none}
+.dt-row.open{border-color:rgba(95,168,211,.6)}
+.dt-row.stale{border-color:rgba(223,98,105,.5);background:rgba(223,98,105,.06)}
+.dt-row header{display:grid;grid-template-columns:minmax(150px,auto) 1fr auto;gap:14px;align-items:center}
+.dt-invoice{display:grid;gap:5px;justify-items:start}
+.dt-invoice b{font-size:15px}
+.dt-customer{display:grid;gap:3px;min-width:0}
+.dt-customer b{overflow-wrap:anywhere}
+.dt-customer small,.dt-amount small{opacity:.62;font-size:12.5px}
+.dt-amount{display:grid;justify-items:end;gap:2px;white-space:nowrap}
+.dt-amount b{font-size:15px}
+.dt-badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;white-space:nowrap}
+.dt-badge.waiting{background:rgba(224,164,58,.16);color:#f2c46d}
+.dt-badge.dispatched{background:rgba(25,169,148,.16);color:#5fd6c2}
+.dt-badge.scheduled{background:rgba(95,168,211,.16);color:#8cc7ea}
+.dt-row.stale .dt-badge.waiting{background:rgba(223,98,105,.18);color:#ff9aa0}
+.dt-track{display:grid;grid-template-columns:1fr minmax(70px,.6fr) 1fr minmax(70px,.6fr) 1fr minmax(70px,.6fr) 1fr;align-items:start}
+.dt-step{position:relative;display:grid;gap:3px;justify-items:center;text-align:center;padding-top:22px;min-width:0}
+.dt-step i{position:absolute;top:2px;width:14px;height:14px;border-radius:50%;border:2px solid currentColor}
+.dt-step.done{color:#5fd6c2}
+.dt-step.done i{background:#19a994;border-color:#19a994}
+.dt-step.pending{color:rgba(160,180,195,.75)}
+.dt-step.pending i{border-style:dashed}
+.dt-step.late{color:#ff9aa0}
+.dt-step.late i{background:rgba(223,98,105,.35)}
+.dt-step small{opacity:.8;font-size:12px}
+.dt-step b{font-size:13.5px;color:var(--foreground,inherit)}
+.dt-step span{font-size:12px;opacity:.85}
+.dt-step em{font-style:normal;font-size:11.5px;opacity:.65;overflow-wrap:anywhere;max-width:100%}
+.dt-gap{position:relative;height:18px;margin-top:2px}
+.dt-gap::before{content:"";position:absolute;top:8px;inset-inline:-4px;border-top:2px solid rgba(94,126,151,.4)}
+.dt-gap.warn::before{border-top-color:rgba(223,98,105,.7)}
+.dt-gap span{position:absolute;top:14px;inset-inline:0;text-align:center;font-size:11.5px;opacity:.8;white-space:nowrap}
+.dt-gap.warn span{color:#ff9aa0;opacity:1}
+.dt-detail{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 18px;margin:0;padding:12px 14px;border-radius:12px;background:rgba(95,168,211,.07);cursor:default}
+.dt-detail div{display:grid;gap:2px}
+.dt-detail dt{font-size:12px;opacity:.62}
+.dt-detail dd{margin:0;font-size:13.5px}
+.dt-detail dd small{opacity:.62}
+.dt-more{justify-self:center;margin-top:4px}
+.dt-notes{margin:12px 0 0;font-size:12.5px;opacity:.6;line-height:1.8}
+@media(max-width:900px){
+  .dt-stage-cards{grid-template-columns:repeat(2,1fr)}
+  .dt-row header{grid-template-columns:1fr auto}
+  .dt-customer{grid-column:1/-1;grid-row:2}
+  .dt-track{grid-template-columns:1fr 1fr;gap:12px}
+  .dt-gap{display:none}
+}
+
 .cf-table tr.cf-debt-total-row td{background:rgba(95,168,211,.1);border-bottom:2px solid rgba(95,168,211,.35)}
+.unrecorded-payments-bar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:10px 0 14px;padding:12px 16px;border-radius:14px;border:1px solid rgba(240,163,60,.4);background:rgba(240,163,60,.08)}.unrecorded-payments-bar div{display:grid;gap:4px;max-width:760px}.unrecorded-payments-bar small{opacity:.75;line-height:1.8}.unrecorded-payments-bar a{white-space:nowrap;text-decoration:none}
+.unrecorded-payments-bar a{padding:9px 16px;border-radius:11px;background:#19a994;color:#fff;font-weight:700;font-size:13.5px}.unrecorded-payments-bar a:hover{background:#15907e}

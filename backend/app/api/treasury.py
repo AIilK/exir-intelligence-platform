@@ -1,6 +1,6 @@
 import logging
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import (
@@ -52,6 +52,7 @@ from app.services.treasury_service import (
     trace_received_cheque_mapping,
     get_latest_payments,
     get_company_payment_orders,
+    get_company_payment_orders_karamad,
     get_customer_b2b_remittances,
     get_customer_b2b_remittances_karamad,
     get_latest_received_cheques,
@@ -336,13 +337,36 @@ def latest_treasury_receipts(
         ) from exc
 
 
-@router.get("/payment-orders/company", summary="حواله‌های پرداختی شرکت در راهکاران")
-def company_payment_orders(limit: int = Query(default=1000, ge=1, le=5000)):
-    try:
-        return get_company_payment_orders(limit=limit)
-    except Exception as exc:
-        logger.exception("Company payment orders endpoint failed")
-        raise HTTPException(status_code=500, detail="دریافت حواله‌های پرداختی شرکت از راهکاران با خطا مواجه شد.") from exc
+@router.get("/payment-orders/company", summary="حواله‌های پرداختی شرکت در راهکاران و کارآمد")
+def company_payment_orders(
+    limit: int = Query(default=1000, ge=1, le=5000),
+    source: str = Query(default="rahkaran", pattern="^(rahkaran|karamad|all)$"),
+):
+    result: dict[str, Any] = {"status": "ok", "source": source, "rows": [], "errors": []}
+    if source in {"rahkaran", "all"}:
+        try:
+            result["rows"] += get_company_payment_orders(limit=limit)["rows"]
+        except Exception as exc:
+            logger.exception("Company payment orders (Rahkaran) failed")
+            if source == "rahkaran":
+                raise HTTPException(status_code=500, detail="دریافت حواله‌های پرداختی شرکت از راهکاران با خطا مواجه شد.") from exc
+            result["errors"].append("دریافت حواله‌های راهکاران ناموفق بود؛ فقط کارآمد نمایش داده شده است.")
+    if source in {"karamad", "all"}:
+        try:
+            # در حالت «هر دو» کارآمد همان بازه زمانی راهکاران را پوشش می‌دهد، نه فقط آخرین N ردیف خودش.
+            rahkaran_dates = [row["order_date"] for row in result["rows"] if row.get("order_date")]
+            since = min(rahkaran_dates)[:10] if source == "all" and rahkaran_dates else None
+            result["rows"] += get_company_payment_orders_karamad(
+                limit=20000 if since else limit,
+                since=since,
+            )["rows"]
+        except Exception as exc:
+            logger.exception("Company payment orders (Karamad) failed")
+            if source == "karamad":
+                raise HTTPException(status_code=500, detail="دریافت پرداخت‌های شرکت از کارآمد با خطا مواجه شد.") from exc
+            result["errors"].append("دریافت پرداخت‌های کارآمد ناموفق بود؛ فقط راهکاران نمایش داده شده است.")
+    result["rows"].sort(key=lambda row: str(row.get("order_date") or ""), reverse=True)
+    return result
 
 
 @router.get("/customer-b2b-remittances", summary="حواله‌ها و واریزهای B2B مشتریان")

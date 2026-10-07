@@ -185,6 +185,21 @@ class CashBankMovementService:
             karamad_petty_raw = karamad_live.get("petty_cash_movements", [])
         else:
             karamad_rows, karamad_transfers_raw, karamad_petty_raw = [], [], []
+        # فیلتر قطعی/غیرقطعی برای کارآمد هم اعمال می‌شود (قبلاً فقط راهکاران فیلتر می‌شد و همه ردیف‌های
+        # کارآمد زیر «غیرقطعی» هم می‌آمدند). دریافت‌های کارآمد پرچم Confirmed دارند؛ جدول‌های پرداخت
+        # این پرچم را ندارند و مثل قبل قطعی حساب می‌شوند.
+        def karamad_approval_ok(row: dict[str, Any]) -> bool:
+            unconfirmed = row.get("confirmed") is False or row.get("confirmed") == 0
+            if approval_status == "approved":
+                return not unconfirmed
+            if approval_status == "pending":
+                return unconfirmed
+            return True
+
+        karamad_rows = [row for row in karamad_rows if karamad_approval_ok(row)]
+        karamad_transfers_raw = [row for row in karamad_transfers_raw if karamad_approval_ok(row)]
+        karamad_petty_raw = [row for row in karamad_petty_raw if karamad_approval_ok(row)]
+        karamad_settlement = (karamad_live.get("summary") or {}) if source != "rahkaran" else {}
         karamad_operational = [self._karamad_payload(row) for row in karamad_rows if row.get("classification") == "operational"]
         karamad_transfers = [self._karamad_payload(row) for row in karamad_transfers_raw]
         karamad_petty = [self._karamad_payload(row) for row in karamad_petty_raw]
@@ -241,6 +256,9 @@ class CashBankMovementService:
             "filters": {"period": period, "approval_status": approval_status, "date_from": start.isoformat(), "date_to": end.isoformat(), "branch": branch, "source": source},
             "pagination": {"limit": limit, "offset": offset, "returned_count": len(page), "total_count": operational_count, "has_more": offset + len(page) < operational_count},
             "summary": {"inflow_rial": inflow, "outflow_rial": outflow, "net_rial": inflow - outflow,
+                        "karamad_settlement_adjustment_count": karamad_settlement.get("settlement_adjustment_count", 0),
+                        "karamad_settlement_discount_rial": karamad_settlement.get("settlement_discount_rial", 0),
+                        "karamad_settlement_surplus_rial": karamad_settlement.get("settlement_surplus_rial", 0),
                         "cash_receipt_rial": _number(float(total("cash_receipt")) + float(karamad_cash_receipt)),
                         "bank_receipt_rial": _number(float(total("bank_receipt")) + float(karamad_bank_receipt)),
                         "cash_payment_rial": _number(float(total("cash_payment")) + float(karamad_cash_payment)),

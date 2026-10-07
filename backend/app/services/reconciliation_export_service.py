@@ -49,7 +49,19 @@ _BANK_ROW_HEADERS = [
     "نوع سند راهکاران",
     "شناسه ردیف راهکاران",
     "شرح سند راهکاران",
+    "نوع کارمزد",
+    "ردیف گردش اصلی کارمزد",
+    "کارمزد این گردش (ریال)",
+    "مانده بانک بعد از ردیف",
+    "شماره سند حسابداری",
+    "مانده دفتر راهکاران تا این سند",
+    "مبنای مانده دفتر",
+    "مانده پایان روز بانک",
+    "مانده پایان روز دفتر",
+    "اختلاف مانده روز",
 ]
+
+_AMOUNT_COLUMNS = ("D", "L", "O", "S", "Y", "Z", "AB", "AD", "AE", "AF")
 
 _ERP_ONLY_HEADERS = [
     "نوع سند",
@@ -173,6 +185,16 @@ def _bank_row_values(row: dict[str, Any]) -> list[Any]:
         _transaction_type_label(transaction.get("transaction_type")),
         transaction.get("item_id", ""),
         transaction.get("description", ""),
+        row.get("fee_kind") or "",
+        row.get("fee_parent_row_number"),
+        row.get("fee_amount") or None,
+        row.get("balance"),
+        row.get("book_voucher_number") or "",
+        row.get("book_balance_after_document"),
+        row.get("book_balance_basis") or "",
+        row.get("bank_day_end_balance"),
+        row.get("book_day_end_balance"),
+        row.get("day_balance_difference"),
     ]
 
 
@@ -198,23 +220,19 @@ def _add_bank_status_sheet(
 
     if rows:
         _apply_table_style(sheet, 2, len(rows) + 1, len(_BANK_ROW_HEADERS))
-        sheet.auto_filter.ref = f"A1:V{len(rows) + 1}"
-        for cell in sheet["D"][1:]:
-            cell.number_format = "#,##0"
-        for cell in sheet["K"][1:]:
-            cell.number_format = "0"
-        for cell in sheet["L"][1:]:
-            cell.number_format = "#,##0"
-        for cell in sheet["M"][1:]:
-            cell.number_format = "0"
-        for cell in sheet["O"][1:]:
-            cell.number_format = "#,##0"
-        for cell in sheet["S"][1:]:
-            cell.number_format = "#,##0"
+        last_column = get_column_letter(len(_BANK_ROW_HEADERS))
+        sheet.auto_filter.ref = f"A1:{last_column}{len(rows) + 1}"
+        for column in _AMOUNT_COLUMNS:
+            for cell in sheet[column][1:]:
+                cell.number_format = "#,##0"
+        for column in ("K", "M"):
+            for cell in sheet[column][1:]:
+                cell.number_format = "0"
 
     _set_widths(
         sheet,
-        [10, 14, 11, 18, 46, 20, 22, 18, 18, 22, 15, 21, 13, 42, 17, 17, 20, 18, 19, 17, 18, 48],
+        [10, 14, 11, 18, 46, 20, 22, 18, 18, 22, 15, 21, 13, 42, 17, 17, 20, 18, 19, 17, 18, 48,
+         22, 14, 16, 20, 14, 22, 18, 20, 20, 18],
     )
 
 
@@ -249,6 +267,122 @@ def _add_erp_only_sheet(workbook: Workbook, report: dict[str, Any]) -> None:
         for cell in sheet["D"][1:]:
             cell.number_format = "#,##0"
     _set_widths(sheet, [13, 20, 18, 20, 18, 18, 52, 32, 24])
+
+
+def _add_daily_balance_sheet(workbook: Workbook, report: dict[str, Any]) -> None:
+    book_balance = report.get("book_balance") or {}
+    sheet = workbook.create_sheet("مانده روزانه")
+    _set_sheet_defaults(sheet)
+    sheet.sheet_properties.tabColor = "C6E0B4"
+    if not book_balance.get("available"):
+        sheet.append([book_balance.get("message") or "مانده دفتر راهکاران در دسترس نیست."])
+        _set_widths(sheet, [80])
+        return
+
+    headers = [
+        "تاریخ شمسی",
+        "مانده پایان روز بانک",
+        "مانده پایان روز دفتر راهکاران",
+        "اختلاف (بانک − دفتر)",
+        "وضعیت",
+    ]
+    sheet.append(headers)
+    _style_header(sheet, 1, len(headers))
+    daily = book_balance.get("daily") or []
+    for item in daily:
+        sheet.append(
+            [
+                item.get("date_jalali"),
+                item.get("bank_balance"),
+                item.get("book_balance"),
+                item.get("difference"),
+                "برابر" if item.get("matched") else "مغایر",
+            ]
+        )
+    if daily:
+        _apply_table_style(sheet, 2, len(daily) + 1, len(headers))
+        for column in ("B", "C", "D"):
+            for cell in sheet[column][1:]:
+                cell.number_format = "#,##0"
+        for row_index, item in enumerate(daily, start=2):
+            sheet.cell(row_index, 5).fill = PatternFill(
+                "solid",
+                fgColor="D9EAD3" if item.get("matched") else "F4CCCC",
+            )
+    note_row = len(daily) + 3
+    sheet.cell(
+        note_row,
+        1,
+        f"تفصیلی دفتر: {book_balance.get('dl_code', '')} — {book_balance.get('dl_title', '')}",
+    )
+    if book_balance.get("first_unmatched_date_jalali"):
+        sheet.cell(
+            note_row + 1,
+            1,
+            "مانده بانک و دفتر تا "
+            f"{book_balance.get('last_matched_date_jalali') or '-'} برابر است؛ "
+            f"اولین روز مغایر: {book_balance['first_unmatched_date_jalali']}",
+        )
+    _set_widths(sheet, [16, 24, 28, 22, 12])
+
+
+def _add_fee_sheet(workbook: Workbook, report: dict[str, Any]) -> None:
+    sheet = workbook.create_sheet("کارمزدها")
+    _set_sheet_defaults(sheet)
+    sheet.sheet_properties.tabColor = "F8CBAD"
+    headers = [
+        "ردیف فایل بانک",
+        "تاریخ شمسی",
+        "نوع کارمزد",
+        "مبلغ کارمزد (ریال)",
+        "ردیف گردش اصلی",
+        "مبلغ گردش اصلی",
+        "درصد کارمزد",
+        "شرح گردش اصلی",
+        "وضعیت",
+        "سند راهکاران",
+        "توضیح",
+    ]
+    sheet.append(headers)
+    _style_header(sheet, 1, len(headers))
+    fees = [row for row in report.get("rows", []) if row.get("is_fee")]
+    for row in fees:
+        transaction = _matched_transaction(row)
+        sheet.append(
+            [
+                row.get("row_number"),
+                row.get("bank_date_jalali") or format_jalali_date(row.get("bank_date")),
+                row.get("fee_kind"),
+                row.get("amount"),
+                row.get("fee_parent_row_number"),
+                row.get("fee_parent_amount"),
+                row.get("fee_rate_percent"),
+                row.get("fee_parent_description", ""),
+                row.get("business_status_fa")
+                or _STATUS_LABELS.get(row.get("business_status"), ""),
+                transaction.get("document_number", ""),
+                row.get("fee_note", ""),
+            ]
+        )
+    if fees:
+        _apply_table_style(sheet, 2, len(fees) + 1, len(headers))
+        sheet.auto_filter.ref = f"A1:K{len(fees) + 1}"
+        for column in ("D", "F"):
+            for cell in sheet[column][1:]:
+                cell.number_format = "#,##0"
+        for cell in sheet["G"][1:]:
+            cell.number_format = "0.0000"
+
+    summary = (report.get("summary") or {}).get("fee_summary") or {}
+    start_row = len(fees) + 3
+    sheet.cell(start_row, 1, "جمع به تفکیک نوع کارمزد")
+    sheet.cell(start_row, 1).font = Font(bold=True)
+    for offset, item in enumerate(summary.get("by_kind") or [], start=1):
+        sheet.cell(start_row + offset, 1, item.get("kind"))
+        sheet.cell(start_row + offset, 2, item.get("count"))
+        amount_cell = sheet.cell(start_row + offset, 3, item.get("amount"))
+        amount_cell.number_format = "#,##0"
+    _set_widths(sheet, [22, 14, 26, 18, 14, 20, 12, 48, 16, 20, 44])
 
 
 def _add_summary_sheet(workbook: Workbook, report: dict[str, Any]) -> None:
@@ -600,6 +734,8 @@ def build_reconciliation_workbook(report: dict[str, Any]) -> BytesIO:
     ):
         _add_bank_status_sheet(workbook, report, status)
     _add_erp_only_sheet(workbook, report)
+    _add_daily_balance_sheet(workbook, report)
+    _add_fee_sheet(workbook, report)
 
     output = BytesIO()
     workbook.save(output)
