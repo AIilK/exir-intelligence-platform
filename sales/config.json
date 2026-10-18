@@ -1,0 +1,20 @@
+{
+  "wd_elapsed": null,
+  "wd_total": null,
+  "sql": {
+    "branch_like": "هیبرید|زنجیره|اینترنت|تهران - شرق",
+    "refresh_minutes": 30,
+    "history_months": 12,
+    "history_from": "1404/01",
+    "history_refresh_hours": 24,
+    "live_seconds": 5
+  },
+  "branch_tiers": {
+    "A": ["هیبرید تهران", "هیبرید آذربایجان غربی", "هیبرید خراسان", "هیبرید کرمان", "هیبرید اصفهان"]
+  },
+  "inventory": {
+    "force_active": ["هیبرید کرمان"]
+  },
+  "host": "0.0.0.0",
+  "port": 8000
+}

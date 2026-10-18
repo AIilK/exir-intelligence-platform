@@ -7,7 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
-from app.agents.page_agents import AGENT_VIEWS, AGENTS_BY_KEY, PAGE_AGENT_CLASSES, ManagerAgent
+from app.agents.page_agents import (
+    AGENT_VIEWS, AGENTS_BY_KEY, PAGE_AGENT_CLASSES, SALES_AGENT_CLASSES, ManagerAgent, SalesManagerAgent,
+)
 from app.agents.page_agents.context import AgentRunContext
 from app.services.agent_memory_store import AgentMemoryStore
 
@@ -27,7 +29,7 @@ class PageAgentOrchestrator:
 
     # --------------------------------------------------------------- reading
     def catalog(self) -> list[dict[str, Any]]:
-        return [_catalog_entry(cls) for cls in [ManagerAgent, *PAGE_AGENT_CLASSES]]
+        return [_catalog_entry(cls) for cls in [ManagerAgent, *PAGE_AGENT_CLASSES, SalesManagerAgent, *SALES_AGENT_CLASSES]]
 
     def latest(self) -> dict[str, Any]:
         results = self.store.latest_results()
@@ -74,6 +76,11 @@ class PageAgentOrchestrator:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             team = dict(pool.map(run_one, PAGE_AGENT_CLASSES))
         manager = ManagerAgent(self.store, context, team_results=team).run(trigger)
+        # Sales team (sales_agents.py) after the finance team; it must never break the finance run.
+        try:
+            sales = SalesManagerAgent(self.store, context).run(trigger)
+        except Exception as exc:  # noqa: BLE001
+            sales = {"status": "error", "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
         # داده‌ای که صفحات فعلی از آخرین گزارش می‌خوانند (فهرست مشتریان، نقدینگی، چک‌ها، نمایندگان).
         data: dict[str, Any] = {}
         for key, getter in (("customer", context.customer), ("cashflow", context.cash),
@@ -92,6 +99,7 @@ class PageAgentOrchestrator:
             "trigger": trigger,
             "agents": team,
             "management_summary": manager,
+            "sales_summary": sales,
             "data": data,
             "summary": {
                 "agents_total": len(team) + 1,

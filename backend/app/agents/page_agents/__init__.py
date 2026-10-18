@@ -1,6 +1,7 @@
 """Page Agentهای هر صفحه داشبورد با هشدار، پیش‌بینی و حافظه (V171)."""
 
 from app.agents.page_agents.agents import PAGE_AGENT_CLASSES, ManagerAgent
+from app.agents.page_agents.sales_agents import SALES_AGENT_CLASSES, SalesManagerAgent
 
 #: agent_key → frontend view key (same strings as `View` in dashboard-client.tsx).
 AGENT_VIEWS = {
@@ -20,6 +21,6 @@ AGENT_VIEWS = {
     "reconciliation": "management",
 }
 
-AGENTS_BY_KEY = {cls.key: cls for cls in [*PAGE_AGENT_CLASSES, ManagerAgent]}
+AGENTS_BY_KEY = {cls.key: cls for cls in [*PAGE_AGENT_CLASSES, ManagerAgent, *SALES_AGENT_CLASSES, SalesManagerAgent]}
 
-__all__ = ["AGENT_VIEWS", "AGENTS_BY_KEY", "PAGE_AGENT_CLASSES", "ManagerAgent"]
+__all__ = ["AGENT_VIEWS", "AGENTS_BY_KEY", "PAGE_AGENT_CLASSES", "ManagerAgent", "SALES_AGENT_CLASSES", "SalesManagerAgent"]

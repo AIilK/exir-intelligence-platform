@@ -4465,8 +4465,8 @@ function DebtDetail({ kind, id }: { kind: "branch" | "visitor"; id: number }) {
 const REVIEW_TERM_DAYS = 90;
 const REVIEW_AMOUNT_RIAL = 1_000_000_000; // 100M toman
 const needsChequeReview = (x: any) =>
-  x.return_risk?.state === "open"
-  && typeof x.days_until_due === "number" && x.days_until_due < -REVIEW_OVERDUE_DAYS
+  (x.return_risk?.state === "open" || x.return_risk?.state === "unresolved")
+  && typeof x.receipt_to_due_days === "number" && x.receipt_to_due_days > REVIEW_TERM_DAYS
   && Number(x.amount_rial || 0) > REVIEW_AMOUNT_RIAL;
 
 function NetworkFile({ kind, id, onBack, onOpenVisitor, backLabel }: { kind: "branch" | "visitor"; id: number; onBack: () => void; onOpenVisitor?: (id: number) => void; backLabel: string }) {
