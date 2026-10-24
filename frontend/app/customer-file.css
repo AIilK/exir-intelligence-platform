@@ -1,0 +1,185 @@
+/* Customer file: purchases, visitor sales, last invoices, receivables, cheque return risk */
+
+/* customer-reliability.css forces .customer-profile-expanded to 96vw (meant for the modal),
+   which overrode the embedded page's width:100% and pushed it past the content area. */
+.customer-profile-expanded.customer-profile-page{width:100%!important;min-width:0}
+.cf-section{display:grid;gap:14px;margin:18px 0;padding:18px 20px;border:1px solid var(--line,#24344a);border-radius:18px;background:rgba(9,20,34,.72);min-width:0}
+.cf-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cf-title h3{margin:0 0 4px;font-size:18px}
+.cf-title p{margin:0;font-size:13px;opacity:.68;max-width:760px;line-height:1.7}
+.cf-title small{opacity:.7;font-size:13px}
+.cf-cheques-title{margin:24px 0 4px}
+
+.cf-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.cf-kpis article{display:grid;gap:6px;padding:16px;border:1px solid rgba(94,126,151,.2);border-radius:14px;background:rgba(255,255,255,.035);min-width:0}
+.cf-kpis small{opacity:.7;font-size:13px}
+.cf-kpis b{font-size:22px;line-height:1.3;overflow-wrap:anywhere}
+.cf-kpis span{opacity:.62;font-size:13px}
+.cf-kpis .cf-accent-red{border-color:rgba(223,98,105,.45);background:rgba(223,98,105,.08)}
+.cf-directory-kpis{margin:12px 0}
+.cf-debt-filters{margin:0 0 12px}
+.cf-note{opacity:.62;font-size:13px}
+.cf-muted{opacity:.55;font-size:12.5px;display:block}
+
+.cf-table{min-width:0;overflow-x:auto;border:1px solid rgba(94,126,151,.18);border-radius:14px}
+.cf-table table{width:100%;border-collapse:collapse;min-width:760px}
+.cf-table th,.cf-table td{padding:11px 12px;text-align:right;border-bottom:1px solid rgba(94,126,151,.14);white-space:nowrap;vertical-align:top}
+.cf-table th{font-size:13px;opacity:.8;background:rgba(11,25,39,.9)}
+.cf-table td small{display:block;opacity:.6;font-size:12.5px;margin-top:3px}
+.cf-table .cf-wrap{white-space:normal;min-width:180px;max-width:320px;line-height:1.7}
+.cf-debt{color:#f0a35b;font-weight:600}
+.cf-settled{color:#35c3a0}
+
+.cf-flow{min-width:220px}
+.cf-bar{height:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+.cf-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#1ea88c,#3fd4b0)}
+.cf-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.cf-chips span{font-size:12.5px;padding:3px 8px;border-radius:999px;background:rgba(63,212,176,.1);border:1px solid rgba(63,212,176,.22)}
+
+.cf-details summary{cursor:pointer;padding:6px 2px;opacity:.85}
+.cf-details[open] summary{margin-bottom:8px}
+
+.cf-risk{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;font-size:13px;background:rgba(110,130,150,.14);white-space:nowrap}
+.cf-risk.high{background:rgba(223,98,105,.18);color:#ff9aa0}
+.cf-risk.medium{background:rgba(238,166,59,.18);color:#f3be6e}
+.cf-risk.low{background:rgba(38,156,136,.16);color:#6fe0c4}
+.cf-risk.returned{background:rgba(223,98,105,.12)}
+.cf-risk.collected{background:rgba(38,156,136,.1);opacity:.8}
+.cf-risk.unresolved{opacity:.7}
+
+/* Cheques >90 days past due and >100M toman */
+/* Box 1 (مانده بدهی مشتریان) opens its debt detail */
+.cf-kpis .cf-kpi-clickable{cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.cf-kpis .cf-kpi-clickable:hover,.cf-kpis .cf-kpi-clickable.active{border-color:rgba(223,98,105,.8);background:rgba(223,98,105,.14)}
+.cf-kpis .cf-kpi-clickable em{font-style:normal;font-size:12.5px;color:#ff9aa0}
+.cf-debt-detail{display:grid;gap:18px;padding-top:4px}
+.cf-debt-detail h4{margin:0 0 4px;font-size:15px}
+.cf-debt-detail p{margin:0 0 10px;font-size:13px;opacity:.68;line-height:1.7}
+.cf-debt-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+.cf-debt-detail-grid .cf-table table{min-width:0}
+.cf-debt-customers{max-height:520px;overflow-y:auto}
+.cf-debt-customers th{position:sticky;top:0;z-index:1}
+
+.cf-review-alert{padding:12px 16px;border:1px solid rgba(223,98,105,.55);border-radius:14px;background:rgba(223,98,105,.1);color:#ffb3b8;font-size:13px;line-height:1.8}
+.customer-cheque-scope-cards .cf-review-card.active{border-color:#df6269;background:#fdecec;box-shadow:0 0 0 1px #df6269}
+.cf-table tr.cf-review-row td{background:rgba(223,98,105,.08)}
+.cf-review-badge{display:inline-block;margin-top:5px;padding:2px 8px;border-radius:999px;font-size:12.5px;background:rgba(223,98,105,.18);color:#ff9aa0}
+
+@media(max-width:720px){.cf-section{padding:14px}.cf-kpis{grid-template-columns:1fr 1fr}.cf-kpis b{font-size:18px}}
+
+.cf-clickable tbody tr{cursor:pointer;transition:background .15s ease}
+.cf-clickable tbody tr:hover{background:rgba(31,91,111,.2)}
+
+/* توزیع بار page */
+.distribution-threshold{display:flex;align-items:center;gap:6px;font-size:13px;opacity:.85}
+.distribution-threshold input{width:64px;padding:5px 8px;border-radius:8px;border:1px solid rgba(94,126,151,.35);background:rgba(255,255,255,.04);color:inherit;font:inherit;text-align:center}
+.distribution-scroll{max-height:520px;overflow-y:auto}
+.distribution-scroll th{position:sticky;top:0;z-index:1}
+.cf-table tr.distribution-selected td{background:rgba(95,168,211,.14)}
+.distribution-check{display:flex;align-items:center;gap:6px;font-size:13.5px;white-space:nowrap;cursor:pointer}
+.distribution-controls{display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:13px}
+.distribution-controls label{display:flex;align-items:center;gap:6px}
+.distribution-controls select,.distribution-controls input{padding:5px 8px;border-radius:8px;border:1px solid rgba(94,126,151,.35);background:rgba(255,255,255,.04);color:inherit;font:inherit}
+.distribution-controls input{width:64px;text-align:center}
+
+/* زمان‌بندی توزیع هر فاکتور */
+.dt-section .cf-kpis{margin-bottom:14px}
+.dt-stage-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 14px}
+.dt-stage-cards button{display:grid;gap:5px;text-align:right;padding:13px 14px;border-radius:14px;border:1px solid rgba(94,126,151,.25);background:rgba(255,255,255,.035);color:inherit;font:inherit;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.dt-stage-cards button:hover{border-color:rgba(95,168,211,.55)}
+.dt-stage-cards button.active{border-color:#19a994;background:rgba(25,169,148,.12);box-shadow:inset 0 0 0 1px #19a994}
+.dt-stage-cards button.dt-stage-waiting.active{border-color:#e0a43a;background:rgba(224,164,58,.12);box-shadow:inset 0 0 0 1px #e0a43a}
+.dt-stage-cards small{opacity:.72;font-size:12.5px}
+.dt-stage-cards b{font-size:17px}
+.dt-stage-cards span{opacity:.62;font-size:12px}
+.dt-list{display:grid;gap:10px;margin-top:12px}
+.dt-row{display:grid;gap:12px;padding:14px 16px;border:1px solid rgba(94,126,151,.22);border-radius:14px;background:rgba(255,255,255,.03);cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.dt-row:hover,.dt-row:focus-visible{border-color:rgba(95,168,211,.5);background:rgba(95,168,211,.06);outline:none}
+.dt-row.open{border-color:rgba(95,168,211,.6)}
+.dt-row.stale{border-color:rgba(223,98,105,.5);background:rgba(223,98,105,.06)}
+.dt-row header{display:grid;grid-template-columns:minmax(150px,auto) 1fr auto;gap:14px;align-items:center}
+.dt-invoice{display:grid;gap:5px;justify-items:start}
+.dt-invoice b{font-size:15px}
+.dt-customer{display:grid;gap:3px;min-width:0}
+.dt-customer b{overflow-wrap:anywhere}
+.dt-customer small,.dt-amount small{opacity:.62;font-size:12.5px}
+.dt-amount{display:grid;justify-items:end;gap:2px;white-space:nowrap}
+.dt-amount b{font-size:15px}
+.dt-badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;white-space:nowrap}
+.dt-badge.waiting{background:rgba(224,164,58,.16);color:#f2c46d}
+.dt-badge.dispatched{background:rgba(25,169,148,.16);color:#5fd6c2}
+.dt-badge.scheduled{background:rgba(95,168,211,.16);color:#8cc7ea}
+.dt-row.stale .dt-badge.waiting{background:rgba(223,98,105,.18);color:#ff9aa0}
+.dt-track{display:grid;grid-template-columns:1fr minmax(70px,.6fr) 1fr minmax(70px,.6fr) 1fr minmax(70px,.6fr) 1fr;align-items:start}
+.dt-step{position:relative;display:grid;gap:3px;justify-items:center;text-align:center;padding-top:22px;min-width:0}
+.dt-step i{position:absolute;top:2px;width:14px;height:14px;border-radius:50%;border:2px solid currentColor}
+.dt-step.done{color:#5fd6c2}
+.dt-step.done i{background:#19a994;border-color:#19a994}
+.dt-step.pending{color:rgba(160,180,195,.75)}
+.dt-step.pending i{border-style:dashed}
+.dt-step.late{color:#ff9aa0}
+.dt-step.late i{background:rgba(223,98,105,.35)}
+.dt-step small{opacity:.8;font-size:12px}
+.dt-step b{font-size:13.5px;color:var(--foreground,inherit)}
+.dt-step span{font-size:12px;opacity:.85}
+.dt-step em{font-style:normal;font-size:11.5px;opacity:.65;overflow-wrap:anywhere;max-width:100%}
+.dt-gap{position:relative;height:18px;margin-top:2px}
+.dt-gap::before{content:"";position:absolute;top:8px;inset-inline:-4px;border-top:2px solid rgba(94,126,151,.4)}
+.dt-gap.warn::before{border-top-color:rgba(223,98,105,.7)}
+.dt-gap span{position:absolute;top:14px;inset-inline:0;text-align:center;font-size:11.5px;opacity:.8;white-space:nowrap}
+.dt-gap.warn span{color:#ff9aa0;opacity:1}
+.dt-detail{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 18px;margin:0;padding:12px 14px;border-radius:12px;background:rgba(95,168,211,.07);cursor:default}
+.dt-detail div{display:grid;gap:2px}
+.dt-detail dt{font-size:12px;opacity:.62}
+.dt-detail dd{margin:0;font-size:13.5px}
+.dt-detail dd small{opacity:.62}
+.dt-more{justify-self:center;margin-top:4px}
+.dt-notes{margin:12px 0 0;font-size:12.5px;opacity:.6;line-height:1.8}
+@media(max-width:900px){
+  .dt-stage-cards{grid-template-columns:repeat(2,1fr)}
+  .dt-row header{grid-template-columns:1fr auto}
+  .dt-customer{grid-column:1/-1;grid-row:2}
+  .dt-track{grid-template-columns:1fr 1fr;gap:12px}
+  .dt-gap{display:none}
+}
+
+.cf-table tr.cf-debt-total-row td{background:rgba(95,168,211,.1);border-bottom:2px solid rgba(95,168,211,.35)}
+.unrecorded-payments-bar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:10px 0 14px;padding:12px 16px;border-radius:14px;border:1px solid rgba(240,163,60,.4);background:rgba(240,163,60,.08)}.unrecorded-payments-bar div{display:grid;gap:4px;max-width:760px}.unrecorded-payments-bar small{opacity:.75;line-height:1.8}.unrecorded-payments-bar a{white-space:nowrap;text-decoration:none}
+.unrecorded-payments-bar a{padding:9px 16px;border-radius:11px;background:#19a994;color:#fff;font-weight:700;font-size:13.5px}.unrecorded-payments-bar a:hover{background:#15907e}
+/* مبلغ اسمی چک برگشتی در برابر بدهی باقی‌مانده بابت برگشتی */
+.cf-returned-note{margin-top:10px;padding:10px 12px;border-radius:10px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);font-size:13px;line-height:1.9}
+.cf-returned-note p{margin:0}
+.cf-returned-gap{display:block;margin-top:2px;color:#d97706;font-size:11px;white-space:nowrap}
+/* توزیع بار — هدر صفحه، شماره بخش‌ها، جدول قابل مرتب‌سازی و دکمه زمان‌بندی */
+.dist-header{display:grid;gap:10px}
+.dist-header h2{margin:0;font-size:20px}
+.dist-header p{margin:4px 0 0;color:#8ea4af;font-size:13px;line-height:1.8}
+.dist-excel{background:#14433f;color:#7bffe9;border-radius:9px;padding:7px 12px;text-decoration:none;font-size:12px;white-space:nowrap}
+.dist-excel:hover{background:#1b5a53}
+.dist-step{display:inline-grid;place-items:center;width:24px;height:24px;margin-left:8px;border-radius:50%;background:#14433f;color:#7bffe9;font-size:12px;vertical-align:middle}
+.dist-primary{border:1px solid rgba(45,212,191,.35)}
+.st-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.st-toolbar input{flex:1;min-width:200px;max-width:380px;background:#0b1824;border:1px solid #2a4555;border-radius:8px;color:inherit;padding:7px 10px;font:inherit;font-size:12px}
+.st-toolbar small{color:#8ea4af;font-size:12px;margin-right:auto}
+.st-table th{cursor:pointer;user-select:none;white-space:nowrap}
+.st-table th i{font-style:normal;opacity:.45;font-size:10px}
+.st-table th.sorted i{opacity:1;color:#2dd4bf}
+.st-table th:hover{color:#e6f2f2}
+.dist-timeline-toggle .cf-title{align-items:center}
+.dist-toggle{background:#1c3140;color:#cfe3e6;border:1px solid #2a4555;border-radius:10px;padding:9px 16px;cursor:pointer;font:inherit;font-size:13px;white-space:nowrap}
+.dist-toggle.open{background:#14433f;color:#7bffe9;border-color:#2dd4bf}
+/* کنترل وصول فاکتورها (توزیع بار) */
+.cc-block{display:grid;gap:8px;margin-top:14px}
+.cc-block .dist-toggle{justify-self:start}
+.cc-note{margin:0;color:#8ea4af;font-size:12px;line-height:1.8}
+
+/* «ثبت در سیستم»: تاریخ/ساعت ثبت چک + کاربر ثبت‌کننده (cheque-reg.tsx) */
+.reg-cell{display:inline-grid;gap:2px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.reg-cell b{font-weight:600}
+.reg-cell small{color:#8ea4af;font-size:11px;white-space:nowrap}
+
+/* کارت «مشتری فعال» فهرست پرونده مشتریان راهکاران (کلیک = فیلتر) */
+.cf-active-kpi{cursor:pointer;border-top:3px solid #0d9488 !important;transition:transform .15s,box-shadow .15s}
+.cf-active-kpi:hover{transform:translateY(-2px)}
+.cf-active-kpi.active{box-shadow:0 0 0 1px #2dd4bf}
+.cf-active-kpi b em{font-style:normal;font-size:13px;color:#8ea4af;font-weight:normal}
