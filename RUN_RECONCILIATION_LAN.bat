@@ -2,13 +2,6 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-if not exist "frontend\.env.local" (
-  echo فایل frontend\.env.local پیدا نشد.
-  echo ابتدا frontend\.env.example را با نام .env.local کپی و مقادیر امنیتی را تنظیم کنید.
-  pause
-  exit /b 1
-)
-
 if not exist "backend\.env" (
   echo فایل backend\.env پیدا نشد.
   echo ابتدا backend\.env.example را با نام .env کپی و RECONCILIATION_API_KEY را تنظیم کنید.

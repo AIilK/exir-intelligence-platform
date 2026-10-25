@@ -273,6 +273,9 @@ class CashBankMovementService:
                         "karamad_operational_count": len(karamad_operational),
                         "selected_branch": branch, "available_branches": available_branches,
                         "company_bank_transfer_rial": _number(sum(float(row["amount_rial"] or 0) for row in company_transfer_rows + karamad_transfers)),
+                        "hybrid_settlement_inflow_rial": _number(sum(float(r["amount_rial"] or 0) for r in company_transfer_rows + karamad_transfers if r.get("hybrid_settlement") and r["direction"] == "inflow")),
+                        "hybrid_settlement_outflow_rial": _number(sum(float(r["amount_rial"] or 0) for r in company_transfer_rows + karamad_transfers if r.get("hybrid_settlement") and r["direction"] == "outflow")),
+                        "hybrid_settlement_count": sum(1 for r in company_transfer_rows + karamad_transfers if r.get("hybrid_settlement")),
                         "petty_cash_rial": _number(sum(float(row["amount_rial"] or 0) for row in petty_cash_rows + karamad_petty)),
                         "source_note": "همهٔ جمع‌ها روی سبد یکپارچه محاسبه شده‌اند؛ ستون منبع فقط منشأ هر ردیف را نشان می‌دهد. انتقال داخلی و تنخواه حذف شده‌اند."},
             "movements": page,
@@ -287,8 +290,13 @@ class CashBankMovementService:
         counterpart_name = row["CounterPartName"] or ""
         source_text = f"{description} {counterpart_name}".casefold()
         has_transfer_purpose = bool(re.search(r"بابت\s*[:\-–—]?\s*انتقال", source_text))
+        from app.services.liquidity.account_map import is_hybrid_counterpart
+
+        hybrid_settlement = False
         if any(marker.casefold() in source_text for marker in self.PETTY_CASH_MARKERS):
             classification, reason = "petty_cash", "متن شرح یا طرف حساب شامل «تنخواه» است"
+        elif is_hybrid_counterpart(counterpart_name):
+            classification, reason, hybrid_settlement = "company_bank_transfer", "تسویه هیبرید با شرکت (گردش داخلی گروه؛ همان قانون صفحه نقدینگی)", True
         elif has_transfer_purpose or any(marker.casefold() in source_text for marker in self.COMPANY_TRANSFER_MARKERS):
             classification, reason = "company_bank_transfer", "متن شرح یا طرف حساب شامل نشانهٔ انتقال بانک‌به‌بانک است"
         else:
@@ -301,6 +309,7 @@ class CashBankMovementService:
             "counterpart_name": counterpart_name, "cash_flow_factor_ref": row["CashFlowFactorRef"], "bank_account_ref": row["BankAccountRef"],
             "bank_account_number": row["BankAccountNumber"], "bank_account_iban": row["BankAccountIBAN"], "cash_ref": row["CashRef"], "description": description,
             "classification": classification, "classification_reason": reason, "source_system": "rahkaran",
+            "hybrid_settlement": hybrid_settlement,
         }
 
     @staticmethod
@@ -326,6 +335,7 @@ class CashBankMovementService:
             "bank_account_iban": row.get("bank_account_iban"), "cash_ref": row.get("cash_ref"),
             "description": row.get("description") or row.get("purpose"),
             "classification": row.get("classification"), "classification_reason": row.get("classification_reason"),
+            "hybrid_settlement": bool(row.get("hybrid_settlement")),
             "source_system": "karamad", "source_label": "کارآمد · Live SQL",
             "source_kind": row.get("source_kind"), "source_kinds": row.get("source_kinds"),
             "branch": row.get("branch"), "branch_name": row.get("branch_name") or row.get("branch"), "bank_name": row.get("bank_name") or row.get("bank"),

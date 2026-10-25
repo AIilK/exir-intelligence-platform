@@ -364,3 +364,60 @@ export function AgentPredictions({ onOpenView }: { onOpenView?: (view: string) =
     </div> : <div className="pa-empty big">هنوز پیش‌بینی‌ای ثبت نشده؛ Agentها را اجرا کنید.</div>}
   </section>;
 }
+
+// توضیح فشرده یک Agent برای کارت‌های خلاصه مدیریتی.
+// لحن نرم: واژه «بحرانی» نمایش داده نمی‌شود؛ سطح هشدارها «اولویت اول/دوم» است.
+// compact: فقط تیتر و اقدام بعدی؛ خلاصه و هشدارها با «بیشتر» باز می‌شوند.
+// اگر Agent هنوز اجرا نشده باشد، یک بار خودکار اجرا می‌شود.
+const SOFT_LEVEL: Record<string, string> = { critical: "اولویت اول", high: "اولویت دوم", medium: "قابل توجه", info: "اطلاع" };
+const soften = (value: string) => value
+  .replace(/بحرانی/g, "نیازمند پیگیری").replace(/بحران/g, "فشار").replace(/خطرناک/g, "قابل توجه").replace(/فوری/g, "در اولویت");
+export function AgentInsight({ agentKey, title, compact = false }: { agentKey: string; title?: string; compact?: boolean }) {
+  const [detail, setDetail] = useState<AgentDetail | null>(null);
+  const [error, setError] = useState("");
+  const [running, setRunning] = useState(false);
+  const [open, setOpen] = useState(!compact);
+  const run = useCallback(async () => {
+    setRunning(true); setError("");
+    try { await api(`/page-agents/${agentKey}/run`, { method: "POST" }); setDetail(await api(`/page-agents/${agentKey}`)); }
+    catch (e) { setError(e instanceof Error ? e.message : "اجرای تحلیل ناموفق بود"); }
+    finally { setRunning(false); }
+  }, [agentKey]);
+  useEffect(() => {
+    let active = true;
+    api(`/page-agents/${agentKey}`).then((d: AgentDetail) => {
+      if (!active) return;
+      setDetail(d);
+      if (!d?.latest) run();
+    }).catch((e) => active && setError(e instanceof Error ? e.message : "خطا"));
+    return () => { active = false; };
+  }, [agentKey, run]);
+  const r = detail?.latest;
+  const a = r?.analysis || {};
+  const alerts = (r?.alerts || []).filter((x) => x.status !== "dismissed")
+    .sort((x, y) => ["critical", "high", "medium", "info"].indexOf(x.level) - ["critical", "high", "medium", "info"].indexOf(y.level));
+  const tone = r?.status === "error" ? "error" : alerts.some((x) => x.level === "critical" || x.level === "high") ? "watch" : "calm";
+  const next = soften(text(a.next_best_action));
+  return <div className={`ai-insight tone-${tone}`}>
+    <div className="ai-insight-head">
+      <span className="ai-insight-badge">✦ {title || detail?.name || "تحلیل"}</span>
+      <small>{r ? when(r.generated_at) : running ? "در حال تحلیل…" : ""}</small>
+      <button type="button" onClick={run} disabled={running} title="تحلیل دوباره با داده امروز">{running ? "…" : "↻"}</button>
+    </div>
+    {error && <p className="ai-insight-error">{error}</p>}
+    {!r && !error && <p className="ai-insight-summary">{running ? "در حال خواندن داده‌ها…" : "در حال دریافت تحلیل…"}</p>}
+    {r?.status === "error" && <p className="ai-insight-error">تحلیل این بخش فعلاً در دسترس نیست.</p>}
+    {r?.status === "success" && <>
+      <b className="ai-insight-headline">{soften(text(a.headline))}</b>
+      {next && <p className="ai-insight-next">پیشنهاد: {next}</p>}
+      {open && <>
+        <p className="ai-insight-summary">{soften(text(a.summary))}</p>
+        {alerts.map((x) => <p key={x.alert_key} className={`ai-insight-alert ${x.level}`}>
+          <span>{SOFT_LEVEL[x.level] || x.level}</span>{soften(x.title)}{x.action ? <em> — {soften(x.action)}</em> : null}
+        </p>)}
+      </>}
+      {compact && <button type="button" className="ai-insight-more" onClick={() => setOpen((v) => !v)}>
+        {open ? "کمتر" : `بیشتر${alerts.length ? ` (${faNum(alerts.length)} نکته)` : ""}`}</button>}
+    </>}
+  </div>;
+}

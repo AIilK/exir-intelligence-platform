@@ -27,6 +27,13 @@ type ReconciliationReport = {
     day_count?: number;
     last_matched_date_jalali?: string | null;
     first_unmatched_date_jalali?: string | null;
+    daily?: {
+      date_jalali?: string;
+      difference?: number;
+      matched?: boolean;
+      difference_side?: string;
+      difference_documents?: string;
+    }[];
   };
 };
 
@@ -38,7 +45,12 @@ function balanceStatus(report: ReconciliationReport): string {
   if (!balance.first_unmatched_date_jalali) {
     return `مانده پایان روز بانک و دفتر راهکاران در همه روزها برابر است (${days}).`;
   }
-  return `مانده بانک و دفتر راهکاران تا ${balance.last_matched_date_jalali ?? "-"} برابر است؛ اولین روز مغایر ${balance.first_unmatched_date_jalali} (${days} برابر).`;
+  const first = balance.daily?.find((item) => !item.matched);
+  // اختلاف = بانک − دفتر؛ سمت اختلاف و سندی که آن را ساخته کنار عدد نمایش داده می‌شود.
+  const cause = first
+    ? ` اختلاف ${Math.round(first.difference ?? 0).toLocaleString("fa-IR")} ریال — ${first.difference_side || "-"}${first.difference_documents ? `؛ سند: ${first.difference_documents}` : ""}.`
+    : "";
+  return `مانده بانک و دفتر راهکاران تا ${balance.last_matched_date_jalali ?? "-"} برابر است؛ اولین روز مغایر ${balance.first_unmatched_date_jalali} (${days} برابر).${cause}`;
 }
 
 const ACCEPTED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".pdf", ".html", ".htm"];
@@ -56,13 +68,7 @@ function percent(value: number | undefined): string {
   return `${Math.round(Number(value ?? 0) * 100).toLocaleString("fa-IR")}٪`;
 }
 
-export default function ReconciliationClient({
-  displayName,
-  signOutPath,
-}: {
-  displayName: string;
-  signOutPath: string | null;
-}) {
+export default function ReconciliationClient() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -132,15 +138,6 @@ export default function ReconciliationClient({
     if (inputRef.current) inputRef.current.value = "";
   };
 
-  const signOut = async () => {
-    if (signOutPath) {
-      window.location.assign(signOutPath);
-      return;
-    }
-    await fetch("/api/reconciliation/session", { method: "DELETE" });
-    window.location.assign("/reconciliation/login");
-  };
-
   return (
     <main className="rc-shell">
       <header className="rc-header">
@@ -153,10 +150,9 @@ export default function ReconciliationClient({
         </div>
         <div className="rc-user">
           <div>
-            <strong>{displayName}</strong>
-            <small>اپراتور مغایرت‌گیری</small>
+            <strong>اپراتور خزانه</strong>
+            <small>مغایرت‌گیری بانک</small>
           </div>
-          <button type="button" onClick={signOut}>خروج امن</button>
         </div>
       </header>
 

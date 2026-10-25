@@ -18,6 +18,8 @@ AGENT_VIEWS = {
     "representative": "representatives",
     "scenario": "simulator",
     "reconciliation": "management",
+    "payables": "payables",
+    "liquidity": "liquidity",
 }
 
 AGENTS_BY_KEY = {cls.key: cls for cls in [*PAGE_AGENT_CLASSES, ManagerAgent]}

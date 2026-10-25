@@ -79,6 +79,16 @@ def _jalali(value: Any) -> str | None:
         return None
 
 
+
+def not_guarantee_cheque(alias: str) -> str:
+    """SQL condition (fixed internal fragment): skip guarantee cheques (چک تضمینی).
+
+    Karamad books them on their own account, e.g. معین 9113 «اسناد تضمینی دریافتی از کارکنان»;
+    they are security deposits, not customer payments, so they never belong in the cheque portfolio.
+    """
+    return (f"NOT EXISTS (SELECT 1 FROM dbo.[tblSL] gsl WHERE gsl.[ID] = {alias}.[SLRef] "
+            "AND gsl.[Name] LIKE N'%تضمین%')")
+
 class KaramadLiveReceivedChequeService:
     """Live read-only source for Karamad received cheques (dbo.tblChequeD)."""
 
@@ -94,6 +104,7 @@ class KaramadLiveReceivedChequeService:
         # Closed/final: 4 وصول شده, 5 خرج شده, 8 برگشتی وصول شده, 9 عودت نزد
         # مشتری, 11 انتقال بین شعب (person confirmed 11 stays closed).
         where = "d.[StatusRef] IN (1, 2, 3, 6, 7, 10)" if open_only else "1=1"
+        where += f" AND {not_guarantee_cheque('d')}"
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if branch:
             where += " AND CAST(d.[BranchRef] AS varchar(50)) = :branch"
@@ -199,7 +210,9 @@ class KaramadLiveReceivedChequeService:
                 "due_date_jalali": _jalali(due_date),
                 "days_until_due": days,
                 "days_to_due": days,
-                "serial_number": row.get("serial_number") or row.get("document_code"),
+                # کارآمد: Code = شماره چک، Serial = سری چک (مثل «0148» یا «439/998524»)
+                "serial_number": row.get("document_code") or row.get("serial_number"),
+                "cheque_number": row.get("document_code") or row.get("serial_number"),
                 "series": row.get("serial_number"),
                 "sayad_number": row.get("sayad_number"),
                 "account_number": row.get("account_number"),

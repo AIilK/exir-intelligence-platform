@@ -146,3 +146,50 @@
 .cf-table tr.cf-debt-total-row td{background:rgba(95,168,211,.1);border-bottom:2px solid rgba(95,168,211,.35)}
 .unrecorded-payments-bar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin:10px 0 14px;padding:12px 16px;border-radius:14px;border:1px solid rgba(240,163,60,.4);background:rgba(240,163,60,.08)}.unrecorded-payments-bar div{display:grid;gap:4px;max-width:760px}.unrecorded-payments-bar small{opacity:.75;line-height:1.8}.unrecorded-payments-bar a{white-space:nowrap;text-decoration:none}
 .unrecorded-payments-bar a{padding:9px 16px;border-radius:11px;background:#19a994;color:#fff;font-weight:700;font-size:13.5px}.unrecorded-payments-bar a:hover{background:#15907e}
+/* مبلغ اسمی چک برگشتی در برابر بدهی باقی‌مانده بابت برگشتی */
+.cf-returned-note{margin-top:10px;padding:10px 12px;border-radius:10px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);font-size:13px;line-height:1.9}
+.cf-returned-note p{margin:0}
+.cf-returned-gap{display:block;margin-top:2px;color:#d97706;font-size:11px;white-space:nowrap}
+/* توزیع بار — هدر صفحه، شماره بخش‌ها، جدول قابل مرتب‌سازی و دکمه زمان‌بندی */
+.dist-header{display:grid;gap:10px}
+.dist-header h2{margin:0;font-size:20px}
+.dist-header p{margin:4px 0 0;color:#8ea4af;font-size:13px;line-height:1.8}
+.dist-excel{background:#14433f;color:#7bffe9;border-radius:9px;padding:7px 12px;text-decoration:none;font-size:12px;white-space:nowrap}
+.dist-excel:hover{background:#1b5a53}
+.dist-step{display:inline-grid;place-items:center;width:24px;height:24px;margin-left:8px;border-radius:50%;background:#14433f;color:#7bffe9;font-size:12px;vertical-align:middle}
+.dist-primary{border:1px solid rgba(45,212,191,.35)}
+.st-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.st-toolbar input{flex:1;min-width:200px;max-width:380px;background:#0b1824;border:1px solid #2a4555;border-radius:8px;color:inherit;padding:7px 10px;font:inherit;font-size:12px}
+.st-toolbar small{color:#8ea4af;font-size:12px;margin-right:auto}
+.st-table th{cursor:pointer;user-select:none;white-space:nowrap}
+.st-table th i{font-style:normal;opacity:.45;font-size:10px}
+.st-table th.sorted i{opacity:1;color:#2dd4bf}
+.st-table th:hover{color:#e6f2f2}
+.dist-timeline-toggle .cf-title{align-items:center}
+.dist-toggle{background:#1c3140;color:#cfe3e6;border:1px solid #2a4555;border-radius:10px;padding:9px 16px;cursor:pointer;font:inherit;font-size:13px;white-space:nowrap}
+.dist-toggle.open{background:#14433f;color:#7bffe9;border-color:#2dd4bf}
+/* کنترل وصول فاکتورها (توزیع بار) */
+.cc-block{display:grid;gap:8px;margin-top:14px}
+.cc-block .dist-toggle{justify-self:start}
+.cc-note{margin:0;color:#8ea4af;font-size:12px;line-height:1.8}
+
+/* «ثبت در سیستم»: تاریخ/ساعت ثبت چک + کاربر ثبت‌کننده (cheque-reg.tsx) */
+.reg-cell{display:inline-grid;gap:2px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.reg-cell b{font-weight:600}
+.reg-cell small{color:#8ea4af;font-size:11px;white-space:nowrap}
+
+/* کارت «مشتری فعال» فهرست پرونده مشتریان راهکاران (کلیک = فیلتر) */
+.cf-active-kpi{cursor:pointer;border-top:3px solid #0d9488 !important;transition:transform .15s,box-shadow .15s}
+.cf-active-kpi:hover{transform:translateY(-2px)}
+.cf-active-kpi.active{box-shadow:0 0 0 1px #2dd4bf}
+.cf-active-kpi b em{font-style:normal;font-size:13px;color:#8ea4af;font-weight:normal}
+
+/* فیلتر ماه پرونده مشتری (مانده تا پایان ماه) */
+.cf-month-filter{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:10px 0;padding:8px 10px;background:#0f1d2a;border:1px solid #243847;border-radius:11px}
+.cf-month-filter b{font-size:13px;margin-left:4px}
+.cf-month-filter select{background:#0b1824;color:#e6f2f2;border:1px solid #2a4252;border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
+.cf-month-filter button{background:transparent;border:1px solid #2a4252;color:#cfe3e6;border-radius:8px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer;min-height:0}
+.cf-month-filter button:hover:not(:disabled){background:#13283a}
+.cf-month-filter button.active{background:#14433f;border-color:#2dd4bf;color:#7bffe9}
+.cf-month-filter button:disabled{opacity:.35;cursor:default}
+.cf-month-filter small{color:#8ea4af;font-size:11px;margin-right:6px}

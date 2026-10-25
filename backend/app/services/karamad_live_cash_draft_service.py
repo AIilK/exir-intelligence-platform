@@ -234,6 +234,7 @@ class KaramadLiveCashDraftService:
             SELECT
                 m.*,
                 sl.[Name]   AS sl_name,
+                sl.[Code]   AS sl_code,
                 dl.[Name]   AS level4_name,
                 dl.[ClassRef] AS dl_class_ref,
                 dl2.[Name]  AS level5_name,
@@ -288,6 +289,13 @@ class KaramadLiveCashDraftService:
         payloads: list[dict[str, Any]] = []
         for row in rows:
             classification, reason = _classify(row.get("behalf"), row.get("description"))
+            # تسویه هیبرید با شرکت‌های گروه (معین 3112، به‌جز خرید ارز برای شرکت) جابه‌جایی داخلی گروه است.
+            hybrid_settlement = (
+                str(row.get("sl_code") or "").strip() == "3112"
+                and not (row["direction"] == "outflow" and "خرید ارز" in str(row.get("behalf") or ""))
+            )
+            if hybrid_settlement:
+                classification, reason = "company_bank_transfer", "تسویه هیبرید با شرکت (گردش داخلی گروه؛ همان قانون صفحه نقدینگی)"
             payloads.append({
                 "movement_type": row["movement_type"],
                 "direction": row["direction"],
@@ -306,6 +314,8 @@ class KaramadLiveCashDraftService:
                 "description": row.get("description"),
                 "sl_ref": row.get("sl_ref"),
                 "sl_name": row.get("sl_name"),
+                "sl_code": row.get("sl_code"),
+                "hybrid_settlement": hybrid_settlement,
                 "dl_ref": row.get("dl_ref"),
                 "dl2_ref": row.get("dl2_ref"),
                 "dl3_ref": row.get("dl3_ref"),

@@ -26,6 +26,7 @@ from typing import Any
 from sqlalchemy import bindparam, text
 
 from app.services.customer_cheque_return_risk import attach_return_risk
+from app.services.karamad_live_received_cheque_service import not_guarantee_cheque
 from app.services.customer_file_service import (
     KARAMAD_HYBRID_DL_CLASS_ID,
     LAST_INVOICE_COUNT,
@@ -39,6 +40,22 @@ COLLECTED_CHEQUE_STATUS = 4
 RETURNED_CHEQUE_STATUSES = (6, 7, 8, 10)
 JALALI_MONTHS = ("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
 OPEN_RETURNED_CHEQUE_STATUSES = (6, 7, 10)  # returned and not yet settled (8 = returned, then collected)
+# Returned cheques count (shown and in debt attribution) only from the previous Jalali year on
+# (e.g. 1404 and 1405), by due date; older ones are left to the ledger/FIFO like any other debt.
+RETURNED_YEARS_BACK = 1
+
+
+def returned_from_date() -> date:
+    import jdatetime
+
+    return jdatetime.date(jdatetime.date.today().year - RETURNED_YEARS_BACK, 1, 1).togregorian()
+
+
+def _returned_window(alias: str) -> str:
+    """SQL condition (fixed internal fragment): drop open returned cheques due before :returned_from."""
+    statuses = ",".join(str(s) for s in OPEN_RETURNED_CHEQUE_STATUSES)
+    prefix = f"{alias}." if alias else ""
+    return f"({prefix}[StatusRef] NOT IN ({statuses}) OR {prefix}[DueDate] >= :returned_from)"
 # Customer scopes (fixed internal SQL returning tblCustomer.ID; :sid is the branch/visitor id).
 VISITOR_CUSTOMERS = "SELECT [CustomerRef] FROM dbo.[tblFactorF] WHERE [VisitorRef] = :sid"
 BRANCH_VISITOR_CUSTOMERS = """SELECT x.[CustomerRef] FROM dbo.[tblFactorF] x
@@ -300,6 +317,17 @@ class KaramadSalesNetworkService:
                     """
                 ), params).mappings()
             }
+            # مشتری فعال = مشتری (tblCustomer، هر کد جدا) با فاکتور فروش در سال مالی جاری یا قبل
+            active_sql = """
+                SELECT {group} COUNT(DISTINCT [CustomerRef]) AS active,
+                       COUNT(DISTINCT CASE WHEN [FiscalYear] = :cur THEN [CustomerRef] END) AS active_cur
+                FROM dbo.[tblFactorF]
+                WHERE [BranchRef] IN :branches AND [FiscalYear] IN (:cur, :prev) AND [CustomerRef] IS NOT NULL
+                {group_by}
+            """
+            active = {int(r["BranchRef"]): r for r in connection.execute(expand(
+                active_sql.format(group="[BranchRef],", group_by="GROUP BY [BranchRef]")), params).mappings()}
+            active_total = connection.execute(expand(active_sql.format(group="", group_by="")), params).mappings().first() or {}
             customers: dict[int, list[int]] = {}
             for r in connection.execute(expand(
                 "SELECT [BranchRef], [DLRef] FROM dbo.[tblCustomer] WHERE [DLRef] IS NOT NULL AND [BranchRef] IN :branches"
@@ -310,9 +338,10 @@ class KaramadSalesNetworkService:
                 SELECT [BranchRef], COUNT(*) AS n, SUM([Price]) AS amount
                 FROM dbo.[tblChequeD]
                 WHERE [StatusRef] IN ({",".join(str(s) for s in OPEN_CHEQUE_STATUSES)}) AND [BranchRef] IN :branches
+                  AND {_returned_window("")} AND {not_guarantee_cheque("dbo.[tblChequeD]")}
                 GROUP BY [BranchRef]
                 """
-            ).bindparams(bindparam("branches", expanding=True)), params).mappings()}
+            ).bindparams(bindparam("branches", expanding=True)), {**params, "returned_from": returned_from_date()}).mappings()}
 
         rows = []
         for bid in branch_ids:
@@ -324,6 +353,8 @@ class KaramadSalesNetworkService:
                 "hybrids": hybrids.get(bid, []),
                 "active_supervisor_count": supervisors.get(bid, 0),
                 "active_visitor_count": visitors.get(bid, 0),
+                "active_customer_count": int((active.get(bid) or {}).get("active") or 0),
+                "active_customer_current_year_count": int((active.get(bid) or {}).get("active_cur") or 0),
                 **_sales_fields(cur, prev),
                 "debt": _debt(customers.get(bid, []), positions),
                 "open_cheque_count": int((cheques.get(bid) or {}).get("n") or 0),
@@ -339,6 +370,9 @@ class KaramadSalesNetworkService:
                 "hybrid_count": sum(len(r["hybrids"]) for r in rows),
                 "branch_count": len(rows),
                 "active_visitor_count": sum(r["active_visitor_count"] for r in rows),
+                # کل یکتا (مشتری‌ای که در دو شعبه خرید کرده یک بار شمرده می‌شود)
+                "active_customer_count": int(active_total.get("active") or 0),
+                "active_customer_current_year_count": int(active_total.get("active_cur") or 0),
                 **{key: _num(sum(r[key] for r in rows)) for key in (
                     "current_year_sales_rial", "current_year_gross_sales_rial",
                     "previous_year_sales_rial", "previous_year_gross_sales_rial")},
@@ -470,11 +504,11 @@ class KaramadSalesNetworkService:
             f"""
             SELECT d.[DLRef], fx.[VisitorRef], d.[Price], d.[DueDate]
             FROM dbo.[tblChequeD] d LEFT JOIN dbo.[tblFactorF] fx ON fx.[ID] = d.[FactorRef]
-            WHERE d.[StatusRef] IN ({statuses})
+            WHERE d.[StatusRef] IN ({statuses}) AND d.[DueDate] >= :returned_from
               AND d.[DLRef] IN (SELECT cu.[DLRef] FROM dbo.[tblCustomer] cu WHERE cu.[ID] IN ({customer_scope}))
             ORDER BY d.[DLRef], d.[DueDate] DESC
             """
-        ), params).mappings().all()
+        ), {**params, "returned_from": returned_from_date()}).mappings().all()
 
     def _visitor_core(self, connection, fy: dict[str, Any], visitor_id: int) -> dict[str, Any]:
         # Debt attribution: returned cheques + FIFO over the invoices of every customer this visitor sold to.
@@ -631,11 +665,24 @@ class KaramadSalesNetworkService:
             aging = [["زیر ۳۰ روز", 30], ["۳۱ تا ۹۰ روز", 90], ["۹۱ تا ۱۸۰ روز", 180], ["۱۸۱ تا ۳۶۵ روز", 365], ["بیش از یک سال", None]]
             aging_rows = [{"label": label, "amount_rial": 0.0, "customers": set()} for label, _ in aging]
             origin = {"invoice": 0.0, "returned_cheque": 0.0, "unmatched": 0.0}
+            returned_nominal_total = 0.0
+            returned_nominal_settled = 0.0  # customers who owe nothing although a cheque is still «returned»
+            settled_customers: set[int] = set()
             by_visitor: dict[int | None, dict[str, Any]] = {}
             debtors = []
             for dl, row in customers.items():
                 balance = float(positions.get(dl, {}).get("balance_rial") or 0)
+                # Face value of the customer's open returned cheques (a visitor file: only that visitor's
+                # cheques). The debt share is capped at the ledger debt, so it can be smaller.
+                latest_visitor = next((v for v, _, _ in by_invoice.get(dl, []) if v is not None), None)
+                returned_nominal = sum(
+                    amount for visitor_id, amount, _ in by_returned.get(dl, [])
+                    if kind != "visitor" or (visitor_id if visitor_id is not None else latest_visitor) == scope_id
+                )
                 if balance <= 0:
+                    if returned_nominal > 0:
+                        returned_nominal_settled += returned_nominal
+                        settled_customers.add(dl)
                     continue
                 slices = _allocate_debt(balance, by_invoice.get(dl, []), by_returned.get(dl, []))
                 if kind == "visitor":
@@ -652,6 +699,7 @@ class KaramadSalesNetworkService:
                         bucket = next(i for i, (_, limit) in enumerate(aging) if limit is None or (age is not None and age <= limit))
                         aging_rows[bucket]["amount_rial"] += s["amount"]
                         aging_rows[bucket]["customers"].add(dl)
+                returned_nominal_total += returned_nominal
                 invoice_dates = [s["date"] for s in slices if s["kind"] == "invoice" and s["date"]]
                 visitor_totals: dict[int | None, float] = {}
                 for s in slices:
@@ -662,6 +710,7 @@ class KaramadSalesNetworkService:
                     "customer_code": _text(row["Code"]),
                     "debt_rial": _num(sum(s["amount"] for s in slices)),
                     "returned_cheque_rial": _num(sum(s["amount"] for s in slices if s["kind"] == "returned_cheque")),
+                    "returned_cheque_nominal_rial": _num(returned_nominal),
                     "oldest_unpaid_invoice_date_jalali": format_jalali_date(min(invoice_dates)) if invoice_dates else "",
                     "last_invoice_date_jalali": format_jalali_date(max((d for _, _, d in by_invoice.get(dl, []) if d), default=None)),
                     "_visitors": visitor_totals,
@@ -693,6 +742,9 @@ class KaramadSalesNetworkService:
             "debtor_customer_count": len(debtors),
             "aging": [{"label": r["label"], "amount_rial": _num(r["amount_rial"]), "customer_count": len(r["customers"])} for r in aging_rows],
             "origin": {key: _num(value) for key, value in origin.items()},
+            "returned_cheque_nominal_rial": _num(returned_nominal_total),
+            "returned_cheque_settled_nominal_rial": _num(returned_nominal_settled),
+            "returned_cheque_settled_customer_count": len(settled_customers),
             "visitors": sorted(
                 ({"visitor_name": visitor_name(vid), "amount_rial": _num(v["amount_rial"]), "customer_count": len(v["customers"])}
                  for vid, v in by_visitor.items()),
@@ -781,7 +833,7 @@ class KaramadSalesNetworkService:
         statuses = ",".join(str(s) for s in OPEN_CHEQUE_STATUSES)
         rows = connection.execute(text(
             f"""
-            SELECT d.[inx], d.[Serial], d.[InquiryCode], d.[Price], d.[BookDate], d.[DueDate], d.[DLRef],
+            SELECT d.[inx], d.[Code], d.[Serial], d.[InquiryCode], d.[Price], d.[BookDate], d.[DueDate], d.[DLRef],
                    st.[Name] AS StatusName, COALESCE(bk.[Name], d.[Bank]) AS BankName, v.[Name] AS VisitorName,
                    cu.[Name] AS CustomerName, cu.[Code] AS CustomerCode
             FROM dbo.[tblChequeD] d
@@ -790,10 +842,10 @@ class KaramadSalesNetworkService:
             OUTER APPLY (SELECT TOP (1) c.[Name], c.[Code] FROM dbo.[tblCustomer] c WHERE c.[DLRef] = d.[DLRef] ORDER BY c.[ID]) cu
             OUTER APPLY (SELECT TOP (1) s.[Name] FROM dbo.[tblChequeDStatus] s WHERE s.[Code] = d.[StatusRef]) st
             OUTER APPLY (SELECT TOP (1) b.[Name] FROM dbo.[tblBankList] b WHERE b.[Code] = d.[BankIDRef]) bk
-            WHERE d.[StatusRef] IN ({statuses}) AND {cheque_scope}
+            WHERE d.[StatusRef] IN ({statuses}) AND {cheque_scope} AND {_returned_window("d")} AND {not_guarantee_cheque("d")}
             ORDER BY d.[DueDate]
             """
-        ), {"scope_id": scope_id}).mappings().all()
+        ), {"scope_id": scope_id, "returned_from": returned_from_date()}).mappings().all()
 
         today = date.today()
         cheques = []
@@ -802,7 +854,8 @@ class KaramadSalesNetworkService:
             booked = _as_date(r["BookDate"])
             cheques.append({
                 "cheque_id": int(r["inx"]),
-                "cheque_number": _text(r["Serial"]),
+                "cheque_number": _text(r["Code"]) or _text(r["Serial"]),  # Code = شماره چک، Serial = سری
+                "series": _text(r["Serial"]),
                 "sayad_number": _text(r["InquiryCode"]),
                 "amount_rial": _num(r["Price"]),
                 "registration_date_jalali": format_jalali_date(r["BookDate"]),

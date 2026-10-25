@@ -51,9 +51,19 @@ class KaramadLiveCustomerActivityService:
         return rows
 
     def _received_cheque_rows(self, branch: str | None = None) -> list[dict[str, Any]]:
-        rows = self._received_cheque.report(branch=branch).get("cheques", [])
-        for r in rows:
+        # Returned cheques due before the previous Jalali year (e.g. 1399–1403) are neither shown
+        # nor counted in the customer's debt; same window as the sales-network files.
+        from app.services.karamad_sales_network_service import returned_from_date
+
+        cutoff = returned_from_date().isoformat()
+        rows = []
+        for r in self._received_cheque.report(branch=branch).get("cheques", []):
+            status = _text(r.get("cheque_status")).replace("ي", "ی").replace("ك", "ک")
+            due = str(r.get("due_date") or "")[:10]
+            if any(t in status for t in ("برگشت", "واخواست", "مسترد")) and due and due < cutoff:
+                continue
             r["source_kind"] = "received_cheques"
+            rows.append(r)
         return rows
 
     def _issued_cheque_rows(self) -> list[dict[str, Any]]:

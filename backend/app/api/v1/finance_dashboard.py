@@ -444,6 +444,8 @@ def customer_collection_portfolio(
     limit: int = Query(default=300, ge=1, le=1000),
     source: str = Query(default="rahkaran", pattern="^(rahkaran|karamad)$"),
     branch: str | None = Query(default=None, max_length=200),
+    year: int | None = Query(default=None, ge=1395, le=1500),
+    month: int | None = Query(default=None, ge=1, le=12),
 ):
     if source == "karamad":
         from app.services.karamad_live_customer_activity_service import KaramadLiveCustomerActivityService
@@ -453,6 +455,13 @@ def customer_collection_portfolio(
             raise HTTPException(status_code=500, detail=f"بارگذاری ماژول جامع مطالبات مشتریان کارآمد با خطا مواجه شد: {exc}") from exc
     from app.services.customer_intelligence_service import CustomerIntelligenceService
     try:
+        if year and month:
+            # فیلتر ماه: مانده هر مشتری تا پایان همان ماه شمسی (ماه جاری = تا امروز)
+            import datetime as _dt
+            import jdatetime
+            nxt = jdatetime.date(year + (month == 12), month % 12 + 1, 1).togregorian()
+            as_of = min(nxt - _dt.timedelta(days=1), _dt.date.today())
+            return CustomerIntelligenceService().portfolio_as_of(limit, as_of)
         return CustomerIntelligenceService().collection_portfolio(limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"بارگذاری ماژول جامع مطالبات مشتریان با خطا مواجه شد: {exc}") from exc
@@ -521,7 +530,7 @@ def sales_network_debt_detail(kind: str, scope_id: int):
         raise HTTPException(status_code=500, detail=f"دریافت جزئیات بدهی با خطا مواجه شد: {exc}") from exc
 
 
-@router.get("/distribution", summary="توزیع بار کارآمد: فاکتورهای توزیع‌نشده، حواله‌های باز، سرعت خروج و موزعان")
+@router.get("/distribution", summary="توزیع بار کارآمد: فاکتورهای توزیع‌نشده، سرعت خروج و موزعان")
 def distribution_overview():
     from app.services.karamad_distribution_service import KaramadDistributionService
     try:
@@ -539,6 +548,168 @@ def distribution_monthly(year: int, month: int):
         return KaramadDistributionService().monthly(year, month)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"دریافت گزارش توزیع و وصول با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/payables", summary="پرداخت تجاری: حساب‌های پرداختنی تجاری (511002) و غیرتجاری (512001) به تفکیک طرف حساب")
+def payables_overview():
+    from app.services.payables_service import PayablesService
+    try:
+        return PayablesService().overview()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت حساب‌های پرداختنی با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/payables/{module}/{dl_code}", summary="ریز گردش یک طرف حساب پرداختنی (مثل گزارش ریز گردش راهکاران)")
+def payables_ledger(module: str, dl_code: str):
+    from app.services.payables_service import PayablesService
+    try:
+        return PayablesService().ledger(module, dl_code)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت ریز گردش طرف حساب با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/inventory-pricing", summary="هشدار اسناد انبار قیمت‌گذاری‌نشده راهکاران: خلاصه انبارها و ماه‌ها")
+def inventory_pricing_summary():
+    from app.services.inventory_pricing_service import InventoryPricingService
+    try:
+        return InventoryPricingService().summary()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت وضعیت قیمت‌گذاری انبار با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/inventory-pricing/documents", summary="ریز اسناد انبار قیمت‌گذاری‌نشده")
+def inventory_pricing_documents(
+    store_id: int | None = Query(default=None),
+    direction: str | None = Query(default=None, pattern="^(receipt|issue)$"),
+    factory_only: bool = Query(default=False),
+    pricing: str = Query(default="unpriced", pattern="^(unpriced|priced|all)$"),
+):
+    from app.services.inventory_pricing_service import InventoryPricingService
+    try:
+        rows = InventoryPricingService().documents(store_id=store_id, direction=direction, factory_only=factory_only, pricing=pricing)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت ریز اسناد قیمت‌گذاری‌نشده با خطا مواجه شد: {exc}") from exc
+    return {"status": "success", "count": len(rows), "documents": rows}
+
+
+@router.get("/inventory-pricing.xlsx", summary="Excel اسناد انبار قیمت‌گذاری‌نشده")
+def inventory_pricing_excel():
+    from datetime import date
+    from urllib.parse import quote
+    from app.services.inventory_pricing_service import InventoryPricingService
+    from app.utils.jalali import format_jalali_date
+    try:
+        content = InventoryPricingService().workbook().getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت Excel قیمت‌گذاری انبار با خطا مواجه شد: {exc}") from exc
+    name = f"اسناد-انبار-قیمت-گذاری-نشده-{format_jalali_date(date.today()).replace('/', '-')}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=inventory-pricing.xlsx; filename*=UTF-8''{quote(name)}"},
+    )
+
+
+def _purchase_from(from_year: int | None):
+    import jdatetime
+    return jdatetime.date(from_year, 1, 1).togregorian() if from_year else None
+
+
+@router.get("/purchase-documents", summary="اسناد خرید انبار ثبت‌حسابداری‌نشده (عملیات گروهی اسناد راهکاران)")
+def purchase_documents(
+    accounting: str = Query(default="unposted", pattern="^(unposted|all)$"),
+    from_year: int | None = Query(default=None, ge=1395, le=1500),
+    refresh: bool = Query(default=False),
+):
+    from app.services.purchase_documents_service import PurchaseDocumentsService
+    try:
+        return PurchaseDocumentsService().documents(accounting=accounting, from_date=_purchase_from(from_year), refresh=refresh)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت اسناد خرید از راهکاران با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/purchase-items", summary="مرور تدارکات: ردیف‌های رسید خرید دائم و موقت")
+def purchase_items(from_year: int | None = Query(default=None, ge=1395, le=1500), refresh: bool = Query(default=False)):
+    from app.services.purchase_documents_service import PurchaseDocumentsService
+    try:
+        return PurchaseDocumentsService().items(from_date=_purchase_from(from_year), refresh=refresh)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت مرور تدارکات از راهکاران با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/purchase-items/{item_id}/pair", summary="سند یک ردیف مرور تدارکات و سند مرتبط موقت↔دائم")
+def purchase_item_pair(item_id: int):
+    from app.services.purchase_documents_service import PurchaseDocumentsService
+    try:
+        return PurchaseDocumentsService().voucher_pair(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"دریافت سند مرتبط با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/purchase-{report}.xlsx", summary="Excel اسناد خرید / مرور تدارکات")
+def purchase_excel(
+    report: str,
+    from_year: int | None = Query(default=None, ge=1395, le=1500),
+    year: int | None = Query(default=None, ge=1395, le=1500),
+    month: int | None = Query(default=None, ge=1, le=12),
+):
+    from datetime import date
+    from urllib.parse import quote
+    from app.services.purchase_documents_service import PurchaseDocumentsService
+    from app.utils.jalali import format_jalali_date
+    if report not in ("documents", "items"):
+        raise HTTPException(status_code=404, detail="گزارش نامعتبر")
+    try:
+        content = PurchaseDocumentsService().workbook(report, _purchase_from(from_year or year), year=year, month=month).getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت Excel با خطا مواجه شد: {exc}") from exc
+    title = "عملیات-گروهی-اسناد" if report == "documents" else "مرور-تدارکات"
+    name = f"{title}-{format_jalali_date(date.today()).replace('/', '-')}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=purchase-{report}.xlsx; filename*=UTF-8''{quote(name)}"},
+    )
+
+
+@router.get("/karamad/unposted-payments.xlsx", summary="Excel مشتریان کارآمد با پرداخت سندنخورده")
+def karamad_unposted_payments_excel():
+    from datetime import date
+    from urllib.parse import quote
+    from app.services.karamad_unposted_payment_service import KaramadUnpostedPaymentService
+    from app.utils.jalali import format_jalali_date
+    try:
+        content = KaramadUnpostedPaymentService().workbook().getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت گزارش پرداخت‌های سندنخورده با خطا مواجه شد: {exc}") from exc
+    name = f"پرداخت-سندنخورده-کارآمد-{format_jalali_date(date.today()).replace('/', '-')}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=karamad-unposted.xlsx; filename*=UTF-8''{quote(name)}"},
+    )
+
+
+@router.get("/hybrid-settlement-reconciliation.xlsx", summary="Excel تطبیق پرداخت هیبریدها در کارآمد با دریافت شرکت در راهکاران")
+def hybrid_settlement_reconciliation_excel(days: int = Query(default=180, ge=30, le=400)):
+    from datetime import date
+    from urllib.parse import quote
+    from app.services.hybrid_settlement_reconciliation_service import HybridSettlementReconciliationService
+    from app.utils.jalali import format_jalali_date
+    try:
+        content = HybridSettlementReconciliationService().workbook(days).getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت گزارش تطبیق تسویه هیبریدها با خطا مواجه شد: {exc}") from exc
+    name = f"تطبیق-تسویه-هیبرید-{format_jalali_date(date.today()).replace('/', '-')}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=hybrid-settlement.xlsx; filename*=UTF-8''{quote(name)}"},
+    )
 
 
 @router.get("/karamad/unrecorded-payments.xlsx", summary="Excel پرداخت‌های ثبت‌نشده احتمالی مشتریان کارآمد")
@@ -559,11 +730,27 @@ def karamad_unrecorded_payments_excel():
     )
 
 
+@router.get("/distribution.xlsx", summary="Excel همه بخش‌های توزیع بار (ماه انتخابی)")
+def distribution_excel(year: int, month: int = Query(ge=1, le=12), days: int = Query(default=30, ge=1, le=90)):
+    from urllib.parse import quote
+    from app.services.karamad_distribution_service import JALALI_MONTHS, distribution_workbook
+    try:
+        content = distribution_workbook(year, month, days).getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت Excel توزیع بار با خطا مواجه شد: {exc}") from exc
+    name = f"توزیع-بار-{JALALI_MONTHS[month - 1]}-{year}.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=distribution.xlsx; filename*=UTF-8''" + quote(name)},
+    )
+
+
 @router.get("/distribution/timeline", summary="زمان‌بندی توزیع هر فاکتور: ثبت فاکتور، ثبت حواله خروج و تاریخ خروج")
-def distribution_timeline(days: int = 14):
+def distribution_timeline(days: int = 14, year: int | None = None, month: int | None = Query(default=None, ge=1, le=12)):
     from app.services.karamad_distribution_service import KaramadDistributionService
     try:
-        return KaramadDistributionService().timeline(days)
+        return KaramadDistributionService().timeline(days, year, month)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"دریافت زمان‌بندی توزیع فاکتورها با خطا مواجه شد: {exc}") from exc
 

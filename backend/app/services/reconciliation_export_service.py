@@ -59,6 +59,8 @@ _BANK_ROW_HEADERS = [
     "مانده پایان روز بانک",
     "مانده پایان روز دفتر",
     "اختلاف مانده روز",
+    "اختلاف به نفع",
+    "سند مربوط به اختلاف",
 ]
 
 _AMOUNT_COLUMNS = ("D", "L", "O", "S", "Y", "Z", "AB", "AD", "AE", "AF")
@@ -170,6 +172,7 @@ def _bank_row_values(row: dict[str, Any]) -> list[Any]:
             "same_day_amount_batch": "تطبیق گروهی همان روز",
             "tolerance_amount_batch": "تطبیق گروهی بازه تاریخ",
             "internal_transfer_policy": "انتقال بین حساب‌های شرکت",
+            "daily_balance_match": "تأیید با مانده روزانه",
         }.get(row.get("match_method"), ""),
         row.get("match_group_row_count"),
         row.get("match_group_bank_total"),
@@ -195,6 +198,8 @@ def _bank_row_values(row: dict[str, Any]) -> list[Any]:
         row.get("bank_day_end_balance"),
         row.get("book_day_end_balance"),
         row.get("day_balance_difference"),
+        row.get("day_balance_side") or "",
+        row.get("day_balance_documents") or "",
     ]
 
 
@@ -232,7 +237,7 @@ def _add_bank_status_sheet(
     _set_widths(
         sheet,
         [10, 14, 11, 18, 46, 20, 22, 18, 18, 22, 15, 21, 13, 42, 17, 17, 20, 18, 19, 17, 18, 48,
-         22, 14, 16, 20, 14, 22, 18, 20, 20, 18],
+         22, 14, 16, 20, 14, 22, 18, 20, 20, 18, 30, 60],
     )
 
 
@@ -285,6 +290,10 @@ def _add_daily_balance_sheet(workbook: Workbook, report: dict[str, Any]) -> None
         "مانده پایان روز دفتر راهکاران",
         "اختلاف (بانک − دفتر)",
         "وضعیت",
+        "اختلاف به نفع",
+        "تغییر اختلاف نسبت به روز قبل",
+        "سند مربوط به اختلاف",
+        "مبنای تشخیص سند",
     ]
     sheet.append(headers)
     _style_header(sheet, 1, len(headers))
@@ -297,11 +306,15 @@ def _add_daily_balance_sheet(workbook: Workbook, report: dict[str, Any]) -> None
                 item.get("book_balance"),
                 item.get("difference"),
                 "برابر" if item.get("matched") else "مغایر",
+                item.get("difference_side") or "",
+                item.get("difference_change"),
+                item.get("difference_documents") or "",
+                item.get("difference_basis") or "",
             ]
         )
     if daily:
         _apply_table_style(sheet, 2, len(daily) + 1, len(headers))
-        for column in ("B", "C", "D"):
+        for column in ("B", "C", "D", "G"):
             for cell in sheet[column][1:]:
                 cell.number_format = "#,##0"
         for row_index, item in enumerate(daily, start=2):
@@ -323,7 +336,7 @@ def _add_daily_balance_sheet(workbook: Workbook, report: dict[str, Any]) -> None
             f"{book_balance.get('last_matched_date_jalali') or '-'} برابر است؛ "
             f"اولین روز مغایر: {book_balance['first_unmatched_date_jalali']}",
         )
-    _set_widths(sheet, [16, 24, 28, 22, 12])
+    _set_widths(sheet, [16, 24, 28, 22, 12, 34, 22, 80, 40])
 
 
 def _add_fee_sheet(workbook: Workbook, report: dict[str, Any]) -> None:

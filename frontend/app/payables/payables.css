@@ -1,0 +1,94 @@
+/* «پرداخت تجاری» — scoped to .pay-page; dark command-center theme like the liquidity page. */
+.pay-page{--pay-text:#e6f2f2;--pay-muted:#8ea4af;--pay-line:#243847;--pay-surface:#0f1d2a;--pay-accent:#2dd4bf;--pay-owe:#fb7185;--pay-adv:#38bdf8;color:var(--pay-text)}
+.pay-loading{padding:36px;text-align:center;color:#8ea4af}
+.pay-hero{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center;padding:16px 18px;border-radius:14px;border:1px solid var(--pay-line);background:linear-gradient(135deg,rgba(45,212,191,.10),rgba(15,29,42,.95));margin-bottom:14px}
+.pay-hero small{color:var(--pay-muted)}
+.pay-hero h2{margin:6px 0;font-size:20px}
+.pay-hero p{margin:0;color:#cbdadd;font-size:12px;line-height:1.9;max-width:720px}
+.pay-hero-totals{display:flex;gap:12px}
+.pay-hero-totals div{display:grid;gap:2px;background:var(--pay-surface);border:1px solid var(--pay-line);border-radius:12px;padding:10px 14px;min-width:170px}
+.pay-hero-totals b{font-size:20px}
+.pay-hero-totals span,.pay-hero-totals small{color:var(--pay-muted);font-size:11px}
+.owe{color:var(--pay-owe)}
+.adv{color:var(--pay-adv)}
+.zero{color:var(--pay-muted)}
+
+.pay-modules{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.pay-module{position:relative;display:grid;gap:10px;text-align:right;background:var(--pay-surface);border:1px solid var(--pay-line);border-radius:14px;padding:14px 16px;color:var(--pay-text);cursor:pointer;font:inherit;transition:transform .25s ease,border-color .25s ease,box-shadow .25s ease;overflow:hidden}
+.pay-module::after{content:"";position:absolute;inset:auto 0 0 0;height:3px;background:var(--pay-accent);transform:scaleX(0);transform-origin:right;transition:transform .35s ease}
+.pay-module:hover{transform:translateY(-2px);border-color:#2f5466}
+.pay-module.active{border-color:var(--pay-accent);box-shadow:0 8px 28px rgba(45,212,191,.12)}
+.pay-module.active::after{transform:scaleX(1)}
+.pay-module-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.pay-module-head b{font-size:18px}
+.pay-module-head small{color:var(--pay-muted);font-size:12px}
+.pay-module-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.pay-module-grid span{display:grid;gap:2px}
+.pay-module-grid small,.pay-module-grid em{color:var(--pay-muted);font-size:11px;font-style:normal}
+.pay-module-grid strong{font-size:15px}
+.pay-module-foot{color:var(--pay-muted);font-size:12px}
+
+.pay-list{background:var(--pay-surface);border:1px solid var(--pay-line);border-radius:14px;padding:12px 14px;animation:payFadeUp .35s ease both}
+.pay-list-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.pay-list-head h3{margin:0;font-size:15px}
+.pay-list-head h3 small{color:var(--pay-muted);font-weight:normal}
+.pay-list-head input,.pay-drawer-filters input{flex:1;min-width:200px;background:#0b1824;border:1px solid #2a4555;border-radius:9px;color:var(--pay-text);padding:8px 10px;font:inherit;font-size:12px}
+.pay-chips{display:flex;gap:6px;flex-wrap:wrap}
+.pay-chips button{background:#132636;border:1px solid var(--pay-line);color:var(--pay-muted);border-radius:999px;padding:6px 11px;cursor:pointer;font:inherit;font-size:12px;transition:all .2s ease}
+.pay-chips button.active{background:#14433f;color:#7bffe9;border-color:var(--pay-accent)}
+.pay-table-wrap{overflow:auto;max-height:640px}
+.pay-table-wrap.drawer{max-height:none}
+.pay-table{width:100%;border-collapse:collapse;font-size:12px}
+.pay-table th{position:sticky;top:0;background:#132636;color:var(--pay-muted);font-weight:normal;text-align:right;padding:9px 8px;border-bottom:1px solid var(--pay-line);white-space:nowrap;cursor:pointer;user-select:none;z-index:1}
+.pay-table th:hover{color:var(--pay-text)}
+.pay-table td{padding:8px;border-bottom:1px solid var(--pay-line);vertical-align:top;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pay-table td small{display:block;color:var(--pay-muted);font-size:11px;white-space:normal}
+.pay-table td.desc{white-space:normal;min-width:240px;line-height:1.8;color:#cbdadd}
+.pay-list .pay-table tbody tr{cursor:pointer;animation:payFadeUp .3s ease both;transition:background .15s ease}
+.pay-list .pay-table tbody tr:hover{background:#14303f}
+.pay-table tbody tr.selected{background:#14433f66}
+.pay-table tr.pay-total td{font-weight:bold;background:#10222f;cursor:default}
+.pay-table tr.opening td{background:#16283a;color:#b9ccd1}
+.pay-empty{color:var(--pay-muted);text-align:center;padding:16px}
+
+.pay-overlay{position:fixed;inset:0;background:rgba(3,10,16,.55);opacity:0;pointer-events:none;transition:opacity .3s ease;z-index:80}
+.pay-overlay.open{opacity:1;pointer-events:auto}
+.pay-drawer{position:fixed;top:0;bottom:0;left:0;width:min(860px,94vw);background:#0c1a26;border-right:1px solid var(--pay-line);box-shadow:20px 0 60px rgba(0,0,0,.45);transform:translateX(-104%);transition:transform .38s cubic-bezier(.2,.8,.2,1);z-index:90;display:flex;flex-direction:column;overflow:auto;padding:16px 18px;color:#e6f2f2}
+.pay-drawer.open{transform:translateX(0)}
+.pay-drawer-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.pay-drawer-head small{color:#8ea4af;font-size:12px}
+.pay-drawer-head h3{margin:4px 0 0;font-size:19px}
+.pay-close{background:#1c3140;color:#cfe3e6;border:0;border-radius:10px;width:34px;height:34px;cursor:pointer;font-size:15px;transition:transform .2s ease}
+.pay-close:hover{transform:rotate(90deg)}
+.pay-drawer-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.pay-drawer-kpis div{display:grid;gap:2px;background:#0f1d2a;border:1px solid #243847;border-radius:11px;padding:9px 11px;animation:payFadeUp .35s ease both}
+.pay-drawer-kpis div:nth-child(2){animation-delay:.05s}.pay-drawer-kpis div:nth-child(3){animation-delay:.1s}.pay-drawer-kpis div:nth-child(4){animation-delay:.15s}
+.pay-drawer-kpis small,.pay-drawer-kpis span{color:#8ea4af;font-size:11px}
+.pay-drawer-kpis b{font-size:16px}
+.pay-tabs{position:relative;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #243847;margin-bottom:10px}
+.pay-tabs button{background:transparent;border:0;color:#8ea4af;padding:10px;cursor:pointer;font:inherit;font-size:13px;transition:color .2s ease}
+.pay-tabs button.active{color:#e6f2f2}
+.pay-tabs i{position:absolute;bottom:-1px;right:0;width:50%;height:3px;background:#2dd4bf;border-radius:3px;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.pay-tabs[data-tab="summary"] i{transform:translateX(-100%)}
+.pay-tab-body{animation:payFadeUp .3s ease both}
+.pay-drawer-filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.pay-months{display:grid;gap:8px}
+.pay-month{display:grid;grid-template-columns:90px 1fr 250px;gap:10px;align-items:center;font-size:12px}
+.pay-month-label{color:#cbdadd}
+.pay-bars{display:grid;gap:3px}
+.pay-bars i{display:block;height:8px;border-radius:4px;min-width:2px;animation:payGrow .6s ease both;transform-origin:right}
+.pay-bars i.owe{background:var(--pay-owe)}
+.pay-bars i.adv{background:var(--pay-adv)}
+.pay-month-nums{display:flex;gap:10px;justify-content:flex-end;font-variant-numeric:tabular-nums}
+.pay-month-nums em{font-style:normal}
+.pay-month-nums b{color:#cbdadd;font-weight:normal}
+.pay-legend{color:#8ea4af;font-size:12px;margin-top:8px}
+.pay-legend i{display:inline-block;width:12px;height:8px;border-radius:3px;margin:0 4px;vertical-align:middle}
+.pay-legend i.owe{background:var(--pay-owe)}.pay-legend i.adv{background:var(--pay-adv)}
+@keyframes payFadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes payGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (max-width:900px){.pay-modules{grid-template-columns:1fr}.pay-module-grid,.pay-drawer-kpis{grid-template-columns:repeat(2,1fr)}.pay-month{grid-template-columns:70px 1fr}.pay-month-nums{grid-column:1/-1;justify-content:flex-start}}
+@media (prefers-reduced-motion:reduce){.pay-page *,.pay-drawer,.pay-overlay{animation:none!important;transition:none!important}}
+/* سبک سراسری دکمه‌های اپ (کادر، پس‌زمینه، سایه) نباید روی تب‌ها و چیپ‌های این صفحه بیاید. */
+.pay-drawer .pay-tabs button,.pay-drawer .pay-tabs button.active{border:0;box-shadow:none;background:transparent;border-radius:0;min-height:0}
+.pay-page .pay-module{min-height:0}
