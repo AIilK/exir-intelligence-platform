@@ -4897,16 +4897,19 @@ function Customers({
       .catch((e) => { if (active) setNetworkError(e instanceof Error ? e.message : "دریافت شبکه فروش کارآمد ناموفق بود"); });
     return () => { active = false; };
   }, []);
+  // فیلتر ماه پرونده مشتری: null = مانده امروز؛ {year, month} = مانده هر مشتری تا پایان همان ماه شمسی
+  const [asOf, setAsOf] = useState<{ year: number; month: number } | null>(null);
   useEffect(() => {
-    // فهرست کامل مشتریان راهکاران (دارای چک + خریداران فعال سال جاری و قبل) با مانده حساب؛ یک بار در ورود صفحه.
+    // فهرست کامل مشتریان راهکاران (دارای چک + خریداران فعال سال جاری و قبل) با مانده حساب.
     let active = true;
     setPortfolioLoading(true);
-    request(`/customer-collection-portfolio?limit=1000&source=rahkaran`)
+    request(`/customer-collection-portfolio?limit=1000&source=rahkaran${asOf ? `&year=${asOf.year}&month=${asOf.month}` : ""}`)
       .then((d) => { if (active) setPortfolio(d); })
       .catch(() => { if (active) setPortfolio({ summary: {}, customers: [] }); })
       .finally(() => { if (active) setPortfolioLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [asOf]);
+  const asOfLabel = asOf ? `تا پایان ${JALALI_MONTH_NAMES[asOf.month - 1]} ${fa(asOf.year).replace(/٬/g, "")}` : "تا امروز";
   useEffect(() => {
     let active = true;
     const params = new URLSearchParams();
@@ -5059,6 +5062,7 @@ function Customers({
           </div>
           <small>{fa(visibleRows.length)} مشتری پیدا شد</small>
         </section>
+        <CustomerMonthFilter value={asOf} onChange={setAsOf} loading={portfolioLoading} />
         <div className="cf-kpis cf-directory-kpis">
           {/* مشتری فعال = فاکتور فروش قطعی در سال مالی جاری یا قبل؛ کلیک = فیلتر همین مشتریان */}
           <article className={`cf-active-kpi${debtFilter === "active" ? " active" : ""}`} onClick={() => setDebtFilter(debtFilter === "active" ? "all" : "active")} title="نمایش فقط مشتریان فعال">
@@ -5066,9 +5070,16 @@ function Customers({
             <b>{portfolioLoading ? "…" : fa(debtSummary.active_customer_count || 0)} <em>نفر</em></b>
             <span>{portfolioLoading ? "در حال دریافت" : `${fa(debtSummary.active_current_year_count || 0)} نفر خرید امسال · از ${fa(debtSummary.customer_count || 0)} پرونده`}</span>
           </article>
-          <article className="cf-accent-red"><small>کل مانده بدهی مشتریان</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.open_account_receivable_rial || 0)}</b><span>تومان</span></article>
+          {/* مثل گزارش واحد مالی «مانده حساب مشتری بر اساس تجاری و برگشتی»: مشتریان برند (بدون هیبرید و انبار پخش)،
+              مانده حساب = تجاری + اشخاص هر مشتری اگر مثبت؛ بستانکاران کم نمی‌شوند؛ برگشتی (۱۲۳۰۰۴ + ۱۲۳۰۰۹) جدا */}
+          <article className="cf-accent-red"><small>کل مانده بدهی مشتریان · {asOfLabel}</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.report_open_account_receivable_rial || 0)}</b>
+            <span>{portfolioLoading ? "تومان" : `تومان · با برگشتی ${fullToman((debtSummary.report_open_account_receivable_rial || 0) + (debtSummary.report_returned_account_rial || 0))} · بستانکاران کم نشده`}</span></article>
+          <article><small>حساب برگشتی · {asOfLabel}</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.report_returned_account_rial || 0)}</b><span>تومان · معین ۱۲۳۰۰۴ و ۱۲۳۰۰۹</span></article>
+          {/* رسمی = ۱۲۳۰۰۳ دریافتنی تجاری؛ غیررسمی = ۱۲۳۰۱۱ دریافتنی اشخاص + حساب‌های برگشتی */}
+          <article><small>غیررسمی منهای رسمی</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.report_unofficial_minus_official_rial || 0)}</b>
+            <span>{portfolioLoading ? "تومان" : `تومان · غیررسمی ${fullToman(debtSummary.report_unofficial_balance_rial || 0)} − رسمی ${fullToman(debtSummary.report_official_balance_rial || 0)}`}</span></article>
           <article><small>چک باز در دست شرکت</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.open_cheque_amount_rial || 0)}</b><span>تومان</span></article>
-          <article><small>بستانکاری مشتریان</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.customer_credit_rial || 0)}</b><span>تومان</span></article>
+          <article><small>بستانکاری مشتریان</small><b>{portfolioLoading ? "…" : fullToman(debtSummary.report_customer_credit_rial || 0)}</b><span>تومان · جدا؛ از بدهی کم نشده</span></article>
         </div>
         <div className="collection-module-filters cf-debt-filters">
           {([["all", "همه"], ["active", `خریدار فعال${portfolio?.summary?.active_customer_count != null ? ` (${fa(portfolio.summary.active_customer_count)})` : ""}`], ["debtor", "مانده بدهکار"], ["uncovered", "بدهکار بدون چک"], ["cheque", "دارای چک باز"], ["creditor", "بستانکار"]] as const).map(([k, l]) => <button key={k} className={debtFilter === k ? "active" : ""} onClick={() => setDebtFilter(k)}>{l}</button>)}
@@ -5080,6 +5091,7 @@ function Customers({
               <tr>
                 <th>مشتری</th>
                 <th>مانده بدهی</th>
+                <th>غیررسمی − رسمی</th>
                 <th>ارزش پرونده</th>
                 <th>مانده باز</th>
                 <th>معوق</th>
@@ -5102,6 +5114,8 @@ function Customers({
                     <small className="customer-row-sub">کد {fa(Number(cc.counterpart_code || c.counterpart_ref || 0)).replace(/٬/g, "")}
                       {cc.invoice_current_year_count ? ` · ${fa(cc.invoice_current_year_count)} فاکتور امسال` : cc.invoice_previous_year_count ? " · خرید سال قبل" : cc.no_cheque_history ? "" : " · بدون خرید ۲ سال اخیر"}</small></td>
                   <td>{portfolioLoading ? "…" : <><b>{fullToman(positionOf(c).open_account_receivable_rial || 0)}</b> <span className={`collection-account-state ${accountStateOf(c)}`}>{({ debtor: "بدهکار", creditor: "بستانکار", settled: "تسویه" } as any)[accountStateOf(c)] || "—"}</span></>}</td>
+                  <td>{portfolioLoading ? "…" : <><b>{fullToman(positionOf(c).unofficial_minus_official_rial || 0)}</b>
+                    <small className="customer-row-sub">غیررسمی {fullToman(positionOf(c).unofficial_balance_rial || 0)} · رسمی {fullToman(positionOf(c).official_balance_rial || 0)}</small></>}</td>
                   <td><b>{fullToman(customerPortfolioAmount(c))}</b></td>
                   <td>{c.counterpart_ref ? fullToman(c.open_exposure) : "—"}</td>
                   <td>{c.counterpart_ref ? fullToman(c.overdue_open_amount) : fullToman(k.received_cheque_overdue_amount_rial || 0)}</td>
@@ -5120,6 +5134,29 @@ function Customers({
       </article>
     </>
   );
+}
+
+// فیلتر ماه پرونده مشتری: سال + ماه‌های همان سال؛ «امروز» = مانده لحظه‌ای. ماه‌های آینده غیرفعال‌اند.
+function CustomerMonthFilter({ value, onChange, loading }: {
+  value: { year: number; month: number } | null; onChange: (v: { year: number; month: number } | null) => void; loading: boolean;
+}) {
+  const now = currentJalali();
+  const [year, setYear] = useState(value?.year || now.year);
+  const years = [now.year, now.year - 1];
+  return <section className="cf-month-filter">
+    <b>مانده</b>
+    <button type="button" className={!value ? "active" : ""} onClick={() => onChange(null)}>امروز</button>
+    <select value={year} onChange={(e) => setYear(Number(e.target.value))} aria-label="سال">
+      {years.map((y) => <option key={y} value={y}>{fa(y).replace(/٬/g, "")}</option>)}
+    </select>
+    {JALALI_MONTH_NAMES.map((name, i) => {
+      const future = year > now.year || (year === now.year && i + 1 > now.month);
+      const active = value?.year === year && value?.month === i + 1;
+      return <button type="button" key={name} disabled={future} className={active ? "active" : ""}
+        onClick={() => onChange(active ? null : { year, month: i + 1 })} title={`مانده هر مشتری تا پایان ${name} ${fa(year).replace(/٬/g, "")}`}>{name}</button>;
+    })}
+    {loading && <small>در حال محاسبه…</small>}
+  </section>;
 }
 
 function Cheques({ rows, agent }: { rows: Cheque[]; agent?: AgentResult }) {

@@ -71,6 +71,24 @@ def active_rahkaran_buyers() -> dict[int, dict[str, Any]]:
     return out
 
 
+OFFICIAL_SL = "123003"                             # حساب‌های دریافتنی تجاری (رسمی)
+UNOFFICIAL_SLS = ("123011", "123004", "123009")    # دریافتنی اشخاص + حساب‌های برگشتی (غیررسمی)
+MAIN_SLS = ("123003", "123011")                    # «مانده حساب» گزارش واحد مالی
+RETURNED_SLS = ("123004", "123009")                # «حساب برگشتی» گزارش واحد مالی
+# کدهایی که گزارش واحد مالی حساب نمی‌کند (به درخواست واحد مالی)
+REPORT_EXCLUDED_CODES = {"848000"}                 # . فروش اینترنتی (لورینت)
+
+
+def _in_receivable_report(item: dict[str, Any], account: dict[str, Any]) -> bool:
+    """مشتری برند که در گزارش «مانده حساب مشتری» واحد مالی شمرده می‌شود: کد تفصیلی ۶ رقمی ۷xxxxx تا ۹xxxxx،
+    بدون هیبرید و انبار پخش (کدهای ۶۰xxxx اشخاص/کارکنان و خریداران مواد اولیه بیرون می‌مانند).
+    با فایل ۱۴۰۵/۰۲ واحد مالی تطبیق داده شد (۲۳۷ مشتری مشترک، اختلاف فقط ثبت‌های بعد از تاریخ فایل)."""
+    code = str(item.get("counterpart_code") or account.get("dl_code") or "").strip()
+    name = str(item.get("counterpart_name") or "").replace("ي", "ی").replace("ك", "ک")
+    return (len(code) == 6 and code[0] in "789" and code not in REPORT_EXCLUDED_CODES
+            and not any(w in name for w in ("هیبرید", "انبار")))
+import threading as _threading
+_PORTFOLIO_REFRESHING = _threading.Lock()
 _PORTFOLIO_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
 
 
@@ -156,11 +174,21 @@ class CustomerIntelligenceService:
     def collection_portfolio(self, limit: int = 300) -> dict[str, Any]:
         """Managerial customer-collection portfolio with account + cheque coverage in one dataset.
 
-        ~۳۰ ثانیه طول می‌کشد (مانده حساب ~۶۰۰ مشتری)؛ ۵ دقیقه در حافظه نگه داشته می‌شود.
+        ساخت کامل چند ثانیه است؛ نتیجه در حافظه می‌ماند. بعد از ۵ دقیقه همان نسخه قبلی فوری برگردانده می‌شود
+        و نسخه تازه در پس‌زمینه ساخته می‌شود (هیچ کاربری منتظر ساخت دوباره نمی‌ماند).
         """
+        import threading
         import time
         hit = _PORTFOLIO_CACHE.get(limit)
-        if hit and time.time() - hit[0] < 300:
+        if hit:
+            # بعد از ۶۰ ثانیه تازه‌سازی در پس‌زمینه (ساخت ~۶ ثانیه است؛ اسناد راهکاران مدام اضافه می‌شوند)
+            if time.time() - hit[0] >= 60 and _PORTFOLIO_REFRESHING.acquire(blocking=False):
+                def refresh():
+                    try:
+                        _PORTFOLIO_CACHE[limit] = (time.time(), self._collection_portfolio(limit))
+                    finally:
+                        _PORTFOLIO_REFRESHING.release()
+                threading.Thread(target=refresh, daemon=True).start()
             return hit[1]
         result = self._collection_portfolio(limit)
         _PORTFOLIO_CACHE[limit] = (time.time(), result)
@@ -206,38 +234,28 @@ class CustomerIntelligenceService:
             if ref is None:
                 continue
             account = positions.get(int(ref)) or {"found": False, **({"error": bulk_error} if bulk_error else {})}
-            balance = float(account.get("balance_rial", 0) or 0) if account.get("found") else 0.0
-            open_account = max(balance, 0.0)
-            customer_credit = max(-balance, 0.0)
-            open_cheques = float(item.get("open_exposure", 0) or 0)
-            exposure = round(open_account + open_cheques, 2)
-            rows.append({
-                **item,
-                "account_position": account,
-                "collection_position": {
-                    "open_account_receivable_rial": round(open_account, 2),
-                    "customer_credit_rial": round(customer_credit, 2),
-                    "open_cheque_amount_rial": round(open_cheques, 2),
-                    "total_collection_exposure_rial": exposure,
-                    "cheque_coverage_percent": round(open_cheques / exposure * 100, 1) if exposure else 0.0,
-                    "uncovered_percent": round(open_account / exposure * 100, 1) if exposure else 0.0,
-                },
-            })
+            rows.append({**item, "account_position": account, "collection_position": _collection_position(item, account)})
         rows.sort(key=lambda x: float(x.get("collection_position", {}).get("total_collection_exposure_rial", 0) or 0), reverse=True)
-        return {
-            "status": "success",
-            "summary": {
-                "customer_count": len(rows),
-                "active_customer_count": sum(1 for x in rows if x.get("is_active_buyer")),
-                "active_current_year_count": sum(1 for x in rows if x.get("invoice_current_year_count")),
-                "with_cheque_count": sum(1 for x in rows if not x.get("no_cheque_history")),
-                "open_account_receivable_rial": round(sum(float(x["collection_position"]["open_account_receivable_rial"]) for x in rows), 2),
-                "open_cheque_amount_rial": round(sum(float(x["collection_position"]["open_cheque_amount_rial"]) for x in rows), 2),
-                "total_collection_exposure_rial": round(sum(float(x["collection_position"]["total_collection_exposure_rial"]) for x in rows), 2),
-                "customer_credit_rial": round(sum(float(x["collection_position"]["customer_credit_rial"]) for x in rows), 2),
-            },
-            "customers": rows,
-        }
+        return {"status": "success", "summary": _portfolio_summary(rows), "customers": rows}
+
+    def portfolio_as_of(self, limit: int, as_of) -> dict[str, Any]:
+        """همان پرتفوی، با مانده حساب هر مشتری تا پایان روز as_of (فیلتر ماه پرونده مشتری).
+
+        فهرست مشتریان و ستون‌های چک همان فهرست زنده است؛ فقط ستون‌های مانده (بدهی، بستانکار، برگشتی، رسمی/غیررسمی)
+        از اسناد تا as_of دوباره حساب می‌شود (یک کوئری، چند ثانیه).
+        """
+        from app.utils.jalali import format_jalali_date
+        base = self.collection_portfolio(limit)
+        refs = [int(x["counterpart_ref"]) for x in base.get("customers", [])]
+        positions = self.prediction.bulk_customer_account_positions(refs, as_of=as_of)
+        rows = []
+        for x in base.get("customers", []):
+            account = positions.get(int(x["counterpart_ref"])) or {"found": False}
+            rows.append({**x, "account_position": account, "collection_position": _collection_position(x, account)})
+        rows.sort(key=lambda x: float(x["collection_position"].get("total_collection_exposure_rial", 0) or 0), reverse=True)
+        return {"status": "success", "as_of": as_of.isoformat(), "as_of_jalali": format_jalali_date(as_of),
+                "summary": _portfolio_summary(rows), "customers": rows}
+
 
     def customer(self, counterpart_ref: int) -> dict[str, Any]:
         report = self.prediction.customer_prediction(counterpart_ref)
@@ -387,3 +405,53 @@ class CustomerIntelligenceService:
             "bad_signals": bad or ["هشدار بحرانی مشتری مشاهده نشد."],
             "next_best_action": "از سه مشتری اول در فهرست اولویت وصول شروع کنید و شرایط فروش اعتباری آن‌ها را بازبینی کنید." if high else "پایش هفتگی رفتار مشتریان و کنترل سیاست ۹۰ روزه ادامه پیدا کند.",
         }
+
+
+def _collection_position(item: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+    """ستون‌های مانده یک مشتری، مثل گزارش واحد مالی «مانده حساب مشتری بر اساس تجاری و برگشتی»:
+    مانده حساب = 123003 (تجاری) + 123011 (اشخاص) خالص؛ اگر مثبت بدهی، اگر منفی بستانکار (از بدهی کل کم نمی‌شود)؛
+    حساب برگشتی = 123004 + 123009 خالص، جدا. رسمی = 123003؛ غیررسمی = 123011 + حساب‌های برگشتی.
+    """
+    by_sl = {str(a.get("sl_code")): float(a.get("balance_rial") or 0)
+             for a in (account.get("account_breakdown") or [])} if account.get("found") else {}
+    main = sum(by_sl.get(sl, 0.0) for sl in MAIN_SLS)
+    returned_net = sum(by_sl.get(sl, 0.0) for sl in RETURNED_SLS)
+    open_account = max(main, 0.0)
+    official = by_sl.get(OFFICIAL_SL, 0.0)
+    unofficial = sum(b for sl, b in by_sl.items() if sl in UNOFFICIAL_SLS)
+    open_cheques = float(item.get("open_exposure", 0) or 0)
+    exposure = round(open_account + open_cheques, 2)
+    return {
+        "open_account_receivable_rial": round(open_account, 2),
+        "customer_credit_rial": round(max(-main, 0.0), 2),
+        "returned_account_rial": round(max(returned_net, 0.0), 2),
+        "in_receivable_report": _in_receivable_report(item, account),
+        "official_balance_rial": round(official, 2),
+        "unofficial_balance_rial": round(unofficial, 2),
+        "unofficial_minus_official_rial": round(unofficial - official, 2),
+        "open_cheque_amount_rial": round(open_cheques, 2),
+        "total_collection_exposure_rial": exposure,
+        "cheque_coverage_percent": round(open_cheques / exposure * 100, 1) if exposure else 0.0,
+        "uncovered_percent": round(open_account / exposure * 100, 1) if exposure else 0.0,
+    }
+
+
+def _portfolio_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+                "customer_count": len(rows),
+                "active_customer_count": sum(1 for x in rows if x.get("is_active_buyer")),
+                "active_current_year_count": sum(1 for x in rows if x.get("invoice_current_year_count")),
+                "with_cheque_count": sum(1 for x in rows if not x.get("no_cheque_history")),
+                "open_account_receivable_rial": round(sum(float(x["collection_position"]["open_account_receivable_rial"]) for x in rows), 2),
+                "open_cheque_amount_rial": round(sum(float(x["collection_position"]["open_cheque_amount_rial"]) for x in rows), 2),
+                "total_collection_exposure_rial": round(sum(float(x["collection_position"]["total_collection_exposure_rial"]) for x in rows), 2),
+                "customer_credit_rial": round(sum(float(x["collection_position"]["customer_credit_rial"]) for x in rows), 2),
+                **{k: round(sum(float(x["collection_position"][k]) for x in rows), 2)
+                   for k in ("official_balance_rial", "unofficial_balance_rial", "unofficial_minus_official_rial")},
+                # همان جمع گزارش واحد مالی: فقط مشتریان برند (بدون هیبرید، انبار پخش، فروش اینترنتی و اشخاص)
+                "report_customer_count": sum(1 for x in rows if x["collection_position"]["in_receivable_report"]),
+                **{f"report_{k}": round(sum(float(x["collection_position"][k]) for x in rows
+                                            if x["collection_position"]["in_receivable_report"]), 2)
+                   for k in ("open_account_receivable_rial", "customer_credit_rial", "returned_account_rial",
+                             "official_balance_rial", "unofficial_balance_rial", "unofficial_minus_official_rial")},
+    }

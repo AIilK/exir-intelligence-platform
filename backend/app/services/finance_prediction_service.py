@@ -65,6 +65,54 @@ def _money(value: Any) -> float:
     return float(value)
 
 
+_RECEIVABLE_TOTALS: dict[Any, tuple[float, Any]] = {}
+_RECEIVABLE_TOTALS_SECONDS = 60
+
+
+def _receivable_totals_by_code(engine: Engine, as_of: date | None = None) -> dict[int, list[dict[str, Any]]]:
+    """جمع بدهکار/بستانکار همه مشتریان در سال مالیِ تاریخ as_of (پیش‌فرض امروز)، تا پایان همان روز،
+    به تفکیک تفصیلی سطح ۴ و معین (۱۲۳۰۰۳/۴/۹/۱۱)، در یک کوئری.
+
+    فقط DLLevel4 = تفصیلی خود مشتری (مثل گزارش «مانده حساب مشتری بر اساس تجاری و برگشتی»)؛ ۶۰ ثانیه در حافظه
+    (ماه‌های گذشته عوض نمی‌شوند ولی سند عطف به ماقبل ممکن است؛ پس همان ۶۰ ثانیه).
+    """
+    import time
+
+    hit = _RECEIVABLE_TOTALS.get(as_of)
+    if hit and time.time() - hit[0] < _RECEIVABLE_TOTALS_SECONDS:
+        return hit[1]
+    query = text(
+        """
+        WITH active_fy AS (
+            SELECT TOP (1) lfy.[StartDate], CASE WHEN :as_of < lfy.[EndDate] THEN :as_of ELSE lfy.[EndDate] END AS [EndDate]
+            FROM GNR3.[LedgerFiscalYear] lfy
+            WHERE lfy.[LedgerRef] = 1
+              AND :as_of >= CAST(lfy.[StartDate] AS date)
+              AND :as_of <= CAST(lfy.[EndDate] AS date)
+            ORDER BY lfy.[StartDate] DESC
+        )
+        SELECT vi.[DLLevel4] AS [DLCode], sl.[SLID], sl.[Code] AS [SLCode], sl.[Title] AS [SLTitle],
+               SUM(COALESCE(vi.[Debit], 0)) AS [DebitAmount], SUM(COALESCE(vi.[Credit], 0)) AS [CreditAmount],
+               COUNT_BIG(*) AS [TransactionCount]
+        FROM FIN3.[VoucherItem] vi
+        INNER JOIN FIN3.[Voucher] v ON v.[VoucherID] = vi.[VoucherRef]
+        INNER JOIN FIN3.[SL] sl ON sl.[SLID] = vi.[SLRef]
+        CROSS JOIN active_fy fy
+        WHERE sl.[Code] IN (N'123003', N'123004', N'123009', N'123011')
+          AND vi.[DLLevel4] IS NOT NULL
+          AND v.[Date] >= fy.[StartDate] AND v.[Date] < DATEADD(day, 1, fy.[EndDate])
+        GROUP BY vi.[DLLevel4], sl.[SLID], sl.[Code], sl.[Title]
+        """
+    )
+    with engine.connect() as connection:
+        rows = connection.execute(query, {"as_of": as_of or date.today()}).mappings().all()
+    data: dict[int, list[dict[str, Any]]] = {}
+    for r in rows:
+        data.setdefault(int(r["DLCode"]), []).append(dict(r))
+    _RECEIVABLE_TOTALS[as_of] = (time.time(), data)
+    return data
+
+
 def cheque_reliance_rules(
     customer: dict[str, Any] | None,
     amount: float,
@@ -302,16 +350,14 @@ class FinancePredictionService:
             CROSS JOIN FIN3.[SL] sl
             LEFT JOIN FIN3.[VoucherItem] vi
               ON vi.[SLRef] = sl.[SLID]
-             AND (
-                    vi.[DLLevel4] = TRY_CONVERT(bigint, d.[DLCode])
-                 OR vi.[DLLevel5] = TRY_CONVERT(bigint, d.[DLCode])
-                 OR vi.[DLLevel6] = TRY_CONVERT(bigint, d.[DLCode])
-             )
+             -- فقط سطح ۴ = تفصیلی خود مشتری (مثل گزارش «مانده حساب مشتری بر اساس تجاری و برگشتی»).
+             -- سطح ۵ و ۶ کد منطقه/فروش‌اند؛ تطبیق با آن‌ها بدهی هزاران سطر دیگر را به چند کد می‌چسباند.
+             AND vi.[DLLevel4] = TRY_CONVERT(bigint, d.[DLCode])
             LEFT JOIN FIN3.[Voucher] v
               ON v.[VoucherID] = vi.[VoucherRef]
              AND v.[Date] >= fy.[StartDate]
              AND v.[Date] < DATEADD(day, 1, fy.[EndDate])
-            WHERE sl.[Code] IN (N'123003', N'123004', N'123011')
+            WHERE sl.[Code] IN (N'123003', N'123004', N'123009', N'123011')
               AND (vi.[VoucherItemID] IS NULL OR v.[VoucherID] IS NOT NULL)
             GROUP BY
                 d.[DLID], d.[DLCode], d.[DLTitle], d.[PartyID], d.[CustomerID],
@@ -370,7 +416,7 @@ class FinancePredictionService:
             "receivable_sl_codes": ["123003", "123004", "123011"],
         }
 
-    def bulk_customer_account_positions(self, counterpart_refs: list[int]) -> dict[int, dict[str, Any]]:
+    def bulk_customer_account_positions(self, counterpart_refs: list[int], as_of: date | None = None) -> dict[int, dict[str, Any]]:
         """Same figures as ``customer_account_position`` for many customers in ONE query.
 
         The per-customer version costs ~0.5s each; the collection portfolio called it
@@ -381,65 +427,16 @@ class FinancePredictionService:
         refs = sorted({int(x) for x in counterpart_refs})
         if not refs:
             return {}
-        query = text(
-            """
-            WITH active_fy AS (
-                SELECT TOP (1) lfy.[StartDate], lfy.[EndDate]
-                FROM GNR3.[LedgerFiscalYear] lfy
-                WHERE lfy.[LedgerRef] = 1
-                  AND CAST(GETDATE() AS date) >= CAST(lfy.[StartDate] AS date)
-                  AND CAST(GETDATE() AS date) <= CAST(lfy.[EndDate] AS date)
-                ORDER BY lfy.[StartDate] DESC
-            ),
-            customer_dl AS (
-                SELECT dl.[DLID], TRY_CONVERT(bigint, dl.[Code]) AS [DLCode]
-                FROM FIN3.[DL] dl
-                WHERE dl.[DLID] IN :refs
-            ),
-            receivable_sl AS (
-                SELECT sl.[SLID], sl.[Code], sl.[Title]
-                FROM FIN3.[SL] sl
-                WHERE sl.[Code] IN (N'123003', N'123004', N'123011')
-            ),
-            items AS (
-                SELECT vi.[VoucherItemID], vi.[SLRef], vi.[Debit], vi.[Credit],
-                       vi.[DLLevel4], vi.[DLLevel5], vi.[DLLevel6]
-                FROM FIN3.[VoucherItem] vi
-                INNER JOIN FIN3.[Voucher] v ON v.[VoucherID] = vi.[VoucherRef]
-                CROSS JOIN active_fy fy
-                WHERE vi.[SLRef] IN (SELECT [SLID] FROM receivable_sl)
-                  AND (vi.[DLLevel4] IN :codes OR vi.[DLLevel5] IN :codes OR vi.[DLLevel6] IN :codes)
-                  AND v.[Date] >= fy.[StartDate]
-                  AND v.[Date] < DATEADD(day, 1, fy.[EndDate])
-            ),
-            item_dl AS (
-                SELECT DISTINCT i.[VoucherItemID], d.[DLID]
-                FROM items i
-                CROSS APPLY (VALUES (i.[DLLevel4]), (i.[DLLevel5]), (i.[DLLevel6])) lvl([Code])
-                INNER JOIN customer_dl d ON d.[DLCode] = lvl.[Code]
-            )
-            SELECT x.[DLID], sl.[SLID], sl.[Code] AS [SLCode], sl.[Title] AS [SLTitle],
-                   COALESCE(SUM(COALESCE(i.[Debit], 0)), 0) AS [DebitAmount],
-                   COALESCE(SUM(COALESCE(i.[Credit], 0)), 0) AS [CreditAmount],
-                   COUNT_BIG(*) AS [TransactionCount]
-            FROM item_dl x
-            INNER JOIN items i ON i.[VoucherItemID] = x.[VoucherItemID]
-            INNER JOIN receivable_sl sl ON sl.[SLID] = i.[SLRef]
-            GROUP BY x.[DLID], sl.[SLID], sl.[Code], sl.[Title]
-            """
-        ).bindparams(bindparam("refs", expanding=True), bindparam("codes", expanding=True))
+        # یک کوئری برای همه مشتریان: جمع سال مالی جاری به تفکیک تفصیلی سطح ۴ و معین (بدون فهرست بلند کدها؛
+        # نسخه قبلی با «DLLevel4 IN (۲۵۰ کد)» برای ۶۰۰ مشتری ~۱۲۰ ثانیه طول می‌کشید، این ~چند ثانیه).
+        by_code = _receivable_totals_by_code(self.engine, as_of)
         with self.engine.connect() as connection:
             dl_codes = connection.execute(
                 text("SELECT [DLID], TRY_CONVERT(bigint, [Code]) FROM FIN3.[DL] WHERE [DLID] IN :refs").bindparams(bindparam("refs", expanding=True)),
                 {"refs": refs},
             ).all()
-            existing = {int(r[0]) for r in dl_codes}
-            codes = sorted({int(r[1]) for r in dl_codes if r[1] is not None}) or [-1]
-            rows = connection.execute(query, {"refs": refs, "codes": codes}).mappings().all()
-
-        by_ref: dict[int, list[Any]] = {}
-        for r in rows:
-            by_ref.setdefault(int(r["DLID"]), []).append(r)
+        existing = {int(r[0]) for r in dl_codes}
+        by_ref: dict[int, list[Any]] = {int(r[0]): by_code.get(int(r[1]), []) for r in dl_codes if r[1] is not None}
         result: dict[int, dict[str, Any]] = {}
         for ref in existing:
             items = by_ref.get(ref, [])
@@ -470,6 +467,9 @@ class FinancePredictionService:
                 "calculation_method": "voucher_dl_receivable_sl_fiscal_year",
             }
         return result
+
+    def receivable_totals_by_code(self) -> dict[int, list[dict[str, Any]]]:
+        return _receivable_totals_by_code(self.engine)
 
     def customer_latest_invoice(self, counterpart_ref: int) -> dict[str, Any] | None:
         """Return the latest Rahkaran sales invoice for the customer behind a cheque/customer DL.

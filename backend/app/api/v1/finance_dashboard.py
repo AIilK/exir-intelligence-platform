@@ -444,6 +444,8 @@ def customer_collection_portfolio(
     limit: int = Query(default=300, ge=1, le=1000),
     source: str = Query(default="rahkaran", pattern="^(rahkaran|karamad)$"),
     branch: str | None = Query(default=None, max_length=200),
+    year: int | None = Query(default=None, ge=1395, le=1500),
+    month: int | None = Query(default=None, ge=1, le=12),
 ):
     if source == "karamad":
         from app.services.karamad_live_customer_activity_service import KaramadLiveCustomerActivityService
@@ -453,6 +455,13 @@ def customer_collection_portfolio(
             raise HTTPException(status_code=500, detail=f"بارگذاری ماژول جامع مطالبات مشتریان کارآمد با خطا مواجه شد: {exc}") from exc
     from app.services.customer_intelligence_service import CustomerIntelligenceService
     try:
+        if year and month:
+            # فیلتر ماه: مانده هر مشتری تا پایان همان ماه شمسی (ماه جاری = تا امروز)
+            import datetime as _dt
+            import jdatetime
+            nxt = jdatetime.date(year + (month == 12), month % 12 + 1, 1).togregorian()
+            as_of = min(nxt - _dt.timedelta(days=1), _dt.date.today())
+            return CustomerIntelligenceService().portfolio_as_of(limit, as_of)
         return CustomerIntelligenceService().collection_portfolio(limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"بارگذاری ماژول جامع مطالبات مشتریان با خطا مواجه شد: {exc}") from exc

@@ -183,3 +183,13 @@
 .cf-active-kpi:hover{transform:translateY(-2px)}
 .cf-active-kpi.active{box-shadow:0 0 0 1px #2dd4bf}
 .cf-active-kpi b em{font-style:normal;font-size:13px;color:#8ea4af;font-weight:normal}
+
+/* فیلتر ماه پرونده مشتری (مانده تا پایان ماه) */
+.cf-month-filter{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:10px 0;padding:8px 10px;background:#0f1d2a;border:1px solid #243847;border-radius:11px}
+.cf-month-filter b{font-size:13px;margin-left:4px}
+.cf-month-filter select{background:#0b1824;color:#e6f2f2;border:1px solid #2a4252;border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
+.cf-month-filter button{background:transparent;border:1px solid #2a4252;color:#cfe3e6;border-radius:8px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer;min-height:0}
+.cf-month-filter button:hover:not(:disabled){background:#13283a}
+.cf-month-filter button.active{background:#14433f;border-color:#2dd4bf;color:#7bffe9}
+.cf-month-filter button:disabled{opacity:.35;cursor:default}
+.cf-month-filter small{color:#8ea4af;font-size:11px;margin-right:6px}
