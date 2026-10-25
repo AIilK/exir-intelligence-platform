@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, useApp } from '../lib.jsx'
+import { fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, useApp, fullTitle } from '../lib.jsx'
 import { buildXlsx } from '../xlsx.js'
 
 const NUMERIC = new Set(['money', 'int', 'pct', 'num1', 'spark'])
@@ -170,7 +170,7 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
     const v = n[c.key]
     return (
       <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${typeof v === 'number' && v < 0 && c.type !== 'spark' ? 'neg' : ''}`}
-        style={cellStyle ? cellStyle(n, c) : undefined}>
+        style={cellStyle ? cellStyle(n, c) : undefined} title={c.render ? undefined : fullTitle(v, c.type)}>
         {c.render ? c.render(n) : cell(v, c.type, unit)}
       </td>
     )

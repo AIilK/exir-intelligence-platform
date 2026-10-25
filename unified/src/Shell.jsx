@@ -1,18 +1,26 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { useApp, useBusy } from '@sales/lib.jsx'
+import { useApp, useBusy, fetchJson } from '@sales/lib.jsx'
 import { useJson, faDigits } from './data.js'
 
 const GROUPS = [
   { id: 'home', items: [{ to: '/', label: 'نمای مدیر', icon: '✦', end: true }] },
   {
-    id: 'sales', label: 'فروش', dot: 'var(--u-sales)', items: [
+    id: 'sales', label: 'فروش کارآمد (هیبرید)', dot: 'var(--u-sales)', items: [
       { to: '/sales', label: 'نمای کلی فروش', icon: '◱' },
       { to: '/hybrid', label: 'عملکرد هیبرید', icon: '⌂' },
       { to: '/team', label: 'تیم فروش', icon: '☺' },
       { to: '/products', label: 'محصولات و گروه‌ها', icon: '▦' },
       { to: '/customers', label: 'مشتریان (فروش)', icon: '◎' },
       { to: '/analysis', label: 'تحلیل فروش', icon: '◔' },
+    ],
+  },
+  {
+    id: 'rahkaran', label: 'فروش راهکاران (B2B)', dot: 'var(--u-sales)', items: [
+      { to: '/rahkaran', label: 'نمایندگان B2B', icon: '◉', end: true },
+      { to: '/rahkaran/customer-brand', label: 'مشتری × برند', icon: '▦' },
+      { to: '/rahkaran/total-report', label: 'گزارش کل (Total)', icon: '☰' },
+      { to: '/rahkaran/export', label: 'فروش صادراتی', icon: '✈' },
     ],
   },
   {
@@ -49,12 +57,29 @@ const GROUPS = [
   },
 ]
 
+/** sales backend live check (sql_source.live_step): true while it is reading Karamad every few seconds */
+function useSalesLive() {
+  const [live, setLive] = useState(null)
+  useEffect(() => {
+    const check = () => fetchJson('/api/stamp').then((s) => setLive(!!s.live)).catch(() => setLive(false))
+    check()
+    const id = setInterval(check, 10000)
+    return () => clearInterval(id)
+  }, [])
+  return live
+}
+
 function SourceStatus() {
   const { meta, metaError } = useApp()
+  const live = useSalesLive()
   const fin = useJson('/api/v1/liquidity/categories')
   const salesAt = meta?.file?.months?.find((m) => m.month === meta?.file?.month)?.fetched
+  const salesSub = metaError ? 'قطع'
+    : live ? 'متصل'
+      : salesAt ? faDigits(salesAt.slice(11, 16)) // live off or stalled: show when the data is from
+        : '…'
   const rows = [
-    { label: 'فروش (کارآمد)', ok: !!meta && !metaError, sub: metaError ? 'قطع' : salesAt ? faDigits(salesAt.slice(11, 16)) : '…' },
+    { label: 'فروش (کارآمد)', ok: !!meta && !metaError, sub: salesSub },
     { label: 'مالی (راهکاران و کارآمد)', ok: !!fin.data, sub: fin.error ? 'قطع' : fin.data ? 'متصل' : '…' },
   ]
   return (
@@ -74,7 +99,7 @@ export default function Shell() {
   const { pathname } = useLocation()
   const busy = useBusy()
   const [menuOpen, setMenuOpen] = useState(false)
-  const [sysOpen, setSysOpen] = useState(() => pathname.startsWith('/finance/') && GROUPS[4].items.some((i) => i.to === pathname))
+  const [sysOpen, setSysOpen] = useState(() => pathname.startsWith('/finance/') && GROUPS.find((g) => g.collapsible).items.some((i) => i.to === pathname))
   useEffect(() => { window.scrollTo(0, 0); setMenuOpen(false) }, [pathname])
   return (
     <div className="u-app">

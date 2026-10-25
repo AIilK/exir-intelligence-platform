@@ -5,7 +5,7 @@ import { Kpi, Card, Loading, ErrorBox, Empty, Tabs } from '../components/ui.jsx'
 import { HBar, TrendChart } from '../components/Chart.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { DiscountBars } from './Analysis.jsx'
-import { ChainSelloutBlock, isChainOnly } from './ChainSellout.jsx'
+import { ChainSelloutBlock, isChainOnly, isOnlineOnly } from './ChainSellout.jsx'
 
 const DISC_TABS = [{ value: 'branch', label: 'شعبه' }, { value: 'category', label: 'گروه کالا' }, { value: 'group', label: 'زیرگروه' }]
 
@@ -82,6 +82,7 @@ export default function Overview() {
   const { unit, filters } = useApp()
   const nav = useNavigate()
   const chainOnly = isChainOnly(filters.branch)
+  const onlineOnly = isOnlineOnly(filters.branch)
   const [catBy, setCatBy] = useState('qty')   // ۱۲ گروه کالای برتر: پیش‌فرض بر اساس تعداد
   const [sellerTier, setSellerTier] = useState('all')
   const [custTier, setCustTier] = useState('all')
@@ -94,6 +95,7 @@ export default function Overview() {
       <PageHead title="نمای کلی" desc="شاخص‌های اصلی فروش در محدوده فیلترهای انتخاب‌شده" />
       <KpiRow k={k} />
       {chainOnly && <ChainSelloutBlock />}
+      {onlineOnly && <ChainSelloutBlock kind="online" />}
       <div className="grid g2">
         <Card title="روند روزانه فروش" subtitle="فروش خالص، برگشتی و درخواست‌های ثبت‌شده در هر روز" className="span2">
           <TrendChart trend={data.trend} unit={unit} />

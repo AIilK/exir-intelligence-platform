@@ -22,6 +22,9 @@ import chain_store as CS
 import inventory as INV
 import loader
 import planning as PL
+import rahkaran as RK
+import rahkaran_export as RE
+import rahkaran_sales as RS
 import sql_source
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,7 +41,10 @@ STORE = sql_source.SqlStore(ENV_FILE)
 STATE: dict = {"data": None, "error": "در حال دریافت داده از SQL…", "sql_error": None, "stamp": 0,
                "busy": False, "meta_cache": None, "planner": None}
 PLANS = PL.PlanStore(ROOT / "data" / "plans")
-INV_SRC = INV.InventorySource(ENV_FILE)
+INV_SRC = INV.InventorySource(ENV_FILE, lambda: read_config())
+FACTORY = RK.FactorySource(ENV_FILE, lambda: read_config())
+RK_SALES = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RS.load, sig_sql=RS.SIG_SQL)  # فروش B2B از راهکاران
+RK_EXPORT = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RE.load, sig_sql=RS.SIG_SQL)  # فروش صادراتی از راهکاران
 
 
 # ---------------------------------------------------------------- config
@@ -106,12 +112,45 @@ def live_worker():
             time.sleep(30)
             continue
         try:
-            if STORE.live_step(cfg):
+            changed = STORE.live_step(cfg)
+            if changed:
                 publish()
             STATE["live_error"] = None
+            live_stock(changed)
         except Exception as e:  # قطع اتصال؛ sql_worker هم همین خطا را نشان می‌دهد
             STATE["live_error"] = str(e)
             wait = max(wait, 30)
+        time.sleep(wait)
+
+
+# موجودی شعب در لایو: با هر تغییر فروش (حداکثر هر دقیقه) یا دست‌کم هر ۵ دقیقه، فقط موجودی دوباره خوانده می‌شود
+LIVE_STOCK_MIN, LIVE_STOCK_MAX = 60, 300
+
+
+def live_stock(changed: bool):
+    age = time.time() - INV_SRC.stock_at()
+    if INV_SRC.snap is None or age < LIVE_STOCK_MIN or (not changed and age < LIVE_STOCK_MAX):
+        return
+    try:
+        INV_SRC.refresh_stock()
+    except Exception as e:  # noqa: BLE001 — خطای خواندن موجودی نباید لایو فروش را متوقف کند
+        print("live stock:", e)
+
+
+def rk_live_worker():
+    """لایو راهکاران (انبار کارخانه): امضای تغییر هر live_seconds ثانیه؛ با تغییر، داده دوباره خوانده می‌شود."""
+    while True:
+        wait = float(RK.settings(read_config())["live_seconds"] or 0)
+        if wait <= 0 or not RK.configured(ENV_FILE):
+            time.sleep(30)
+            continue
+        for src in (FACTORY, RK_SALES, RK_EXPORT):
+            try:
+                src.live_step()
+                src.live_error = None
+            except Exception as e:  # قطع اتصال راهکاران؛ داده قبلی می‌ماند
+                src.live_error = str(e)
+                wait = max(wait, 30)
         time.sleep(wait)
 
 
@@ -120,6 +159,7 @@ def start():
     publish()
     threading.Thread(target=sql_worker, daemon=True).start()
     threading.Thread(target=live_worker, daemon=True).start()
+    threading.Thread(target=rk_live_worker, daemon=True).start()
 
 
 def ctx() -> dict:
@@ -244,7 +284,11 @@ def sources():
 
 @app.get("/api/stamp")
 def stamp():
-    return {"stamp": STATE["stamp"]}
+    # live: آخرین بررسی لایو تازه و بدون خطا (حداکثر ۳ برابر فاصله بررسی، دست‌کم ۳۰ ثانیه)
+    wait = float(sql_cfg(read_config()).get("live_seconds") or 0)
+    live = wait > 0 and not STATE.get("live_error") and time.time() - STORE.live_checked <= max(30.0, 3 * wait)
+    return {"stamp": STATE["stamp"], "live": live, "rk_stamp": FACTORY.stamp, "rk_live": FACTORY.is_live(),
+            "rks_stamp": RK_SALES.stamp, "rks_live": RK_SALES.is_live(), "rke_stamp": RK_EXPORT.stamp, "inv_stamp": INV_SRC.stock_at()}
 
 
 class SqlReq(BaseModel):
@@ -906,8 +950,18 @@ def plan_settings(body: PlanSettings):
 
 
 # ---------------------------------------------------------------- موجودی و پیشنهاد سفارش (inventory.py)
-INV_OVERVIEW: dict = {"key": None, "data": None}
+INV_OVERVIEW: dict = {"key": None, "data": None, "at": 0.0}
+# در حالت لایو stamp مدام عوض می‌شود؛ نمای کلی شعب (محاسبه همه شعب) حداکثر هر چند دقیقه یک بار دوباره ساخته می‌شود
+INV_OVERVIEW_MIN_SECONDS = 300
 INV_LOCK = threading.Lock()
+
+
+@app.get("/api/inventory/branches")
+def inventory_branches():
+    """فهرست شعب هیبرید برای فیلتر شعبه (بدون محاسبه؛ حتی اگر محاسبه یک شعبه خطا بدهد)."""
+    d = STATE["data"]
+    ctx()
+    return {"branches": INV.hybrid_branches(d), "default": INV.settings(read_config())["branch"]}
 
 
 @app.get("/api/inventory")
@@ -940,13 +994,25 @@ def inventory_overview(refresh: bool = False):
         fetched = INV_SRC.get(branches[0])["fetched"]
         key = (STATE["stamp"], json.dumps(cfg.get("inventory") or {}, sort_keys=True),
                json.dumps(cfg.get("plan") or {}, sort_keys=True), fetched)
-        if INV_OVERVIEW["key"] == key:
+        old = INV_OVERVIEW["key"]
+        if old == key:
             return INV_OVERVIEW["data"]
+        # فقط داده لایو (فروش یا موجودی) عوض شده و تنظیمات همان است: تا چند دقیقه محاسبه سفارش قبلی کافی است،
+        # ولی ستون‌های موجودی و ارزش انبار از آخرین موجودی خوانده‌شده تازه می‌شوند (سبک است)
+        if (not refresh and old and old[1:3] == key[1:3]
+                and time.time() - INV_OVERVIEW["at"] < INV_OVERVIEW_MIN_SECONDS):
+            res = dict(INV_OVERVIEW["data"])
+            res["branches"] = [{**r, **INV.stock_totals(INV_SRC.get(r["branch"]))} for r in res["branches"]]
+            res["fetched"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(fetched))
+            return res
         out = []
         for b in branches:
             row = {"branch": b}
             try:
-                r = INV.compute(d, INV_SRC.get(b), cfg, branch=b)
+                src = INV_SRC.get(b)
+                row.update(INV.stock_totals(src))
+                # نمای کلی فقط با داده کارآمد: سفارش باز و بار در راه راهکاران در این جدول نیست
+                r = INV.compute(d, {**src, "rk": None, "rk_error": None}, cfg, branch=b)
                 k = r["kpis"]
                 rows = r["rows"]
                 row.update(k)
@@ -963,7 +1029,7 @@ def inventory_overview(refresh: bool = False):
             out.append(row)
         res = {"branches": A.records(pd.DataFrame(out)), "today": d["meta"].get("today"),
                "fetched": time.strftime("%Y-%m-%d %H:%M", time.localtime(fetched))}
-        INV_OVERVIEW.update(key=key, data=res)
+        INV_OVERVIEW.update(key=key, data=res, at=time.time())
         return res
 
 
@@ -985,6 +1051,11 @@ class InvSettings(BaseModel):
     inactive_days: int | None = None
     min_order_cartons: float | None = None
     min_gap_pct: float | None = None
+    c_regular_months: int | None = None
+    c_order_months: float | None = None
+    return_keep_months: float | None = None
+    return_keep_months_c: float | None = None
+    return_keep_dead: int | None = None
 
 
 @app.put("/api/inventory/settings")
@@ -1024,14 +1095,227 @@ def inventory_settings(body: InvSettings):
             v = min(max(float(v), 0.0), 10.0)
         elif k == "min_gap_pct":
             v = min(max(float(v), 0.0), 0.9)
+        elif k == "c_regular_months":
+            v = min(max(int(v), 1), 6)
+        elif k == "c_order_months":
+            v = min(max(float(v), 0.25), 6.0)
+        elif k in ("return_keep_months", "return_keep_months_c"):
+            v = min(max(float(v), 0.0), 12.0)
+        elif k == "return_keep_dead":
+            v = min(max(int(v), 0), 1000)
         s[k] = v
     cfg["inventory"] = s
     write_config(cfg)
     return inventory(branch=body.branch)
 
 
+# ---------------------------------------------------------------- انبار کارخانه از راهکاران (جدا از محاسبه شعب)
+KIND_LABEL = {"product": "انبار محصول", "chain": "زنجیره‌ای", "sample": "نمونه", "stale": "راکد", "waste": "ضایعات",
+              "raw": "مواد اولیه و بسته‌بندی", "other": "سایر"}
+FINISHED = ["product", "chain", "sample", "stale", "other"]  # انبارهای کالای ساخته‌شده
+
+
+@app.get("/api/inventory/factory")
+def inventory_factory(refresh: bool = False, branch: str | None = None):
+    """موجودی انبارهای کارخانه (راهکاران) کنار موجودی و فروش جمع شعب هیبرید (کارآمد)."""
+    d = STATE["data"]
+    ctx()
+    try:
+        f = FACTORY.get(force=refresh)
+        branches = INV.hybrid_branches(d)
+        INV_SRC.get(branches[0])  # کالا، قیمت و موجودی شعب از کارآمد
+    except loader.DataError as e:
+        raise HTTPException(409, str(e))
+    sn = INV_SRC.snap
+    st = f["stock"].copy()
+    st["q"] = st["qty"].clip(lower=0)  # مانده منفی (ثبت دیرتر رسید) صفر حساب می‌شود
+    prod = st[st["is_product"]]
+    by = prod.pivot_table(index="code", columns="kind", values="q", aggfunc="sum", fill_value=0.0)
+    by = by.reindex(columns=list(KIND_LABEL), fill_value=0.0)
+    opn = f["open"]
+    open_all = opn.groupby("code")["open"].sum()
+    open_hyb = opn[opn["hybrid"]].groupby("code")["open"].sum()
+    # جمع موجودی شعب هیبرید در کارآمد (بدون ضایعات) و میانگین فروش خالص ماهانه آن‌ها در ۳ ماه بسته اخیر
+    hb = {sn["branches"][b] for b in branches if b in sn["branches"]}
+    ks = sn["stock"][sn["stock"]["bid"].isin(hb) & ~sn["stock"]["waste"]]
+    kq = ks.groupby(["bid", "code"])["qty"].sum().clip(lower=0)
+    hyb_stock = kq.groupby(level=1).sum()
+    # ارزش موجودی شعب هیبرید مثل «ارزش انبار» گزارش کارآمد: هر شعبه با میانگین قیمت خرید خودش
+    avg = pd.concat({sn["branches"][b]: INV_SRC.get(b)["avg_price"] for b in branches if b in sn["branches"]}, names=["bid", "code"])
+    hyb_val = (kq * avg.reindex(kq.index).fillna(0.0)).groupby(level=1).sum()
+    sales = d["sales"][d["sales"]["branch"].isin(branches) & ~d["sales"]["is_sample"]]
+    cur = (d["meta"].get("today") or sales["date"].max())[:7]
+    last3 = sorted(m for m in sales["month"].unique() if m < cur)[-3:]
+    hyb_month = sales[sales["month"].isin(last3)].groupby("product_code", observed=True)["qty"].sum() / max(len(last3), 1)
+    # شعبه انتخاب‌شده در صفحه: موجودی و فروش ماهانه همان شعبه کنار جمع هیبریدها
+    bid = sn["branches"].get(branch) if branch in branches else None
+    if bid is not None:
+        br_stock = ks[ks["bid"] == bid].groupby("code")["qty"].sum().clip(lower=0)
+        bs = sales[(sales["branch"] == branch) & sales["month"].isin(last3)]
+        br_month = bs.groupby("product_code", observed=True)["qty"].sum() / max(len(last3), 1)
+    # همه انبارهای راهکاران، حتی بدون مانده؛ ترتیب ستون‌ها: نوع انبار، بعد کد
+    order = {k: i for i, k in enumerate(KIND_LABEL)}
+    slist = f["stores"].assign(o=f["stores"]["kind"].map(order), n=pd.to_numeric(f["stores"]["store"], errors="coerce"))
+    slist = slist.sort_values(["o", "n"])
+    per_store = st.pivot_table(index="code", columns="store", values="q", aggfunc="sum", fill_value=0.0)
+    codes = sorted(set(per_store.index[per_store.sum(axis=1) > 0]) | set(open_all.index) | set(hyb_stock.index[hyb_stock > 0]))
+    g = sn["goods"].reindex(codes)
+    names = st.sort_values("is_product", ascending=False).drop_duplicates("code").set_index("code")
+    price = INV_SRC._any_price().reindex(codes)
+    df = pd.DataFrame(index=pd.Index(codes, name="code"))
+    df["product"] = g["name"].fillna(names["name"].reindex(codes))
+    df["brand"] = g["brand"].fillna(loader.UNKNOWN)
+    # گروه کالا از category_map.json، مثل بقیه داشبورد: کد کالا ← گروه کارآمد ← fallback
+    cmap = sql_source._load_map()
+    pmap = {k: v[0] for k, v in cmap.get("products", {}).items()}
+    cat = pd.Series(codes, index=df.index).map(pmap).fillna(g["grp"].map(cmap.get("groups", {})))
+    df["category"] = cat.fillna(cmap.get("fallback", loader.UNKNOWN))
+    df["unit"] = names["unit"].reindex(codes)
+    # کالای قابل فروش (تعریف‌شده در فروش راهکاران)؛ کالایی که فقط سفارش باز دارد هم قابل فروش است
+    df["is_product"] = names["is_product"].reindex(codes).fillna(True).astype(bool)
+    for k in KIND_LABEL:
+        df["k_" + k] = by[k].reindex(codes).fillna(0.0)
+    for sc in slist["store"]:
+        df["s_" + sc] = per_store[sc].reindex(codes).fillna(0.0) if sc in per_store.columns else 0.0
+    df["total"] = per_store.sum(axis=1).reindex(codes).fillna(0.0)  # جمع همه انبارها (واحد اصلی هر کالا)
+    # جمع هر نوع انبار برای همه اقلام (k_ فقط کالای قابل فروش است و در آزاد و ارزش به کار می‌رود)
+    for k in KIND_LABEL:
+        sc = ["s_" + x for x in slist.loc[slist["kind"] == k, "store"]]
+        df["t_" + k] = df[sc].sum(axis=1) if sc else 0.0
+    df["open_all"] = open_all.reindex(codes).fillna(0.0)
+    df["open_hybrid"] = open_hyb.reindex(codes).fillna(0.0)
+    df["free"] = (df["k_product"] - df["open_all"]).clip(lower=0)
+    df["short"] = df["open_all"] > df["k_product"]
+    df["hybrid_stock"] = hyb_stock.reindex(codes).fillna(0.0)
+    df["hybrid_monthly"] = hyb_month.reindex(codes).fillna(0.0).clip(lower=0)
+    df["grand_total"] = df["total"] + df["hybrid_stock"]  # کارخانه (همه انبارها) + شعب هیبرید؛ کالای در راه در هیچ‌کدام نیست
+    if bid is not None:
+        df["branch_stock"] = br_stock.reindex(codes).fillna(0.0)
+        df["branch_monthly"] = br_month.reindex(codes).fillna(0.0).clip(lower=0)
+    df["price"] = price
+    df["value"] = df["k_product"] * price.fillna(0.0)
+    df["free_value"] = df["free"] * price.fillna(0.0)
+    df["hybrid_value"] = hyb_val.reindex(codes).fillna(0.0)
+    agg = (st.groupby("store")
+           .apply(lambda x: pd.Series({"items": int((x["q"] > 0).sum()), "product_items": int(((x["q"] > 0) & x["is_product"]).sum()),
+                                       "product_units": float(x.loc[x["is_product"], "q"].sum()),
+                                       "units": float(x["q"].sum()), "negative": int((x["qty"] < 0).sum())}), include_groups=False))
+    stores = slist[["store", "store_name", "kind"]].merge(agg, left_on="store", right_index=True, how="left").fillna(0)
+    stores["value"] = [float((prod[prod["store"] == s]["q"] * INV_SRC._any_price().reindex(prod[prod["store"] == s]["code"]).fillna(0).values).sum())
+                       for s in stores["store"]]
+    stores["kind_label"] = stores["kind"].map(KIND_LABEL)
+    k = {"product_units": float(df["k_product"].sum()), "product_value": float(df["value"].sum()),
+         "product_skus": int((df["k_product"] > 0).sum()), "open_all": float(df["open_all"].sum()),
+         "open_hybrid": float(df["open_hybrid"].sum()), "free_units": float(df["free"].sum()), "free_value": float(df["free_value"].sum()),
+         "short_skus": int(df["short"].sum()), "other_units": float(df[["k_" + k for k in FINISHED if k != "product"]].sum().sum()),
+         "hybrid_units": float(df["hybrid_stock"].sum()), "hybrid_value": float(df["hybrid_value"].sum()),
+         "no_price": int(((df["k_product"] > 0) & df["price"].isna()).sum())}
+    return {"kpis": k, "rows": A.records(df.reset_index().replace([np.inf, -np.inf], np.nan)),
+            "stores": A.records(stores.sort_values("product_units", ascending=False)),
+            "store_cols": A.records(slist[["store", "store_name", "kind"]]),
+            "kinds": KIND_LABEL, "sellable_stores": f["settings"]["factory_stores"], "open_days": f["settings"]["open_days"],
+            "last3": last3, "today": d["meta"].get("today"), "branch": branch if bid is not None else None,
+            "fetched": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(f["fetched"])), "live": FACTORY.is_live()}
+
+
+# ---------------------------------------------------------------- فروش B2B (نمایندگان استانی) از راهکاران
+def _rk_sales(refresh: bool = False) -> dict:
+    try:
+        return RK_SALES.get(force=refresh)
+    except loader.DataError as e:
+        raise HTTPException(409, str(e))
+
+
+def _by_product(snap: dict, req: Request) -> dict:
+    """فیلتر کالا (پارامتر تکراری product = کد کالا) روی همه محاسبات؛ برای مقایسه با گزارش «فروش محصول به تفکیک مشتری» راهکاران"""
+    codes = [c for c in req.query_params.getlist("product") if c]
+    return {**snap, "lines": snap["lines"][snap["lines"]["product_code"].isin(codes)]} if codes else snap
+
+
+def _rk_payload(snap: dict, out: dict) -> dict:
+    """جدول‌های DataFrame به رکورد، به‌علاوه زمان خواندن و وضعیت لایو"""
+    out = {k: A.records(v) if isinstance(v, pd.DataFrame) else v for k, v in out.items()}
+    return {**out, "today": snap["today"], "since": snap["since"], "periods": RS.periods(snap),
+            "fetched": _ts(snap["fetched"]), "live": RK_SALES.is_live()}
+
+
+@app.get("/api/rk_sales")
+def rk_sales(req: Request, period: str = "YTD", brand: str | None = None, refresh: bool = False):
+    """نمای اصلی: KPIها، حباب استان‌ها، سهم برند، مشتریان ۸۰٪ فروش (شیت Bubble Chart)"""
+    snap = _rk_sales(refresh)
+    out = RS.summary(_by_product(snap, req), period, brand or None)
+    out["brand_list"] = sorted(snap["customers"]["brand"].unique().tolist())
+    return _rk_payload(snap, out)
+
+
+@app.get("/api/rk_sales/province")
+def rk_sales_province(req: Request, name: str, period: str = "YTD", brand: str | None = None):
+    snap = _rk_sales()
+    return _rk_payload(snap, RS.province(_by_product(snap, req), name, period, brand or None))
+
+
+@app.get("/api/rk_sales/customer")
+def rk_sales_customer(req: Request, code: str, period: str = "YTD"):
+    snap = _rk_sales()
+    out = RS.customer(_by_product(snap, req), code, period)
+    if out is None:
+        raise HTTPException(404, f"مشتری {code} در فهرست مشتریان B2B نیست.")
+    return _rk_payload(snap, out)
+
+
+@app.get("/api/rk_sales/customer_brand")
+def rk_sales_customer_brand(req: Request, period: str = "YTD", cat: str | None = None):
+    """شیت Customer Brand: نماینده × برند (ناخالص درخواست، خالص فاکتور، تعداد)"""
+    snap = _rk_sales()
+    return _rk_payload(snap, RS.customer_brand(_by_product(snap, req), period, cat or None))
+
+
+@app.get("/api/rk_sales/total_report")
+def rk_sales_total_report(req: Request, day: str | None = None, month: str | None = None):
+    """شیت Total report: برند ← نماینده، بلوک‌های روز / ماه / سال و گروه‌های کالا"""
+    snap = _rk_sales()
+    return _rk_payload(snap, RS.total_report(_by_product(snap, req), day, month, req.query_params.getlist("cat") or None))
+
+
+@app.get("/api/rk_sales/products")
+def rk_sales_products():
+    """کالاهای فروخته یا درخواست‌شده به نمایندگان B2B، برای فیلتر کالا"""
+    return {"products": RS.product_list(_rk_sales())}
+
+
+# ---------------------------------------------------------------- فروش صادراتی از راهکاران (فایل Export SalesReport)
+def _rk_export() -> dict:
+    try:
+        return RK_EXPORT.get()
+    except loader.DataError as e:
+        raise HTTPException(409, str(e))
+
+
+def _rke_payload(snap: dict, out: dict) -> dict:
+    out = {k: A.records(v) if isinstance(v, pd.DataFrame) else v for k, v in out.items()}
+    return {**out, "fetched": _ts(snap["fetched"]), "live": RK_EXPORT.is_live()}
+
+
+@app.get("/api/rk_export")
+def rk_export(req: Request):
+    """شیت‌های Dashboard، Customer، SKU&Category، Country و YTD Trend با فیلترهای اسلایسر"""
+    snap = _rk_export()
+    return _rke_payload(snap, RE.report(snap, RE.parse_filters(req.query_params)))
+
+
+@app.get("/api/rk_export/customer")
+def rk_export_customer(code: str, req: Request):
+    snap = _rk_export()
+    out = RE.customer(snap, code, RE.parse_filters(req.query_params))
+    if out is None:
+        raise HTTPException(404, f"کد مشتری صادراتی {code} در فهرست نیست.")
+    return _rke_payload(snap, out)
+
+
 # ---------------------------------------------------------------- فروش زنجیره‌ای به مصرف‌کننده (sell-out)
 SELLOUT = CS.SelloutStore(ROOT / "data" / "chain_store", ROOT / "data" / "cache" / "sql", ENV_FILE)
+# فروشگاه‌های اینترنتی (خانومی، اسنپ): همان روش زنجیره‌ای‌ها، پوشه و فهرست جدا
+ONLINE = CS.SelloutStore(ROOT / "data" / "online_sale", ROOT / "data" / "cache" / "sql", ENV_FILE, CS.online_shops)
 NO_MATCH = "بدون تطبیق در کارآمد"
 
 
@@ -1078,21 +1362,31 @@ def _sellout_group(so: pd.DataFrame, si: pd.DataFrame, by: list[str], label: str
 
 @app.get("/api/chain_sellout")
 def chain_sellout(month: str | None = None, chain: str | None = None):
+    return _sellout(SELLOUT, month, chain)
+
+
+@app.get("/api/online_sellout")
+def online_sellout(month: str | None = None, chain: str | None = None):
+    return _sellout(ONLINE, month, chain)
+
+
+def _sellout(store: CS.SelloutStore, month: str | None, chain: str | None) -> dict:
+    """فروش فروشگاه به مشتری (فایل‌های ماهانه) کنار فروش ما به همان فروشگاه (کارآمد)؛ زنجیره‌ای‌ها یا فروشگاه‌های اینترنتی."""
     cfg = read_config()
     d = STATE["data"]
     today = (d["meta"].get("today") if d else None) or CS.jalali_today()
-    files = SELLOUT.sync(cfg, today)
-    so = SELLOUT.frame.copy()
+    files = store.sync(cfg, today)
+    so = store.frame.copy()
     months = sorted(so["month"].unique().tolist())
     base = {"months": months, "files": files, "chains": sorted(so["chain"].unique().tolist()),
-            "folder": str(SELLOUT.folder), "barcode_error": SELLOUT.bc_error}
+            "folder": str(store.folder), "barcode_error": store.bc_error}
     if not months:
         return {**base, "month": None}
     if month not in months and month != "all":
         month = months[-1]
 
     # کالا: بارکد → کد کارآمد → نام/برند/گروه کارآمد؛ بدون تطبیق: نام فایل زنجیره و برند از روی نام
-    bc = SELLOUT.barcodes()
+    bc = {**store.barcodes(), **store.sku_map()}
     info = _product_info(d)
     aliases = {}
     if len(info):
@@ -1101,12 +1395,16 @@ def chain_sellout(month: str | None = None, chain: str | None = None):
     so["code"] = so["barcode"].map(bc)
     so["product"] = so["code"].map(info["product"]).fillna(so["name"])
     so["brand"] = so["code"].map(info["brand"])
+    # برند ستون فایل (فروشگاه‌های اینترنتی) با نام برند کارآمد یکی می‌شود؛ وگرنه از روی نام کالا
+    if "brand" in store.frame.columns:
+        fb = store.frame["brand"].fillna("").map(lambda b: aliases.get(CS.norm(b).lower(), b) if b else None)
+        so["brand"] = so["brand"].fillna(fb.reindex(so.index))
     so["brand"] = so["brand"].fillna(so["name"].map(lambda n: _guess_brand(n, aliases)))
     so["category"] = so["code"].map(info["category"]).fillna(NO_MATCH)
     so["key"] = so["code"].fillna("bc:" + so["barcode"].where(so["barcode"] != "", so["name"]))
 
     # sell-in: فروش خالص (بدون ارزش افزوده) کارآمد به مشتری‌های هر زنجیره، فقط زنجیره‌هایی که آن ماه فایل دارند
-    cust = {str(c): ch["name"] for ch in CS.chains(cfg) for c in ch.get("customers", [])}
+    cust = {str(c): ch["name"] for ch in store.chain_list(cfg) for c in ch.get("customers", [])}
     si = None
     if d is not None and cust:
         s = d["sales"]
@@ -1148,6 +1446,19 @@ def chain_sellout(month: str | None = None, chain: str | None = None):
                        code=prod["key"].where(~prod["key"].astype(str).str.startswith("bc:"), ""),
                        chains=prod["key"].map(so.groupby("key")["chain"].nunique()).fillna(0),
                        stores=prod["key"].map(stores.groupby("key")["store"].nunique()).fillna(0))
+    # تحلیل شعبه‌ای (فقط زنجیره‌هایی که ستون شعبه دارند، مثل هایپر می): برند و کالای هر شعبه
+    store_rows, store_products = A.records(stores_t), []
+    if len(stores):
+        bq = stores.pivot_table(index=["chain", "store"], columns="brand", values="qty", aggfunc="sum")
+        bv = stores.pivot_table(index=["chain", "store"], columns="brand", values="value", aggfunc="sum")
+        for r in store_rows:
+            ix = (r["chain"], r["store"])
+            r["brand_qty"] = {b: A._num(v) for b, v in bq.loc[ix].items() if pd.notna(v)}
+            r["brand_value"] = {b: A._num(v) for b, v in bv.loc[ix].items() if pd.notna(v)}
+        sp = stores.groupby(["chain", "store", "key"]).agg(product=("product", "first"), brand=("brand", "first"),
+                                                         category=("category", "first"), qty=("qty", "sum"),
+                                                         value=("value", "sum")).reset_index()
+        store_products = A.records(sp.rename(columns={"product": "label"}).sort_values("value", ascending=False))
     by_chain = so.pivot_table(index="key", columns="chain", values="qty", aggfunc="sum")
     prod_rows = A.records(prod.drop(columns=[c for c in ("chain",) if c in prod.columns]))
     for r in prod_rows:
@@ -1161,18 +1472,39 @@ def chain_sellout(month: str | None = None, chain: str | None = None):
          "sellin_net": float(si["net"].sum()) if si is not None else None,
          "sellin_qty": float(si["qty"].sum()) if si is not None else None}
     k["sell_through"] = k["qty"] / k["sellin_qty"] if k["sellin_qty"] else None
+    # یک زنجیره: جمع هر ستون عددی فایل اکسل خودش (با همان نام)، برای کارت‌هایی که با فایل تطبیق‌پذیرند
+    file_columns, file_stats = [], None
+    if chain:
+        keys = sorted(set(zip(so["month"], so["chain"])))
+        cols = []
+        file_stats = {"lines": 0, "return_lines": 0, "files": 0}
+        ret: dict = {}
+        for key in keys:
+            m = store.meta.get(key) or {}
+            cols += [c for c in m.get("raw_columns", []) if c not in cols]
+            st = m.get("stats") or {}
+            file_stats["lines"] += st.get("lines", 0)
+            file_stats["return_lines"] += st.get("return_lines", 0)
+            file_stats["files"] += 1
+            for c, v in (st.get("return_raw") or {}).items():
+                ret[c] = ret.get(c, 0) + v
+        raw = so["raw"] if "raw" in so.columns else pd.Series([], dtype=object)
+        for c in cols:
+            tot = float(sum((r or {}).get(c, 0) for r in raw if isinstance(r, dict)))
+            file_columns.append({"label": c, "total": tot, "returns": ret.get(c, 0.0)})
     # زنجیره‌های تعریف‌شده که sell-in دارند ولی فایل sell-out این ماه را ندارند
     missing = []
     if d is not None and month != "all":
         s = d["sales"]
-        for ch in CS.chains(cfg):
+        for ch in store.chain_list(cfg):
             if ch["name"] in set(so["chain"]) or (chain and ch["name"] != chain):
                 continue
             m = s["customer_code"].astype(str).isin([str(c) for c in ch.get("customers", [])]) & (s["date"].str[:7] == month)
             if m.any():
                 missing.append({"chain": ch["name"], "sellin_net": float(s.loc[m, "net"].sum())})
     return {**base, "month": month, "chain": chain, "kpis": k, "missing": missing,
-            "by_chain": A.records(chains_t), "stores": A.records(stores_t), "brands": A.records(brands_t),
+            "file_columns": file_columns, "file_stats": file_stats,
+            "by_chain": A.records(chains_t), "stores": store_rows, "store_products": store_products, "brands": A.records(brands_t),
             "categories": A.records(cats_t), "products": prod_rows, "trend": A.records(tr.sort_values(["month", "chain"]))}
 
 

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react'
 
 // ---------------------------------------------------------------- formatting
 const fa = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 })
@@ -24,6 +24,12 @@ export const fmtMoney = (v, unit = 'million') => {
   const x = v / u.div
   return (Math.abs(x) >= 100 || unit === 'toman' ? fa : fa1).format(x)
 }
+// مقدار کامل برای راهنمای روی عدد (hover)، با همه رقم‌ها: مبلغ ریالی به تومان، و عدد ساده (تعداد، دلار) تا دو رقم اعشار
+const faExact = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 2 })
+export const fmtFull = (v) => (isNum(v) ? `${faExact.format(v / RIAL_PER_TOMAN)} تومان` : '')
+export const fmtExact = (v) => (isNum(v) ? faExact.format(v) : '')
+/** متن hover یک مقدار بر اساس نوع ستون (money / int / num1)؛ برای بقیه چیزی نشان داده نمی‌شود */
+export const fullTitle = (v, type) => (type === 'money' ? fmtFull(v) : type === 'int' || type === 'num1' ? fmtExact(v) : undefined) || undefined
 // نمایش خلاصه برای کارت‌ها: انتخاب خودکار واحد
 export const fmtCompact = (v) => {
   if (!isNum(v)) return { value: '—', unit: '' }
@@ -81,6 +87,7 @@ export function AppProvider({ children }) {
     try { return localStorage.getItem('sd.reportDay') || '' } catch { return '' }
   })
   const [version, setVersion] = useState(0)
+  const [rkVersion, setRkVersion] = useState(0)  // داده لایو راهکاران (انبار کارخانه و فروش B2B)؛ جدا تا بقیه صفحه‌ها دوباره بارگذاری نشوند
   const [meta, setMeta] = useState(null)
   const [metaError, setMetaError] = useState(null)
 
@@ -124,11 +131,21 @@ export function AppProvider({ children }) {
   // (/api/stamp فقط یک عدد است و هزینه‌ای ندارد؛ وقتی تب پنهان است بررسی نمی‌شود)
   useEffect(() => {
     let last = null
+    let lastRk = null
+    let lastRks = null
+    let lastRke = null
+    let lastInv = null
     const check = () => {
       if (document.hidden) return
-      fetchJson('/api/stamp').then(({ stamp }) => {
-        if (last !== null && stamp !== last) setVersion((v) => v + 1)
+      fetchJson('/api/stamp').then(({ stamp, rk_stamp: rk, rks_stamp: rks, rke_stamp: rke, inv_stamp: inv }) => {
+        // موجودی شعب (کارآمد) هم در لایو جدا تازه می‌شود
+        if ((last !== null && stamp !== last) || (lastInv !== null && inv !== lastInv)) setVersion((v) => v + 1)
+        if ((lastRk !== null && rk !== lastRk) || (lastRks !== null && rks !== lastRks) || (lastRke !== null && rke !== lastRke)) setRkVersion((v) => v + 1)
         last = stamp
+        lastInv = inv
+        lastRk = rk
+        lastRks = rks
+        lastRke = rke
       }).catch(() => { /* سرور در دسترس نیست؛ دفعه بعد */ })
     }
     check()
@@ -143,8 +160,8 @@ export function AppProvider({ children }) {
   }, [])
 
   const value = useMemo(
-    () => ({ filters, setFilters, unit, setUnit, vat, setVat, version, reload, meta, metaError, reportDay, setReportDay }),
-    [filters, unit, vat, version, reload, meta, metaError, reportDay],
+    () => ({ filters, setFilters, unit, setUnit, vat, setVat, version, rkVersion, reload, meta, metaError, reportDay, setReportDay }),
+    [filters, unit, vat, version, rkVersion, reload, meta, metaError, reportDay],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -171,21 +188,30 @@ export function useBusy() {
   return n > 0
 }
 
+/** خواندن url؛ اگر فقط version عوض شده (تازه‌سازی لایو در پس‌زمینه) بی‌صدا انجام می‌شود:
+ * داده فعلی می‌ماند، نوار بارگذاری و کم‌رنگ شدن صفحه نشان داده نمی‌شود و خطای آن داده قبلی را پاک نمی‌کند */
+function useLoad(url, version, setState) {
+  const prev = useRef(null)
+  useEffect(() => {
+    if (!url) return undefined
+    let alive = true
+    const silent = prev.current === url
+    prev.current = url
+    if (!silent) { setState((s) => ({ ...s, loading: true, error: null })); bump(1) }
+    fetchJson(url)
+      .then((data) => alive && setState({ data, loading: false, error: null }))
+      .catch((e) => alive && setState((s) => (silent && s.data ? s : { data: null, loading: false, error: e.message })))
+      .finally(() => { if (!silent) bump(-1) })
+    return () => { alive = false }
+  }, [url, version, setState])
+}
+
 export function useApi(path, extra = '') {
   const { filters, vat, version } = useApp()
   const [state, setState] = useState({ data: null, loading: true, error: null })
   const q = `${toQuery(filters)}&vat=${vat ? 1 : 0}`
   const url = `${path}${path.includes('?') ? '&' : '?'}${q}${extra}`
-  useEffect(() => {
-    let alive = true
-    setState((s) => ({ ...s, loading: true, error: null }))
-    bump(1)
-    fetchJson(url)
-      .then((data) => alive && setState({ data, loading: false, error: null }))
-      .catch((e) => alive && setState({ data: null, loading: false, error: e.message }))
-      .finally(() => bump(-1))
-    return () => { alive = false }
-  }, [url, version])
+  useLoad(url, version, setState)
   return state
 }
 
@@ -193,19 +219,17 @@ export function useApi(path, extra = '') {
 export function useFetch(url) {
   const { version } = useApp()
   const [state, setState] = useState({ data: null, loading: true, error: null })
-  useEffect(() => {
-    if (!url) return undefined
-    let alive = true
-    setState((s) => ({ ...s, loading: true, error: null }))
-    bump(1)
-    fetchJson(url)
-      .then((data) => alive && setState({ data, loading: false, error: null }))
-      .catch((e) => alive && setState({ data: null, loading: false, error: e.message }))
-      .finally(() => bump(-1))
-    return () => { alive = false }
-  }, [url, version])
+  useLoad(url, version, setState)
   const setData = useCallback((data) => setState({ data, loading: false, error: null }), [])
   return { ...state, setData }
+}
+
+/** مثل useFetch برای داده راهکاران: با تغییر داده لایو راهکاران (rkVersion) بی‌صدا دوباره خوانده می‌شود */
+export function useRkFetch(url) {
+  const { rkVersion } = useApp()
+  const [state, setState] = useState({ data: null, loading: true, error: null })
+  useLoad(url, rkVersion, setState)
+  return state
 }
 
 /** درخواست ذخیره با نوار بارگذاری سراسری */

@@ -4,7 +4,9 @@ import { useApp, useBusy, EMPTY_FILTERS, FILTER_LABELS, UNITS, faDigits } from '
 import { MultiSelect, ErrorBoundary } from './ui.jsx'
 import DateRange from './DateRange.jsx'
 
+// فروش در دو بخش: کارآمد (شعب هیبرید) و راهکاران (فروش کارخانه به نمایندگان B2B)
 const NAV = [
+  { section: 'فروش کارآمد (هیبرید)' },
   { to: '/', label: 'نمای کلی', icon: '◱' },
   { to: '/hybrid', label: 'عملکرد هیبرید', icon: '⌂' },  { to: '/team', label: 'تیم فروش', icon: '☺' },
   { to: '/products', label: 'محصولات و گروه‌ها', icon: '▦' },
@@ -12,6 +14,11 @@ const NAV = [
   { to: '/analysis', label: 'تحلیل فروش', icon: '◔' },
   { to: '/plan', label: 'برنامه‌ریزی و تارگت', icon: '◇' },
   { to: '/inventory', label: 'موجودی و سفارش', icon: '▤' },
+  { section: 'فروش راهکاران (B2B)' },
+  { to: '/rahkaran', label: 'نمایندگان B2B', icon: '◉' },
+  { to: '/rahkaran/customer-brand', label: 'مشتری × برند', icon: '▦' },
+  { to: '/rahkaran/total-report', label: 'گزارش کل (Total)', icon: '☰' },
+  { to: '/rahkaran/export', label: 'فروش صادراتی', icon: '✈' },
 ]
 
 function FilterBar() {
@@ -72,7 +79,8 @@ export default function Layout() {
   const { pathname } = useLocation()
   const isData = pathname === '/data'
   // صفحه‌های برنامه‌ریزی و موجودی کنترل‌های خودشان را دارند و فیلترهای سراسری روی آن‌ها اثر ندارند
-  const noFilters = pathname === '/plan' || pathname === '/inventory'
+  const isRahkaran = pathname.startsWith('/rahkaran')  // راهکاران کنترل‌های خودش را دارد و به داده کارآمد وابسته نیست
+  const noFilters = pathname === '/plan' || pathname === '/inventory' || isRahkaran
   const busy = useBusy()
   useEffect(() => { window.scrollTo(0, 0) }, [pathname])
   return (
@@ -86,8 +94,8 @@ export default function Layout() {
           </div>
         </div>
         <nav>
-          {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'} onClick={() => setOpen(false)}>
+          {NAV.map((n) => n.section ? <div key={n.section} className="nav-section">{n.section}</div> : (
+            <NavLink key={n.to} to={n.to} end={n.to === '/' || n.to === '/rahkaran'} onClick={() => setOpen(false)}>
               <span className="nav-icon" aria-hidden>{n.icon}</span>{n.label}
             </NavLink>
           ))}
@@ -112,7 +120,7 @@ export default function Layout() {
         {busy && <div className="loadbar" role="progressbar" aria-label="در حال بروزرسانی" />}
         <button className="menu-btn" onClick={() => setOpen(!open)} aria-label="منو">☰</button>
         <ErrorBoundary resetKey={pathname}>
-        {isData ? <Outlet /> : metaError ? (
+        {isData || isRahkaran ? <Outlet /> : metaError ? (
           <div className="state error">
             {metaError}
             <div><Link to="/data" className="btn">رفتن به مدیریت منبع داده</Link></div>

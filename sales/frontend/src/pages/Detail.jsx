@@ -108,6 +108,7 @@ export default function Detail() {
       </div>
       <KpiRow k={data.kpis} />
       {dim === 'branch' && String(data.key).includes('زنجیره') && !scope.length && <ChainSelloutBlock />}
+      {dim === 'branch' && String(data.key).includes('اینترنت') && !scope.length && <ChainSelloutBlock kind="online" />}
       <div className="grid g2">
         <Card title="روند روزانه" className="span2">
           <TrendChart trend={data.trend} unit={unit} height={260} />

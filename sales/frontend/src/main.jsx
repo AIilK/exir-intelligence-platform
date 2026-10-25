@@ -15,6 +15,9 @@ import Detail from './pages/Detail.jsx'
 import DataSource from './pages/DataSource.jsx'
 import Plan from './pages/Plan.jsx'
 import Inventory from './pages/Inventory.jsx'
+import Rahkaran from './pages/Rahkaran.jsx'
+import { CustomerBrand, TotalReport } from './pages/RahkaranReports.jsx'
+import Export from './pages/Export.jsx'
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppProvider>
@@ -28,7 +31,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="customers" element={<Customers />} />
             <Route path="analysis" element={<Analysis />} />
             <Route path="plan" element={<Plan />} />
-            <Route path="inventory" element={<Inventory />} />            <Route path="detail/:dim/:key" element={<Detail />} />
+            <Route path="inventory" element={<Inventory />} />
+            <Route path="rahkaran" element={<Rahkaran />} />
+            <Route path="rahkaran/customer-brand" element={<CustomerBrand />} />
+            <Route path="rahkaran/total-report" element={<TotalReport />} />
+            <Route path="rahkaran/export" element={<Export />} />
+            <Route path="detail/:dim/:key" element={<Detail />} />
             <Route path="data" element={<DataSource />} />
             <Route path="*" element={<Overview />} />
           </Route>

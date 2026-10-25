@@ -13,6 +13,8 @@
   safety: کالای A از نوسان واقعی فروش (z × انحراف معیار)، یا بر اساس تعداد مشتری؛ B درصد ثابت؛ C بدون هشدار خودکار
   کالای B که فقط در ۱ یا ۲ ماه از ماه‌های پایه فروش داشته، نامنظم (C) حساب می‌شود (کالاهای A معاف‌اند)
 موجودی از دیتابیس کارآمد فقط خوانده می‌شود؛ تنظیمات در config.json (کلید inventory) ذخیره می‌شوند.
+از راهکاران (کارخانه، rahkaran.py): سفارش باز شعبه به کارخانه + فاکتور کارخانه که هنوز در کارآمد خرید نشده = «در راه»؛
+  موجودی در محاسبه = موجودی کارآمد + در راه + سفارش باز − درخواست باز (use_incoming)، تا کالای سفارش‌داده‌شده دوباره سفارش نشود.
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ import pandas as pd
 
 import loader
 import planning as PL
+import rahkaran as RK
 import sql_source
 
 DEFAULTS = {
@@ -51,6 +54,16 @@ DEFAULTS = {
     # آستانه هشدار نارنجی: فقط وقتی کمبود به حد قابل توجهی رسیده. آزمون همه شعب: ۲۳٪ هشدار کمتر با همان تأمین فروش
     "min_order_cartons": 0.5, # سفارش کمتر از نیم کارتن: هشدار نارنجی نمی‌دهد
     "min_gap_pct": 0.2,       # فاصله موجودی تا سطح هدف کمتر از ۲۰٪ سطح هدف: هشدار نارنجی نمی‌دهد
+    "use_incoming": True,     # سفارش باز و بار در راه از راهکاران جزو موجودی حساب شود
+    # کالای C کم‌فروش ولی منظم (فروش در حداقل این تعداد از ۶ ماه پایه، وابسته به یک مشتری نیست): وقتی موجودی آزاد
+    # به فروش تا رسیدن بار برسد، به اندازه c_order_months ماه فروش سفارش داده می‌شود (به عدد، بدون گرد کردن به کارتن)
+    "c_regular_months": 3,
+    "c_order_months": 1.0,
+    # برگشتی مازاد و راکد: نگه‌داشت = پیش‌بینی فروش (با فصل) این تعداد ماه آینده + درخواست باز؛ بقیه برگشت.
+    # مازاد به کارتن کامل رو به پایین گرد می‌شود؛ راکد کامل (به عدد) برگشت می‌خورد
+    "return_keep_months": 1.5,     # کالاهای A و B
+    "return_keep_months_c": 1.0,   # کالاهای C و نامنظم
+    "return_keep_dead": 2,         # کالای راکد: این تعداد عدد (به‌علاوه درخواست باز) می‌ماند، بقیه برگشت
 }
 _MEMO: dict = {}
 CACHE_MINUTES = 30
@@ -73,8 +86,14 @@ PRICE_SQL = """
 SELECT g.Code AS code, k.BranchRef AS branch_id, k.DateE AS d, l.Price AS price
 FROM dbo.tblFactorKLines l JOIN dbo.tblFactorK k ON k.ID = l.FactorRef JOIN dbo.tblGoods g ON g.ID = l.GoodsRef
 WHERE k.DateE >= DATEADD(day, -365, CAST(GETDATE() AS date)) AND l.Price > 1000"""
+# ارزش انبار همان گزارش کارآمد: میانگین قیمت خرید هر کالا در همین شعبه و سال مالی جاری، از تابع خود کارآمد
+# (کالایی که در این شعبه قیمت ندارد ارزش صفر می‌گیرد، مثل گزارش کارآمد)
+AVG_PRICE_SQL = """
+SELECT g.Code AS code, p.LastPrice AS price
+FROM dbo.funGoodsAvgPrice(CAST(GETDATE() AS date), ?, (SELECT MAX(FiscalYear) FROM dbo.vwStockFull)) p
+JOIN dbo.tblGoods g ON g.ID = p.ID"""
 PURCH_SQL = """
-SELECT k.BranchRef AS bid, g.Code AS code, c.PersianDate AS date, l.TotalT AS qty
+SELECT k.BranchRef AS bid, g.Code AS code, c.PersianDate AS date, CONVERT(char(10), k.DateE, 23) AS gdate, l.TotalT AS qty
 FROM dbo.tblFactorKLines l JOIN dbo.tblFactorK k ON k.ID = l.FactorRef JOIN dbo.tblGoods g ON g.ID = l.GoodsRef
 JOIN dbo.tblCalendar c ON c.GregorianDate = k.DateE
 WHERE k.DateE >= DATEADD(day, -180, CAST(GETDATE() AS date))"""
@@ -100,8 +119,9 @@ def _read(cn, sql, params):
 class InventorySource:
     """موجودی، کالا، قیمت خرید و خریدهای اخیر همه شعب در یک بار خواندن؛ هر ۳۰ دقیقه (یا با درخواست کاربر) تازه می‌شود."""
 
-    def __init__(self, env_file):
+    def __init__(self, env_file, read_cfg=None):
         self.env_file = env_file
+        self.read_cfg = read_cfg or (lambda: {})
         self.snap: dict | None = None
         self.per_branch: dict[str, dict] = {}
         self.lock = threading.Lock()
@@ -117,20 +137,27 @@ class InventorySource:
             purch = _read(cn, PURCH_SQL, [])
         finally:
             cn.close()
-        for df in (stock, goods, price, purch):
+        for df in (goods, price, purch):
             df["code"] = df["code"].map(loader._clean_code)
         br["name"] = br["Name"].map(loader._clean_text)
         stores["name"] = stores["Name"].map(loader._clean_text)
         stores["waste"] = is_waste_store(stores["name"])
-        stock["qty"] = pd.to_numeric(stock["qty"], errors="coerce").fillna(0.0)
-        stock["waste"] = stock["store"].isin(set(stores.loc[stores["waste"], "ID"]))
+        stock = self._prep_stock(stock, stores)
         purch["qty"] = pd.to_numeric(purch["qty"], errors="coerce").fillna(0.0)
         for k in ("name", "supplier", "brand", "grp"):
             goods[k] = goods[k].map(loader._clean_text)
-        self.snap = {"fetched": time.time(), "branches": dict(zip(br["name"], br["ID"].astype(int))), "stores": stores,
+        now = time.time()
+        self.snap = {"fetched": now, "stock_at": now, "branches": dict(zip(br["name"], br["ID"].astype(int))), "stores": stores,
                      "stock": stock, "goods": goods.drop_duplicates("code").set_index("code"),
-                     "price": price.sort_values("d"), "purch": purch}
+                     "price": price.sort_values("d"), "purch": purch, "rk": None, "rk_error": None}
         self.per_branch = {}
+        # راهکاران اختیاری است: اگر تنظیم نشده یا در دسترس نیست، کنترل موجودی فقط با کارآمد ادامه می‌دهد
+        if RK.settings(self.read_cfg())["use_in_branches"] and RK.configured(self.env_file):
+            try:
+                hyb = [b for b in self.snap["branches"] if "هیبرید" in b]
+                self.snap["rk"] = RK.load(self.env_file, self.read_cfg(), hyb)
+            except Exception as e:  # noqa: BLE001 — خطای اتصال راهکاران نباید تب موجودی را از کار بیندازد
+                self.snap["rk_error"] = str(e)
 
     def get(self, branch: str, force: bool = False) -> dict:
         with self.lock:
@@ -146,15 +173,78 @@ class InventorySource:
             pr = sn["price"]
             own = pr[pr["branch_id"] == bid].groupby("code")["price"].last()
             stores = sn["stores"][sn["stores"]["BranchRef"] == bid]
-            c = {"fetched": sn["fetched"], "branch_id": bid,
+            c = {"fetched": sn["stock_at"], "branch_id": bid,
                  "stores": [{"id": int(r.ID), "name": r.name, "wastage": bool(r.waste)} for r in stores.itertuples()],
                  "stock": st[~st["waste"]].groupby("code")["qty"].sum(),
                  "waste": st[st["waste"]].groupby("code")["qty"].sum(),
                  "goods": sn["goods"],
                  "price": own.combine_first(self._any_price()).astype(float),
                  "purch": sn["purch"][sn["purch"]["bid"] == bid]}
+            c["avg_price"] = self._avg_price(bid)
+            c["rk"] = self._rk_branch(branch, c["purch"])
+            c["rk_error"] = sn["rk_error"]
             self.per_branch[branch] = c
             return c
+
+    @staticmethod
+    def _prep_stock(stock: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
+        stock["code"] = stock["code"].map(loader._clean_code)
+        stock["qty"] = pd.to_numeric(stock["qty"], errors="coerce").fillna(0.0)
+        stock["waste"] = stock["store"].isin(set(stores.loc[stores["waste"], "ID"]))
+        return stock
+
+    def stock_at(self) -> float:
+        return self.snap["stock_at"] if self.snap else 0.0
+
+    def refresh_stock(self) -> bool:
+        """لایو: فقط موجودی انبارها دوباره خوانده می‌شود (چند ثانیه)؛ قیمت، خرید و راهکاران همان چرخه ۳۰ دقیقه‌ای می‌مانند."""
+        if self.snap is None:
+            return False
+        cn = sql_source.connect(sql_source.settings(sql_source.read_env(self.env_file)))
+        try:
+            stock = _read(cn, STOCK_SQL, [])
+        finally:
+            cn.close()
+        with self.lock:
+            sn = self.snap
+            stock = self._prep_stock(stock, sn["stores"])
+            now = time.time()
+            sn["stock"], sn["stock_at"] = stock, now
+            for c in self.per_branch.values():
+                st = stock[stock["bid"] == c["branch_id"]]
+                c["stock"] = st[~st["waste"]].groupby("code")["qty"].sum()
+                c["waste"] = st[st["waste"]].groupby("code")["qty"].sum()
+                c["fetched"] = now
+        return True
+
+    def _avg_price(self, bid: int) -> pd.Series:
+        """میانگین قیمت خرید کالاهای شعبه از funGoodsAvgPrice کارآمد (ارزش انبار گزارش کارآمد)."""
+        cn = sql_source.connect(sql_source.settings(sql_source.read_env(self.env_file)))
+        try:
+            p = _read(cn, AVG_PRICE_SQL, [bid])
+        finally:
+            cn.close()
+        p["code"] = p["code"].map(loader._clean_code)
+        return pd.to_numeric(p["price"], errors="coerce").fillna(0.0).groupby(p["code"]).last()
+
+    def _rk_branch(self, branch: str, purch: pd.DataFrame) -> dict | None:
+        """سفارش باز و بار در راه همین شعبه از راهکاران، به تفکیک کد کالا."""
+        rk = self.snap["rk"]
+        if rk is None:
+            return None
+        s = rk["settings"]
+        o = rk["open"][rk["open"]["branch"] == branch]
+        inv = rk["invoices"][rk["invoices"]["branch"] == branch]
+        start = (pd.Timestamp.today().normalize() - pd.Timedelta(days=int(s["transit_days"]))).strftime("%Y-%m-%d")
+        # در راه = فاکتور کارخانه در بازه − خرید ثبت‌شده کارآمد در همان بازه (هر کالا جدا، منفی = صفر)
+        got = purch[purch["gdate"] >= start].groupby("code")["qty"].sum()
+        sent = inv[inv["d"] >= start].groupby("code")["qty"].sum()
+        transit = (sent - got.reindex(sent.index).fillna(0)).clip(lower=0)
+        return {"open": o.groupby("code")["open"].sum(), "open_since": o.groupby("code")["d"].min(),
+                "open_orders": int(o["oid"].nunique()), "transit": transit[transit > 0],
+                "sent": float(sent.sum()), "got": float(got.sum()), "transit_from": start,
+                "customers": sorted(o["cust"].unique()) if len(o) else [],
+                "factory_stock": rk["factory_stock"], "factory_free": rk["factory_free"], "settings": s}
 
     def _any_price(self) -> pd.Series:
         if "_any" not in self.snap:
@@ -200,6 +290,21 @@ def _ceil_carton(q: np.ndarray, unity: np.ndarray) -> np.ndarray:
 
 def hybrid_branches(data: dict) -> list[str]:
     return sorted(b for b in data["sales"]["branch"].unique() if "هیبرید" in str(b))
+
+
+def stock_totals(src: dict) -> dict:
+    """جمع موجودی انبار اصلی و ضایعات شعبه فقط از کارآمد؛ مستقل از محاسبه سفارش تا شعب با سابقه ناکافی هم داشته باشند.
+    موجودی منفی هر کالا صفر حساب می‌شود؛ ارزش = موجودی × میانگین قیمت خرید کارآمد (همان «ارزش انبار» گزارش کارآمد)."""
+    price = src["avg_price"]
+    out = {}
+    for k, s in (("main", src["stock"]), ("waste", src["waste"])):
+        q = s.clip(lower=0)
+        out[f"{k}_units"] = float(q.sum())
+        out[f"{k}_value"] = float((q * price.reindex(q.index).fillna(0.0)).sum())
+    out["total_units"] = out["main_units"] + out["waste_units"]
+    out["total_value"] = out["main_value"] + out["waste_value"]
+    out["main_skus"] = int((src["stock"] > 0).sum())
+    return out
 
 
 def _calendar_season(data: dict, ps: dict):
@@ -285,9 +390,16 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     last_sale = sold[sold["qty"] > 0].groupby("product_code", observed=True)["date"].max()
     open_req = req[req["status"] == 0].groupby("product_code", observed=True)["qty"].sum() if req is not None and len(req) else pd.Series(dtype=float)
 
-    # -- همه کالاهای مرتبط: موجودی دار، یا فروش در ماه‌های پایه، یا درخواست باز
+    # -- راهکاران (اختیاری): سفارش باز شعبه به کارخانه و فاکتور کارخانه که هنوز در کارآمد خرید نشده
+    rk = src.get("rk")
+    use_in = bool(s.get("use_incoming")) and rk is not None
+    empty = pd.Series(dtype=float)
+    rk_open, rk_transit = (rk["open"], rk["transit"]) if rk else (empty, empty)
+
+    # -- همه کالاهای مرتبط: موجودی دار، یا فروش در ماه‌های پایه، یا درخواست باز، یا در راه از کارخانه
     stock = src["stock"]
-    codes = sorted(set(stock[stock != 0].index) | set(mq.index[(mq[base_months] != 0).any(axis=1)]) | set(open_req.index))
+    codes = sorted(set(stock[stock != 0].index) | set(mq.index[(mq[base_months] != 0).any(axis=1)]) | set(open_req.index)
+                   | set(rk_open.index) | set(rk_transit.index))
     g = src["goods"].reindex(codes)
     df = pd.DataFrame(index=pd.Index(codes, name="code"))
     df["product"] = info["product"].reindex(codes).fillna(g["name"])
@@ -298,13 +410,23 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     df["stock"] = stock.reindex(codes).fillna(0.0)
     df["waste"] = src["waste"].reindex(codes).fillna(0.0)
     df["open_req"] = open_req.reindex(codes).fillna(0.0)
-    # موجودی منهای درخواست‌های باز؛ منفی یعنی حتی درخواست‌های ثبت‌شده هم تأمین نمی‌شوند (کسری درخواست)
-    df["net_avail"] = df["stock"].clip(lower=0) - df["open_req"]
+    df["rk_open"] = rk_open.reindex(codes).fillna(0.0)
+    df["rk_transit"] = rk_transit.reindex(codes).fillna(0.0)
+    df["incoming"] = df["rk_open"] + df["rk_transit"]
+    df["open_since"] = rk["open_since"].reindex(codes) if rk else None
+    df["factory_stock"] = rk["factory_stock"].reindex(codes).fillna(0.0) if rk else np.nan
+    df["factory_free"] = rk["factory_free"].reindex(codes).fillna(0.0) if rk else np.nan
+    inc = df["incoming"] if use_in else 0.0
+    # موجودی + در راه + سفارش باز کارخانه − درخواست‌های باز؛ منفی یعنی حتی درخواست‌های ثبت‌شده هم تأمین نمی‌شوند
+    df["net_avail"] = df["stock"].clip(lower=0) + inc - df["open_req"]
     df["avail"] = df["net_avail"].clip(lower=0)
     df["req_short"] = (-df["net_avail"]).clip(lower=0)
     df["price"] = src["price"].reindex(codes)
     price_fill = float(src["price"].median()) if len(src["price"]) else 0.0
-    df["value"] = df["stock"].clip(lower=0) * df["price"].fillna(price_fill)
+    # ارزش موجودی همان «ارزش انبار» گزارش کارآمد (میانگین قیمت خرید شعبه؛ بدون قیمت = صفر)؛
+    # ارزش سفارش پایین‌تر با آخرین قیمت خرید می‌ماند چون خرید بعدی به قیمت روز است
+    df["avg_price"] = src["avg_price"].reindex(codes).fillna(0.0)
+    df["value"] = df["stock"].clip(lower=0) * df["avg_price"]
 
     # -- آمار ماهانه (ماه‌های پایه، بدون حذف فصل) و پایه بدون اثر فصل
     B = mq.reindex(index=codes, fill_value=0.0)[base_months].clip(lower=0)
@@ -401,7 +523,7 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     daily = df["fc_now"] / days.mlen.get(cur, 30)
     df["daily"] = daily
     df["cover_days"] = np.where(daily > 0, df["avail"] / daily.replace(0, np.nan), np.inf)
-    df["cover_months"] = np.where(df["fc_now"] > 0, df["stock"].clip(lower=0) / df["fc_now"].replace(0, np.nan), np.inf)
+    df["cover_months"] = np.where(df["fc_now"] > 0, (df["stock"].clip(lower=0) + inc) / df["fc_now"].replace(0, np.nan), np.inf)
 
     # -- safety
     bp = s["breadth"]
@@ -415,7 +537,14 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
 
     # -- وضعیت و سفارش
     ab = df["abc"].isin(["A", "B"])
-    dead = (df["stock"] > 0) & (df["idle_days"].isna() | (df["idle_days"].fillna(0) > s["dead_days"]))
+    # راکد: نه فروش و نه خرید در dead_days روز اخیر. کالایی که تازه رسیده (هنوز فرصت فروش نداشته) راکد نیست.
+    # (خریدها از ۱۸۰ روز اخیر خوانده می‌شوند؛ خرید قدیمی‌تر یعنی «خرید اخیر ندارد»)
+    pb = src["purch"]
+    last_buy = pb[pb["qty"] > 0].groupby("code")["date"].max()
+    df["last_buy"] = last_buy.reindex(codes)
+    df["buy_days"] = [days.diff(d, today) if isinstance(d, str) else None for d in df["last_buy"]]
+    dead = ((df["stock"] > 0) & (df["idle_days"].isna() | (df["idle_days"].fillna(0) > s["dead_days"]))
+            & (df["buy_days"].isna() | (df["buy_days"].fillna(0) > s["dead_days"])))
     st = np.select(
         [ab & (df["net_avail"] < df["need"]), ab & (df["net_avail"] < df["target"]), dead,
          ab & (df["cover_months"] > s["excess_months"]), ab,
@@ -432,8 +561,17 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
                                           | (gap_pct < float(s["min_gap_pct"])))
     df.loc[small, "status"] = "ok"
     df.loc[small, "order"] = 0.0
+    # کالای C کم‌فروش ولی منظم: موجودی آزاد ≤ فروش تا رسیدن بار ← سفارش به اندازه چند ماه فروش (به عدد)
+    c_min = max(1, round(int(s["c_regular_months"]) * len(base_months) / 6))
+    df["c_low"] = ((df["abc"] == "C") & df["status"].isin(["c", "red"]) & (df["months_sold"] >= c_min)
+                   & (df["top_share"].fillna(1) <= 0.5) & (df["net_avail"] <= df["need"]))
+    c_qty = np.ceil(np.clip(df["need"] + float(s["c_order_months"]) * df["fc_now"].clip(lower=0) - df["net_avail"], 1, None))
+    df.loc[df["c_low"], "order"] = np.maximum(df.loc[df["c_low"], "order"], c_qty[df["c_low"]])
+    df.loc[df["c_low"] & (df["status"] == "c"), "status"] = "orange"
     if inactive:  # شعبه غیرفعال: پیشنهاد سفارش نمی‌دهیم
         df["order"] = 0.0
+    # کارخانه به اندازه سفارش موجودی آزاد ندارد (موجودی انبار محصول منهای سفارش‌های باز همه مشتریان)
+    df["factory_short"] = (df["order"] > 0) & (df["factory_free"] < df["order"]) if rk else False
     df["cartons"] = np.where(df["unity"] > 1, df["order"] / df["unity"], np.nan)
     df["order_value"] = df["order"] * df["price"].fillna(price_fill)
     df["runout"] = [days.add(today, int(c)) if np.isfinite(c) and c < 400 else None for c in df["cover_days"]]
@@ -445,8 +583,23 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     deadline = cand["order_by"].iat[0] if len(cand) else None
     deadline_items = cand.sort_values("base", ascending=False)["product"].head(3).tolist() if len(cand) else []
 
+    # -- پیشنهاد برگشت (فقط مازاد و راکد)
+    def demand(months: float) -> pd.Series:
+        w = days.months_in(today, days.add(today, int(round(months * 30))))
+        return sum(fc(m)[0].clip(lower=0) * v for m, v in w.items())
+    keep_m = np.where(df["abc"].isin(["A", "B"]), float(s["return_keep_months"]), float(s["return_keep_months_c"]))
+    df["ret_keep"] = np.ceil(np.where(df["status"] == "dead", float(s["return_keep_dead"]),
+        np.where(df["abc"].isin(["A", "B"]), demand(float(s["return_keep_months"])), demand(float(s["return_keep_months_c"]))))
+        + df["open_req"].clip(lower=0))
+    df["ret_keep_months"] = np.where(df["status"] == "dead", 0.0, keep_m)
+    over = (df["stock"].clip(lower=0) - df["ret_keep"]).clip(lower=0)
+    full = np.where(df["unity"] > 1, np.floor(over / df["unity"]) * df["unity"], np.floor(over))
+    df["ret_qty"] = np.select([df["status"] == "dead", df["status"] == "excess"], [np.floor(over), full], 0.0)
+    df["ret_cartons"] = np.where(df["unity"] > 1, df["ret_qty"] / df["unity"], np.nan)
+    df["ret_value"] = df["ret_qty"] * df["avg_price"]
+
     # -- توضیح هر سطر
-    df["why"] = [_why(r, s, review, arr0, arr1, nxt) for r in df.itertuples()]
+    df["why"] = [_why(r, s, review, arr0, arr1, nxt, use_in) for r in df.itertuples()]
 
     # -- جمع‌ها
     purch = src["purch"]
@@ -482,10 +635,27 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
         "order_lines": int((df["order"] > 0).sum()),
         "order_cartons": float(np.where(df["unity"] > 1, df["order"] / df["unity"], 0).sum()),
         "dead_value": float(dv), "dead_skus": int((df["status"] == "dead").sum()),
+        "dead_units": float(df.loc[df["status"] == "dead", "stock"].clip(lower=0).sum()),
+        "excess_units": float(df.loc[df["status"] == "excess", "stock"].clip(lower=0).sum()),
         "excess_value": float(ex), "excess_skus": int((df["status"] == "excess").sum()),
+        "ret_units": float(df["ret_qty"].sum()), "ret_value": float(df["ret_value"].sum()),
+        "ret_skus": int((df["ret_qty"] > 0).sum()),
         "open_req": float(df["open_req"].sum()), "waste_units": float(df["waste"].sum()),
+        "rk_open": float(df["rk_open"].sum()), "rk_transit": float(df["rk_transit"].sum()),
+        "incoming": float(df["incoming"].sum()), "rk_orders": int(rk["open_orders"]) if rk else 0,
+        "factory_short": int(df["factory_short"].sum()) if rk else 0,
     }
 
+    if rk:
+        warn.append({"level": "info", "text": (
+            f"از راهکاران: {_n(df['rk_open'].sum())} عدد سفارش باز این شعبه به کارخانه ({rk['open_orders']} سفارش ثبت‌شده/تأییدشده"
+            f" از {rk['settings']['open_days']} روز اخیر که هنوز از انبار کارخانه خارج نشده) و {_n(df['rk_transit'].sum())} عدد بار در راه"
+            f" (فاکتور کارخانه از {rk['transit_from']} منهای خرید ثبت‌شده در کارآمد؛ {_n(rk['sent'])} فاکتور در برابر {_n(rk['got'])} خرید). "
+            + ("هر دو جزو موجودی حساب شده‌اند تا دوباره سفارش داده نشوند." if use_in else "در محاسبه سفارش حساب نشده‌اند (use_incoming خاموش است)."))})
+        if kpis["factory_short"]:
+            warn.append({"level": "warn", "text": f"برای {kpis['factory_short']} کالای پیشنهادی، موجودی آزاد انبار محصول کارخانه کمتر از مقدار سفارش است."})
+    elif src.get("rk_error"):
+        warn.insert(0, {"level": "warn", "text": f"داده راهکاران خوانده نشد؛ سفارش باز و بار در راه کارخانه در محاسبه نیست. ({src['rk_error'][:200]})"})
     if data_issue and len(purch):
         warn.insert(0, {"level": "danger", "text": data_issue})
     if inactive:
@@ -525,7 +695,9 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
             "need", "target", "safety", "safety_pct", "order", "cartons", "unity", "order_value", "price", "value",
             "base", "mean", "median", "min", "max", "months_sold", "cv", "trend", "ret_rate", "n_cust", "top_share",
             "top_cust", "ly_cur", "ly_next", "cur_month", "daily", "cover_days", "cover_months", "runout", "order_by",
-            "last_sale", "idle_days", "sf_now", "bought_90", "sold_90", "why"]
+            "last_sale", "idle_days", "last_buy", "buy_days", "sf_now", "bought_90", "sold_90", "rk_open", "rk_transit", "incoming", "open_since",
+            "factory_stock", "factory_free", "factory_short", "c_low",
+            "ret_keep", "ret_keep_months", "ret_qty", "ret_cartons", "ret_value", "why"]
     out = df.reset_index()[cols].replace([np.inf, -np.inf], np.nan)
     hist_months = [m for m in months if m >= PL.month_add(cur, -12)]
     H = mq.reindex(index=codes, fill_value=0.0)[hist_months]
@@ -542,6 +714,9 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
         "rows": out, "hist_months": hist_months, "hist": {c: [float(v) for v in H.loc[c]] for c in codes},
         "abnormal": [m for m in hist_months if PL.is_abnormal(m, ps)],
         "warnings": warn, "status_label": STATUS_LABEL,
+        "rahkaran": ({"ok": True, "use_incoming": use_in, "customers": rk["customers"], "orders": rk["open_orders"],
+                      "transit_from": rk["transit_from"]} if rk else {"ok": False, "error": src.get("rk_error"),
+                                                                     "disabled": not src.get("rk_error")}),
     }
 
 
@@ -549,46 +724,74 @@ def _n(v) -> str:
     return f"{v:,.0f}" if v is not None and np.isfinite(v) else "—"
 
 
-def _why(r, s, review, arr0, arr1, nxt) -> str:
-    """توضیح قطعی و قابل بازبینی هر پیشنهاد (بعداً LLM فقط همین را به زبان ساده‌تر بیان می‌کند)."""
+def _why(r, s, review, arr0, arr1, nxt, use_in=False) -> list:
+    """توضیح قطعی و قابل بازبینی هر پیشنهاد، به صورت مرحله‌به‌مرحله: [[عنوان، متن], ...]"""
     if r.status == "dead":
         last = f"آخرین فروش {r.last_sale}" if isinstance(r.last_sale, str) else "در دوره داده هیچ فروشی نداشته"
-        return f"{last}؛ {_n(r.stock)} عدد در انبار مانده است. پیشنهاد: برگشت به تأمین‌کننده، انتقال یا فروش ویژه."
+        buy = f"آخرین خرید {r.last_buy}" if isinstance(r.last_buy, str) else f"در {s['dead_days']} روز اخیر خریدی نداشته"
+        return [["وضعیت", f"{last}؛ {buy}؛ {_n(r.stock)} عدد در انبار مانده است."],
+                ["برگشت", f"{_n(r.ret_keep)} عدد می‌ماند ({_n(s['return_keep_dead'])} عدد برای قفسه"
+                 + (f" + {_n(r.open_req)} درخواست باز" if r.open_req > 0 else "") + f")؛ {_n(r.ret_qty)} عدد برگشت."]]
     if r.status == "nodata":
-        return "در ماه‌های سالم اخیر فروشی نداشته؛ برای پیش‌بینی سابقه کافی نیست."
+        return [["وضعیت", "در ماه‌های سالم اخیر فروشی نداشته؛ برای پیش‌بینی سابقه کافی نیست."]]
+    if r.abc == "C" and r.c_low:
+        return [["وضعیت", f"کالای کم‌فروش ولی منظم (گروه C): در {_n(r.months_sold)} ماه از ماه‌های پایه فروش داشته."],
+                ["فروش ماهانه", f"میانگین {_n(r.mean)} عدد (کمترین {_n(r.min)}، بیشترین {_n(r.max)})."],
+                ["موجودی", f"{_n(r.stock)} عدد" + (f" منهای {_n(r.open_req)} عدد درخواست باز = {_n(r.net_avail)} عدد آزاد" if r.open_req > 0 else " آزاد")
+                 + f"؛ تا رسیدن بار ({arr0}) حدود {_n(r.need)} عدد لازم است."],
+                ["مقدار سفارش", f"{_n(r.need)} تا رسیدن بار + {_n(float(s['c_order_months']) * max(r.fc_now, 0))} برای {s['c_order_months']:g} ماه فروش"
+                 f" − {_n(r.net_avail)} موجودی آزاد، حداقل ۱ عدد و بدون گرد کردن به کارتن = {_n(r.order)} عدد."]]
     if r.abc == "C":
-        why_c = (f"فقط در {_n(r.months_sold)} ماه از ماه‌های پایه فروش داشته و نامنظم حساب می‌شود (گروه C)"
-                 if r.few_months else "کالای کم‌فروش و نامنظم (گروه C)")
+        why_c = (f"فقط در {_n(r.months_sold)} ماه از ماه‌های پایه فروش داشته و نامنظم حساب می‌شود (گروه C)."
+                 if r.few_months else "کالای کم‌فروش و نامنظم (گروه C).")
         if r.status == "red":
-            return f"{why_c}. درخواست باز {_n(r.open_req)} عدد ولی موجودی {_n(r.stock)}؛ فقط کسری درخواست ({_n(r.req_short)} عدد) سفارش شود."
-        return f"{why_c}؛ فروش ماهانه بین {_n(r.min)} و {_n(r.max)} بوده. هشدار خودکار ندارد؛ سفارش بر اساس درخواست مشتری."
-    head = (f"میانگین فروش خالص ماهانه {_n(r.mean)} (کمترین {_n(r.min)}، بیشترین {_n(r.max)})؛ "
-            f"ضریب فصل این ماه {r.sf_now:.2f} و ماه بعد {r.sf_next:.2f}.")
+            return [["وضعیت", why_c],
+                    ["درخواست باز", f"{_n(r.open_req)} عدد، ولی موجودی فقط {_n(r.stock)} عدد است."],
+                    ["پیشنهاد", f"فقط کسری درخواست سفارش شود: {_n(r.req_short)} عدد."]]
+        return [["وضعیت", why_c],
+                ["فروش ماهانه", f"بین {_n(r.min)} و {_n(r.max)} عدد."],
+                ["پیشنهاد", "هشدار خودکار ندارد؛ سفارش بر اساس درخواست مشتری."]]
+    lines = [["فروش ماهانه", f"میانگین {_n(r.mean)} عدد (کمترین {_n(r.min)}، بیشترین {_n(r.max)})؛ فروش خالص، پس از کسر برگشتی."],
+             ["ضریب فصل", f"این ماه {r.sf_now:.2f} و ماه بعد {r.sf_next:.2f}."]]
     if r.ly_next_used:
         w = float(s["ly_weight"])
-        head += (f" پیش‌بینی {nxt} = {1 - w:.0%} × پیش‌بینی فصلی ({_n(r.fc_next_model)}) + {w:.0%} × فروش همین ماه سال قبل"
-                 f" ({_n(max(r.ly_next, 0))} × رشد شعبه {r.ly_growth:.2f}) = {_n(r.fc_next)}.")
-    need = f"اگر همین امروز سفارش داده شود، بار حدود {arr0} می‌رسد و تا آن موقع حدود {_n(r.need)} عدد لازم است"
+        lines.append([f"پیش‌بینی {nxt}",
+                      f"{1 - w:.0%} پیش‌بینی فصلی ({_n(r.fc_next_model)}) + {w:.0%} فروش همین ماه سال قبل"
+                      f" ({_n(max(r.ly_next, 0))} با رشد شعبه {r.ly_growth:.2f}) = {_n(r.fc_next)} عدد."])
+    lines.append(["تا رسیدن بار", f"اگر امروز سفارش داده شود، بار حدود {arr0} می‌رسد؛ تا آن موقع حدود {_n(r.need)} عدد لازم است."])
+    inc = ""
+    if use_in and r.incoming > 0:
+        parts = ([f"{_n(r.rk_transit)} در راه"] if r.rk_transit > 0 else []) + ([f"{_n(r.rk_open)} سفارش باز کارخانه"] if r.rk_open > 0 else [])
+        inc = f" + {' و '.join(parts)}"
     if r.req_short > 0:
-        have = f"موجودی {_n(r.stock)} ولی درخواست باز {_n(r.open_req)}؛ یعنی {_n(r.req_short)} عدد کسری درخواست ثبت‌شده"
+        have = f"{_n(r.stock)} عدد{inc}، ولی درخواست باز {_n(r.open_req)} عدد است؛ یعنی {_n(r.req_short)} عدد کسری درخواست."
     else:
-        have = f"موجودی قابل فروش {_n(r.avail)}" + (f" (پس از کسر {_n(r.open_req)} درخواست باز)" if r.open_req > 0 else "")
-    tgt = (f"هر سفارش باید تا سفارش بعدی ({review} روز) و رسیدن بار آن ({arr1}) دوام بیاورد: "
-           f"سطح هدف = {_n(r.target - r.safety)} تقاضا + {_n(r.safety)} safety"
-           f" = {_n(r.target)}")
+        have = (f"قابل فروش {_n(r.avail)} عدد" + (f" (انبار {_n(r.stock)}{inc})" if inc else "")
+                + (f" (پس از کسر {_n(r.open_req)} عدد درخواست باز)" if r.open_req > 0 else "") + ".")
+    lines.append(["موجودی", have])
+    if r.status in ("red", "orange"):
+        lines.append(["سطح هدف", f"باید تا سفارش بعدی ({review} روز دیگر) و رسیدن بار آن ({arr1}) دوام بیاورد: "
+                                f"{_n(r.target - r.safety)} تقاضا + {_n(r.safety)} ذخیره اطمینان = {_n(r.target)} عدد."])
     if r.status == "red":
-        plus = f" + کسری درخواست {_n(r.req_short)}" if r.req_short > 0 else ""
-        tail = f"{have} ← قبل از رسیدن بار تمام می‌شود. {tgt}؛ سفارش = سطح هدف{plus} − موجودی قابل فروش = {_n(r.order)} عدد."
+        lines.append(["نتیجه", "قبل از رسیدن بار تمام می‌شود؛ باید فوری سفارش شود."])
     elif r.status == "orange":
         by = f" (حداکثر تا {r.order_by})" if isinstance(r.order_by, str) else ""
-        tail = f"{have}. {tgt}؛ در سفارش بعدی{by} {_n(r.order)} عدد بیاید."
+        lines.append(["نتیجه", f"تا رسیدن بار کافی است، ولی نه تا سفارش بعد؛ باید در سفارش بعدی{by} باشد."])
+    if r.status in ("red", "orange"):
+        plus = f" + {_n(r.req_short)} کسری درخواست" if r.req_short > 0 else ""
+        raw = r.target + max(r.req_short, 0) - r.avail
+        calc = f"{_n(r.target)} سطح هدف{plus} − {_n(r.avail)} موجودی قابل فروش = {_n(raw)} عدد"
+        if abs(r.order - raw) >= 1:
+            calc += f"؛ گرد به کارتن کامل ({_n(r.unity)} تایی): {_n(r.order)} عدد" if r.unity and r.unity > 1 else f" ← {_n(r.order)} عدد"
+        lines.append(["مقدار سفارش", calc + "."])
     elif r.status == "excess":
-        tail = f"{have}، یعنی حدود {r.cover_months:.1f} ماه فروش؛ مازاد است و سفارش لازم نیست."
+        lines.append(["نتیجه", f"حدود {r.cover_months:.1f} ماه فروش موجودی دارد؛ مازاد است و سفارش لازم نیست."])
     else:
-        tail = f"{have}؛ تا نوبت بعد کافی است."
-    extra = []
+        lines.append(["نتیجه", "تا نوبت بعد کافی است."])
+    if r.factory_short:
+        lines.append(["نکته", f"موجودی آزاد انبار محصول کارخانه فقط {_n(r.factory_free)} عدد است."])
     if r.top_share is not None and np.isfinite(r.top_share) and r.top_share > 0.5:
-        extra.append(f"{r.top_share:.0%} فروش این کالا از یک مشتری ({r.top_cust}) است؛ نوسان آن بیشتر است")
+        lines.append(["نکته", f"{r.top_share:.0%} فروش این کالا از یک مشتری ({r.top_cust}) است؛ نوسان آن بیشتر است."])
     if r.ret_rate is not None and np.isfinite(r.ret_rate) and r.ret_rate > 0.2:
-        extra.append(f"{r.ret_rate:.0%} فروش آن برگشت خورده و پایه از فروش خالص حساب شده")
-    return " ".join([head, need + "؛", tail] + ([("نکته: " + "؛ ".join(extra) + ".")] if extra else []))
+        lines.append(["نکته", f"{r.ret_rate:.0%} فروش آن برگشت خورده و پایه از فروش خالص حساب شده."])
+    return lines

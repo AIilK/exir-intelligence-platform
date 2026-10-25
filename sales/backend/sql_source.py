@@ -176,11 +176,11 @@ def read_env(path: Path) -> dict:
     return env
 
 
-def settings(env: dict) -> dict:
-    g = lambda k, d=None: env.get(ENV_PREFIX + k, d)
+def settings(env: dict, prefix: str = ENV_PREFIX) -> dict:
+    g = lambda k, d=None: env.get(prefix + k, d)
     missing = [k for k in ("SERVER", "DATABASE", "USERNAME", "PASSWORD") if not g(k)]
     if missing:
-        raise loader.DataError(f"تنظیمات اتصال SQL در فایل .env کامل نیست: {', '.join(ENV_PREFIX + k for k in missing)}")
+        raise loader.DataError(f"تنظیمات اتصال SQL در فایل .env کامل نیست: {', '.join(prefix + k for k in missing)}")
     return {"server": g("SERVER"), "database": g("DATABASE"), "username": g("USERNAME"), "password": g("PASSWORD"),
             "driver": g("DRIVER", "ODBC Driver 18 for SQL Server"),
             "trust": g("TRUST_CERTIFICATE", "true").lower() in ("1", "true", "yes")}

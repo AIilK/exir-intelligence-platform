@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import ReactECharts from 'echarts-for-react'
-import { fmtInt, fmtMoney, fmtPct, UNITS, faDigits } from '../lib.jsx'
+import { fmtInt, fmtMoney, fmtPct, UNITS, faDigits, fmtFull, fmtExact } from '../lib.jsx'
 
 // پالت مرجع (اعتبارسنجی‌شده برای کم‌بینایی رنگ) — ترتیب ثابت، بدون چرخش
 const SERIES = {
@@ -82,7 +82,8 @@ export function HBar({ rows, value = 'net', unit, height, onClick, valueType = '
           ...baseOption(t).tooltip,
           trigger: 'axis',
           axisPointer: { type: 'shadow' },
-          formatter: (ps) => `${ps[0].name}<br/><b>${fmt(ps[0].value)}</b>${valueType === 'money' ? ' ' + UNITS[unit].label : ''}`,
+          formatter: (ps) => `${ps[0].name}<br/><b>${fmt(ps[0].value)}</b>${valueType === 'money' ? ' ' + UNITS[unit].label : ''}` +
+            (valueType === 'money' ? `<br/><span style="opacity:.75">${fmtFull(ps[0].value)}</span>` : valueType === 'int' ? `<br/><span style="opacity:.75">${fmtExact(ps[0].value)}</span>` : ''),
         },
         xAxis: { type: 'value', inverse: true, axisLabel: axisLabel(t, (v) => fmt(v)), splitLine: splitLine(t) },
         yAxis: {
@@ -121,7 +122,7 @@ export function TrendChart({ trend, unit, height = 300, showReq = true, fullLabe
           trigger: 'axis',
           formatter: (ps) =>
             `${faDigits(trend[ps[0].dataIndex].date)}<br/>` +
-            ps.map((p) => `${p.marker} ${p.seriesName}: <b>${fmtMoney(p.value, unit)}</b>`).join('<br/>') +
+            ps.map((p) => `${p.marker} ${p.seriesName}: <b>${fmtMoney(p.value, unit)}</b> <span style="opacity:.75">(${fmtFull(p.value)})</span>`).join('<br/>') +
             `<br/><span style="opacity:.7">${UNITS[unit].label}</span>`,
         },
         xAxis: { type: 'category', data: dates, inverse: true, axisLabel: { color: t.text },
@@ -152,7 +153,7 @@ export function CompareBars({ rows, series, unit, onClick }) {
         legend: { top: 0, right: 0, textStyle: { color: t.text } },
         tooltip: {
           ...baseOption(t).tooltip, trigger: 'axis', axisPointer: { type: 'shadow' },
-          formatter: (ps) => `${ps[0].name}<br/>` + ps.map((p) => `${p.marker} ${p.seriesName}: <b>${fmtMoney(p.value, unit)}</b>`).join('<br/>') +
+          formatter: (ps) => `${ps[0].name}<br/>` + ps.map((p) => `${p.marker} ${p.seriesName}: <b>${fmtMoney(p.value, unit)}</b> <span style="opacity:.75">(${fmtFull(p.value)})</span>`).join('<br/>') +
             `<br/><span style="opacity:.7">${UNITS[unit].label}</span>`,
         },
         xAxis: { type: 'value', inverse: true, axisLabel: axisLabel(t, (v) => fmtMoney(v, unit)), splitLine: splitLine(t) },
@@ -184,7 +185,7 @@ export function Heatmap({ rows, xKey, yKey, vKey, unit, onClickY, palette = SEQ 
       option={(t) => ({
         grid: { left: 12, right: 12, top: 8, bottom: 56, containLabel: true },
         tooltip: { ...baseOption(t).tooltip, formatter: (p) =>
-          `${ys[p.value[1]]} — ${faDigits(xs[p.value[0]])}<br/><b>${fmtMoney(p.value[2], unit)}</b> ${UNITS[unit].label}` },
+          `${ys[p.value[1]]} — ${faDigits(xs[p.value[0]])}<br/><b>${fmtMoney(p.value[2], unit)}</b> ${UNITS[unit].label}<br/><span style="opacity:.75">${fmtFull(p.value[2])}</span>` },
         xAxis: { type: 'category', inverse: true, data: xs.map((x) => faDigits(x.slice(5))), axisLabel: { color: t.text },
           splitArea: { show: false }, axisTick: { show: false } },
         yAxis: { type: 'category', position: 'right', data: ys, axisLabel: { color: t.text }, axisTick: { show: false } },

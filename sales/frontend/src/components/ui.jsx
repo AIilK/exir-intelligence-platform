@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useRef, useState } from 'react'
-import { fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS } from '../lib.jsx'
+import { fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, fullTitle } from '../lib.jsx'
 import { buildXlsx } from '../xlsx.js'
 
 export function Kpi({ label, value, type = 'money', sub, hint, onClick, active, more }) {
@@ -16,7 +16,7 @@ export function Kpi({ label, value, type = 'money', sub, hint, onClick, active, 
   return (
     <div className={`kpi${onClick ? ' clickable' : ''}${active ? ' active' : ''}`} title={hint} {...click}>
       <div className="kpi-label">{label}{hint && <span className="hint-dot">؟</span>}</div>
-      <div className="kpi-value">{main}<span className="kpi-unit">{unit}</span></div>
+      <div className="kpi-value" title={fullTitle(value, type === 'money' ? 'money' : type === 'pct' ? null : 'int')}>{main}<span className="kpi-unit">{unit}</span></div>
       {sub && <div className="kpi-sub">{sub}</div>}
       {onClick && <div className="kpi-more">{more ?? (active ? 'بستن فهرست ▲' : 'نمایش فهرست ▼')}</div>}
     </div>
@@ -163,7 +163,8 @@ export function DataTable({ rows, columns, unit, onRowClick, pageSize = 15, sear
             {view.map((r, i) => (
               <tr key={r.key ?? i} onClick={onRowClick ? () => onRowClick(r) : undefined} className={onRowClick ? 'clickable' : ''}>
                 {columns.map((c) => (
-                  <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${isNeg(r[c.key], c.type) ? 'neg' : ''}`}>
+                  <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${isNeg(r[c.key], c.type) ? 'neg' : ''}`}
+                    title={c.render ? undefined : fullTitle(r[c.key], c.type)}>
                     {c.render ? c.render(r) : cell(r[c.key], c.type, unit)}
                   </td>
                 ))}

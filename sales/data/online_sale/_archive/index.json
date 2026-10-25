@@ -1,0 +1,28 @@
+{
+ "version": 6,
+ "files": {
+  "خانومی/خانومی برج 6.xlsx": {
+   "sig": "d625d25761927110c7364405ddfa447945e43127",
+   "ok": true,
+   "parsed_at": "2026-10-21 12:48",
+   "month": "1405/06",
+   "month_from": "نام فایل",
+   "chain": "خانومی",
+   "rows": 147,
+   "qty": 3122.0,
+   "value": 11502661000.0,
+   "columns": {
+    "barcode": "کد کالا (AtpId / SKU)",
+    "name": "نام محصول",
+    "brand": "برند",
+    "qty": "مجموع تعداد فروش",
+    "value": "مجموع مبلغ فروش (ریال)",
+    "unit": null,
+    "disc": null,
+    "store": null,
+    "subgroup": null,
+    "stock": null
+   }
+  }
+ }
+}
