@@ -3,6 +3,7 @@
 // Amounts arrive in rial; `toman` is the single conversion point on this page.
 import { useEffect, useMemo, useState } from "react";
 import "./liquidity.css";
+import { RegCell, chequeNo } from "../cheque-reg";
 
 type Channel = "all" | "b2b" | "hybrid";
 type Section = "forecast" | "received" | "issued" | "flows" | "payroll";
@@ -355,9 +356,9 @@ function CustomerModal({ customer, close }: { customer: any; close: () => void }
           {d && <>
             <p>باز: قطعی {toman(d.open.definite_rial)} · اتکا {toman(d.open.reliance_rial)} · معوق {toman(d.overdue.definite_rial)} تومان</p>
             <div className="fd-table"><table>
-              <thead><tr><th>سریال</th><th>سررسید</th><th>مبلغ</th><th>اتکا</th><th>نگهداری</th><th>دلایل کسر اتکا</th></tr></thead>
+              <thead><tr><th>شماره چک</th><th>ثبت در سیستم</th><th>سررسید</th><th>مبلغ</th><th>اتکا</th><th>نگهداری</th><th>دلایل کسر اتکا</th></tr></thead>
               <tbody>{d.cheques.map((c: any) => (
-                <tr key={c.cheque_id}><td>{c.serial_number}</td><td>{c.due_date_jalali}</td><td>{toman(c.amount_rial)}</td>
+                <tr key={c.cheque_id}><td>{chequeNo(c.serial_number)}</td><td><RegCell x={c} /></td><td>{c.due_date_jalali}</td><td>{toman(c.amount_rial)}</td>
                   <td>{pct(c.reliance_percent)}</td><td>{c.holding_label || c.holding}</td>
                   <td className="lq-reasons">{(c.reliance_reasons || c.reasons || []).map((r: any, i: number) => <span key={i}>{typeof r === "string" ? r : r.label || r.reason || JSON.stringify(r)}</span>)}</td></tr>
               ))}</tbody>
@@ -403,9 +404,9 @@ function IssuedSection({ channel, horizon, reloadKey }: { channel: Channel; hori
         </div>
         {showReview && (
           <section className="fd-panel"><div className="fd-table"><table>
-            <thead><tr><th>ذی‌نفع</th><th>سریال</th><th>سررسید</th><th>تأخیر</th><th>مبلغ</th><th>بانک</th></tr></thead>
+            <thead><tr><th>ذی‌نفع</th><th>شماره چک</th><th>ثبت در سیستم</th><th>سررسید</th><th>تأخیر</th><th>مبلغ</th><th>بانک</th></tr></thead>
             <tbody>{d.needs_status_review.cheques.slice(0, 300).map((c: any) => (
-              <tr key={c.cheque_id}><td>{c.payee_name}</td><td>{c.serial_number}</td><td>{c.due_date_jalali}</td><td>{fa(-c.days_to_due)} روز</td><td>{toman(c.amount_rial)}</td><td>{c.bank_name} {c.account_number}</td></tr>
+              <tr key={c.cheque_id}><td>{c.payee_name}</td><td>{chequeNo(c.serial_number)}</td><td><RegCell x={c} /></td><td>{c.due_date_jalali}</td><td>{fa(-c.days_to_due)} روز</td><td>{toman(c.amount_rial)}</td><td>{c.bank_name} {c.account_number}</td></tr>
             ))}</tbody>
           </table></div></section>
         )}
@@ -414,10 +415,10 @@ function IssuedSection({ channel, horizon, reloadKey }: { channel: Channel; hori
             <div className="fd-heading"><h2>انتقال بین حساب‌های خود شرکت (خروجی نیست)</h2><p>{d.own_account_transfers.rule}</p></div>
             <p className="lq-big">{toman(d.own_account_transfers.amount_rial)} تومان · {fa(d.own_account_transfers.count)} چک باز</p>
             <div className="fd-table"><table>
-              <thead><tr><th>سیستم</th><th>از حساب</th><th>در وجه</th><th>سریال</th><th>سررسید</th><th>مبلغ</th></tr></thead>
+              <thead><tr><th>سیستم</th><th>از حساب</th><th>در وجه</th><th>شماره چک</th><th>ثبت در سیستم</th><th>سررسید</th><th>مبلغ</th></tr></thead>
               <tbody>{d.own_account_transfers.cheques.map((c: any) => (
                 <tr key={c.cheque_id}><td>{c.system === "rahkaran" ? "راهکاران" : "کارآمد"}</td><td>{c.bank_name} {c.account_number || ""}</td><td>{c.payee_name}</td>
-                  <td>{c.serial_number}</td><td>{c.due_date_jalali}{c.days_to_due < 0 && <small> ({fa(-c.days_to_due)} روز گذشته)</small>}</td><td>{toman(c.amount_rial)}</td></tr>
+                  <td>{chequeNo(c.serial_number)}</td><td><RegCell x={c} /></td><td>{c.due_date_jalali}{c.days_to_due < 0 && <small> ({fa(-c.days_to_due)} روز گذشته)</small>}</td><td>{toman(c.amount_rial)}</td></tr>
               ))}</tbody>
             </table></div>
           </section>

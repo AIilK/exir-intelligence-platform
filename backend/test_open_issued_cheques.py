@@ -109,3 +109,72 @@ def test_issued_cheque_posted_by_status_document_description():
     )
     assert posted is True
     assert "سند خورده" in label
+
+
+def test_open_issued_query_treats_approved_duration_change_as_posted(monkeypatch):
+    # Rahkaran posts a paid cheque with an approved DurationChange (long-term to current,
+    # credited to the bank). The line text is blank and State stays 11, so the keyword
+    # check alone left ~6,000 paid cheques looking open on the dashboard.
+    monkeypatch.setattr("app.services.treasury_service._karamad_cheques", lambda _kind: [])
+    engine = _Engine([])
+    get_open_issued_cheques(engine=engine)
+    sql = engine.queries[0]
+
+    assert "RPA3.[DurationChangePayableNote] AS dcp" in sql
+    assert "dcp.[PayableNoteRef] = note.[PayableNoteID]" in sql
+    assert "dc.[ApproveState] = 3" in sql
+    assert "CAST(dcp.[DueDate] AS date) = CAST(note.[DueDate] AS date)" in sql
+    assert "status_link.[StatusDocumentID] IS NULL" in sql
+
+
+def test_latest_issued_queries_use_duration_change_status_link():
+    from app.services.treasury_service import get_latest_issued_cheques
+
+    engine = _Engine([])
+    get_latest_issued_cheques(engine=engine)
+
+    # primary query plus the master-table fallback (primary returned no rows)
+    assert len(engine.queries) == 2
+    for sql in engine.queries:
+        assert "RPA3.[DurationChange] AS dc" in sql
+        assert "dcp.[PayableNoteRef] = master_note.[PayableNoteID]" in sql
+
+
+def test_duration_change_status_document_is_posted_whatever_its_header_text():
+    for header in ("تغییر مدت به روز - وصول چک", "تغییر مدت به روز - کارمزد بانکی", "تغییر مدت به روز"):
+        assert _issued_posting_status(11, header) == (True, "سند خورده / برداشت‌شده")
+    assert _issued_posting_status(11, "پرداخت 40% پ ف 601") == (False, "باز / سند نخورده")
+
+
+def test_cashflow_forecast_excludes_duration_change_posted_cheques():
+    from pathlib import Path
+
+    source = (Path(__file__).parent / "app" / "services" / "finance_prediction_service.py").read_text(encoding="utf-8")
+    issued = source[source.index("issued_query = text("):source.index("received_query = text(")]
+    assert "RPA3.[DurationChangePayableNote] AS dcp" in issued
+    assert "dc.[ApproveState] = 3" in issued
+
+
+def test_issued_queries_exclude_shareholder_counterpart(monkeypatch):
+    # Shareholder cheques often read «پرداخت به جاری شرکا ...», so the description filter
+    # alone let them through; the «سهامداران» counterpart must be excluded as well.
+    from app.services.treasury_service import SHAREHOLDERS_DL_CODE, get_latest_issued_cheques
+
+    monkeypatch.setattr("app.services.treasury_service._karamad_cheques", lambda _kind: [])
+    engine = _Engine([])
+    get_open_issued_cheques(engine=engine)
+    get_latest_issued_cheques(engine=engine)
+
+    assert SHAREHOLDERS_DL_CODE == "950031"
+    assert len(engine.queries) == 3
+    for sql in engine.queries:
+        assert "ISNULL(counterpart.[Code], N'') <> N'950031'" in sql
+
+
+def test_cashflow_forecast_excludes_shareholder_cheques():
+    from pathlib import Path
+
+    source = (Path(__file__).parent / "app" / "services" / "finance_prediction_service.py").read_text(encoding="utf-8")
+    issued = source[source.index("issued_query = text("):source.index("received_query = text(")]
+    assert "shareholder.[Code] = :shareholders_dl_code" in issued
+    assert '"shareholders_dl_code": SHAREHOLDERS_DL_CODE' in source

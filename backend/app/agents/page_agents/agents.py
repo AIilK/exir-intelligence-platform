@@ -303,7 +303,7 @@ class DistributionAgent(PageAgent):
     key = "distribution"
     page = "توزیع بار"
     name = "Distribution Agent"
-    role_fa = "پایش فاکتورهای توزیع‌نشده، سرعت ثبت حواله خروج و حواله‌های باز"
+    role_fa = "پایش فاکتورهای توزیع‌نشده و سرعت ثبت حواله خروج"
     tracked_metrics = {"undistributed_amount": "فاکتور توزیع‌نشده", "stale_count": "توزیع‌نشده بیش از ۱۴ روز",
                        "median_hours_to_exit": "میانه ثبت فاکتور تا حواله (ساعت)"}
     primary_metric = "undistributed_amount"
@@ -321,7 +321,6 @@ class DistributionAgent(PageAgent):
         metrics = {
             "undistributed_count": len(rows), "undistributed_amount": sum(_f(r.get("amount_rial")) for r in rows),
             "stale_count": len(stale), "stale_amount": sum(_f(r.get("amount_rial")) for r in stale),
-            "open_exit_count": len(overview.get("open_exits") or []),
             "median_hours_to_exit": hours[len(hours) // 2] if hours else None,
             "same_day_exit_percent": round(len(same_day) / len(exited) * 100, 1) if exited else None,
             "late_registered_count": sum(1 for x in timeline if (x.get("registration_delay_days") or 0) > 0),
@@ -712,8 +711,157 @@ class ManagerAgent(LegacyWrappedAgent):
         return {"alerts": alerts, "predictions": predictions[:8]}
 
 
+# ======================================================= payables & liquidity (V172)
+class PayablesAgent(PageAgent):
+    key = "payables"
+    page = "پرداخت تجاری"
+    name = "Payables Agent"
+    role_fa = "پایش بدهی شرکت به تأمین‌کنندگان (معین ۵۱۱۰۰۲ تجاری و ۵۱۲۰۰۱ غیرتجاری) و پیش‌پرداخت‌های باز"
+    tracked_metrics = {
+        "owe_amount": "کل بدهی شرکت (تجاری + غیرتجاری)", "trade_owe_amount": "بدهی تجاری",
+        "nontrade_owe_amount": "بدهی غیرتجاری", "advance_amount": "پیش‌پرداخت / طلب از تأمین‌کنندگان",
+    }
+    primary_metric = "owe_amount"
+    narrate_with_llm = True
+
+    def collect(self):
+        from app.services.payables_service import PayablesService
+        o = PayablesService().overview()["modules"]
+        trade, nontrade = o["trade"], o["nontrade"]
+        everyone = [{**p, "module": "تجاری"} for p in trade["counterparties"]] + \
+                   [{**p, "module": "غیرتجاری"} for p in nontrade["counterparties"]]
+        top_owe = sorted((p for p in everyone if p["credit_balance_rial"] > 0), key=lambda p: -p["credit_balance_rial"])[:5]
+        top_adv = sorted((p for p in everyone if p["debit_balance_rial"] > 0), key=lambda p: -p["debit_balance_rial"])[:5]
+        owe = trade["credit_balance_rial"] + nontrade["credit_balance_rial"]
+        metrics = {
+            "owe_amount": owe, "trade_owe_amount": trade["credit_balance_rial"], "nontrade_owe_amount": nontrade["credit_balance_rial"],
+            "advance_amount": trade["debit_balance_rial"] + nontrade["debit_balance_rial"],
+            "trade_advance_amount": trade["debit_balance_rial"],
+            "creditor_count": trade["creditor_count"] + nontrade["creditor_count"],
+            "debtor_count": trade["debtor_count"] + nontrade["debtor_count"],
+            "trade_invoices_amount": trade["credit_rial"], "trade_payments_amount": trade["debit_rial"],
+            "top_owe_share_percent": round(top_owe[0]["credit_balance_rial"] / owe * 100, 1) if top_owe and owe else 0,
+        }
+        return {"metrics": metrics, "top_owe": top_owe, "top_advance": top_adv}
+
+    def rules(self, data, memory, deltas):
+        m = data["metrics"]
+        alerts, actions = [], []
+        if m["advance_amount"] > m["owe_amount"] and m["advance_amount"]:
+            alerts.append(alert(
+                "advances_exceed_debt", "high",
+                f"پیش‌پرداخت به تأمین‌کنندگان ({toman(m['advance_amount'])}) از بدهی شرکت ({toman(m['owe_amount'])}) بیشتر است",
+                [f"{fa_number(m['debtor_count'])} طرف حساب مانده بدهکار دارند؛ یعنی شرکت پول داده و هنوز فاکتور یا کالا نگرفته است.",
+                 change_phrase(deltas.get("advance_amount"))],
+                "پیش‌پرداخت‌های بزرگ با واحد خرید پیگیری شوند: کالا رسیده و فاکتور ثبت نشده، یا تحویل عقب افتاده است.",
+                evidence=[{"label": f"{x['title']} ({x['module']})", "value": toman(x["debit_balance_rial"])} for x in data["top_advance"][:3]],
+                metric=m["advance_amount"]))
+        if m["top_owe_share_percent"] >= 25:
+            top = data["top_owe"][0]
+            alerts.append(alert(
+                "payable_concentration", "medium", f"{fa_number(m['top_owe_share_percent'])}٪ بدهی شرکت به یک طرف حساب است",
+                [f"{top['title']} ({top['module']}) با مانده {toman(top['credit_balance_rial'])}."],
+                "زمان‌بندی پرداخت این طرف حساب در برنامه نقدینگی دیده شود.", entity_ref=top["title"]))
+        if data["top_owe"]:
+            actions.append(action("برنامه پرداخت بزرگ‌ترین بدهی‌ها",
+                                  "، ".join(f"{x['title']}: {toman(x['credit_balance_rial'])}" for x in data["top_owe"][:3]),
+                                  "مدیر مالی", "medium", "این هفته", "پرداخت به‌موقع و حفظ اعتبار نزد تأمین‌کنندگان"))
+        if data["top_advance"]:
+            actions.append(action("پیگیری تسویه پیش‌پرداخت‌ها با واحد خرید",
+                                  "، ".join(f"{x['title']}: {toman(x['debit_balance_rial'])}" for x in data["top_advance"][:3]),
+                                  "خرید", "high" if alerts else "medium", "تا پایان هفته", "ثبت فاکتور و بستن حساب‌های باز"))
+        return {
+            "headline": f"بدهی شرکت به تأمین‌کنندگان {toman(m['owe_amount'])}؛ پیش‌پرداخت باز {toman(m['advance_amount'])}.",
+            "summary": f"تجاری (۵۱۱۰۰۲): بدهی {toman(m['trade_owe_amount'])}، پیش‌پرداخت {toman(m['trade_advance_amount'])}. "
+                       f"غیرتجاری (۵۱۲۰۰۱): بدهی {toman(m['nontrade_owe_amount'])}. "
+                       f"{fa_number(m['creditor_count'])} طرف حساب از شرکت طلب دارند و {fa_number(m['debtor_count'])} طرف حساب پیش‌پرداخت گرفته‌اند."
+                       + (f" کل بدهی {change_phrase(deltas.get('owe_amount'))}." if change_phrase(deltas.get("owe_amount")) else ""),
+            "good_signals": [f"گردش امسال تجاری: فاکتور {toman(m['trade_invoices_amount'])}، پرداخت {toman(m['trade_payments_amount'])}."],
+            "risks": [a["title"] for a in alerts],
+            "recommended_actions": actions,
+            "next_best_action": actions[0]["action"] if actions else "پایش ماهانه مانده تأمین‌کنندگان ادامه یابد.",
+            "alerts": alerts,
+            "predictions": [],
+        }
+
+
+class LiquidityAgent(PageAgent):
+    key = "liquidity"
+    page = "نقدینگی"
+    name = "Liquidity Agent"
+    role_fa = "توضیح پیش‌بینی جریان نقد ۳۰ روز آینده: ورودی، خروجی، اولین کسری و نیاز به تأمین مالی"
+    tracked_metrics = {
+        "financing_need": "نیاز به تأمین مالی ۳۰ روز (سناریوی اتکا)", "coverage_percent": "پوشش خروجی با ورودی ٪",
+        "inflow_30": "ورودی پیش‌بینی ۳۰ روز", "outflow_30": "خروجی پیش‌بینی ۳۰ روز",
+    }
+    primary_metric = "financing_need"
+    narrate_with_llm = True
+
+    def collect(self):
+        from app.services.liquidity.summary import LiquiditySummaryService
+        data = LiquiditySummaryService().report(horizon_days=30)["data"]
+        scen = {s["key"]: s for s in data["scenarios"]}
+        base = scen.get(data.get("base_scenario") or "reliance") or data["scenarios"][0]
+        t = base["totals"]
+        metrics = {
+            "financing_need": base["financing_need_rial"], "coverage_percent": base["coverage_percent"],
+            "inflow_30": base["inflow_rial"], "outflow_30": base["outflow_rial"], "closing_30": base["closing_rial"],
+            "received_cheques_30": t["received_cheques_rial"], "issued_cheques_30": t["issued_cheques_rial"],
+            "payroll_30": t["payroll_rial"], "estimated_outflow_30": t["estimated_outflow_rial"],
+            "estimated_inflow_30": t["estimated_inflow_rial"],
+            "definite_closing_30": (scen.get("definite") or {}).get("closing_rial"),
+            "pessimistic_need": (scen.get("pessimistic") or {}).get("financing_need_rial"),
+        }
+        return {"metrics": metrics, "first_shortage": base.get("first_shortage"), "worst": base.get("worst_balance"),
+                "payroll": data["basis"].get("payroll") or []}
+
+    def rules(self, data, memory, deltas):
+        m = data["metrics"]
+        alerts, actions = [], []
+        fs, worst = data.get("first_shortage") or {}, data.get("worst") or {}
+        if m["financing_need"] > 0:
+            level = "critical" if m["coverage_percent"] < 90 else "high"
+            alerts.append(alert(
+                "financing_need", level,
+                f"در ۳۰ روز آینده {toman(m['financing_need'])} کسری نقدینگی پیش‌بینی می‌شود (سناریوی اتکا)",
+                [f"ورودی {toman(m['inflow_30'])} در برابر خروجی {toman(m['outflow_30'])}؛ پوشش {fa_number(m['coverage_percent'])}٪.",
+                 f"بدترین روز {worst.get('date_jalali', '—')} با مانده تجمعی {toman(worst.get('balance_rial'))}.",
+                 change_phrase(deltas.get("financing_need"))],
+                "منابع تأمین (موجودی بانک، تسهیلات یا جابه‌جایی پرداخت‌های غیرضروری) پیش از بدترین روز مشخص شود.",
+                metric=m["financing_need"]))
+        for p in data["payroll"][:2]:
+            actions.append(action(f"تأمین حقوق {p.get('label')} ({p.get('payroll_month')})",
+                                  f"{toman(p.get('amount_rial'))} حدود {p.get('date_jalali')}", "مدیر مالی", "high", p.get("date_jalali") or "",
+                                  "پرداخت به‌موقع حقوق"))
+        if m["financing_need"] > 0:
+            actions.insert(0, action("تهیه برنامه تأمین مالی ۳۰ روز آینده", f"کسری پیش‌بینی {toman(m['financing_need'])}",
+                                     "مدیر مالی", "critical" if m["coverage_percent"] < 90 else "high", "این هفته",
+                                     "جلوگیری از برگشت چک شرکت و تأخیر پرداخت‌ها"))
+        return {
+            "headline": (f"۳۰ روز آینده: ورودی {toman(m['inflow_30'])}، خروجی {toman(m['outflow_30'])}؛ "
+                         + (f"کسری {toman(m['financing_need'])}." if m["financing_need"] > 0 else "بدون کسری.")),
+            "summary": f"خروجی شامل چک پرداختی {toman(m['issued_cheques_30'])}، حقوق {toman(m['payroll_30'])} و میانگین هزینه‌های روزانه "
+                       f"{toman(m['estimated_outflow_30'])} است؛ ورودی شامل چک دریافتی (با درصد اتکا) و میانگین وصول نقد و حواله. "
+                       f"در سناریوی قطعی (وصول ۱۰۰٪ چک‌ها) مانده پایان دوره {toman(m['definite_closing_30'])} و در سناریوی بدبینانه "
+                       f"نیاز به تأمین {toman(m['pessimistic_need'])} است. موجودی بانک در این پیش‌بینی نیست."
+                       + (f" اولین روز کسری: {fs.get('date_jalali')}." if fs.get("date_jalali") else ""),
+            "good_signals": [f"چک دریافتی ۳۰ روز آینده: {toman(m['received_cheques_30'])}."] if m["received_cheques_30"] else [],
+            "risks": [a["title"] for a in alerts],
+            "recommended_actions": actions,
+            "next_best_action": actions[0]["action"] if actions else "پایش روزانه پیش‌بینی نقدینگی ادامه یابد.",
+            "alerts": alerts,
+            "predictions": [
+                prediction("closing_30", "مانده تجمعی پایان ۳۰ روز (اتکا)", "۳۰ روز", m["closing_30"], "medium",
+                           "چک دریافتی × درصد اتکا + میانگین ورودی − چک پرداختی − حقوق − میانگین خروجی"),
+                prediction("financing_need", "نیاز به تأمین مالی تا ۳۰ روز", "۳۰ روز", m["financing_need"], "medium",
+                           "بیشترین کسری تجمعی در سناریوی اتکا"),
+            ],
+        }
+
+
+
 PAGE_AGENT_CLASSES: list[type[PageAgent]] = [
     ReceivedChequesAgent, IssuedChequesAgent, CompanyPaymentsAgent, B2BRemittancesAgent, DistributionAgent,
     DailyCashExcelAgent, ReconciliationAgent, CustomerRiskAgent, CashflowAgent, CashBankAgent, CollectionAgent,
-    RepresentativeAgentPage, ScenarioAgent,
+    RepresentativeAgentPage, ScenarioAgent, PayablesAgent, LiquidityAgent,
 ]

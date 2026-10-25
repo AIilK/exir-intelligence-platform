@@ -24,6 +24,74 @@ def _is_hybrid_customer(item: dict[str, Any]) -> bool:
     return "هیبرید" in text or "hybrid" in text
 
 
+def active_rahkaran_buyers() -> dict[int, dict[str, Any]]:
+    """همه مشتریان راهکاران که در سال مالی جاری یا قبل فاکتور فروش قطعی (Status = 11) دارند، به تفکیک کد تفصیلی.
+
+    کلید = DLID (counterpart_ref)؛ یک شخص با دو برند دو تفصیلی جدا دارد و هر دو جدا برمی‌گردند.
+    """
+    from sqlalchemy import text
+
+    from app.database.sqlserver import get_sqlserver_engine
+    from app.utils.jalali import format_jalali_date
+
+    with get_sqlserver_engine().connect() as c:
+        years = c.execute(text("""
+            SELECT TOP 2 FiscalYearRef FROM GNR3.LedgerFiscalYear
+            WHERE LedgerRef = 1 AND StartDate <= CAST(GETDATE() AS date) ORDER BY StartDate DESC
+        """)).scalars().all()
+        if not years:
+            return {}
+        current = years[0]
+        rows = c.execute(text(f"""
+            SELECT dl.DLID, dl.Code, dl.Title,
+                   SUM(CASE WHEN i.FiscalYearRef = :cur THEN 1 ELSE 0 END) AS cur_count,
+                   SUM(CASE WHEN i.FiscalYearRef = :cur THEN i.NetPrice ELSE 0 END) AS cur_amount,
+                   SUM(CASE WHEN i.FiscalYearRef <> :cur THEN 1 ELSE 0 END) AS prev_count,
+                   SUM(CASE WHEN i.FiscalYearRef <> :cur THEN i.NetPrice ELSE 0 END) AS prev_amount,
+                   MAX(i.Date) AS last_date
+            FROM SLS3.Invoice i
+            JOIN SLS3.Customer cu ON cu.CustomerID = i.CustomerRef
+            JOIN FIN3.DL dl ON dl.ReferenceID = cu.PartyRef
+            WHERE i.Status = 11 AND i.FiscalYearRef IN ({",".join(str(int(y)) for y in years)})
+            GROUP BY dl.DLID, dl.Code, dl.Title
+        """), {"cur": current}).mappings().all()
+    out: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        last = r["last_date"]
+        out[int(r["DLID"])] = {
+            "counterpart_ref": int(r["DLID"]),
+            "counterpart_code": str(r["Code"] or "").strip(),
+            "counterpart_name": " ".join(str(r["Title"] or "").split()),
+            "invoice_current_year_count": int(r["cur_count"] or 0),
+            "invoice_current_year_rial": float(r["cur_amount"] or 0),
+            "invoice_previous_year_count": int(r["prev_count"] or 0),
+            "invoice_previous_year_rial": float(r["prev_amount"] or 0),
+            "last_invoice_date_jalali": format_jalali_date(last.date() if hasattr(last, "date") else last) if last else None,
+        }
+    return out
+
+
+OFFICIAL_SL = "123003"                             # حساب‌های دریافتنی تجاری (رسمی)
+UNOFFICIAL_SLS = ("123011", "123004", "123009")    # دریافتنی اشخاص + حساب‌های برگشتی (غیررسمی)
+MAIN_SLS = ("123003", "123011")                    # «مانده حساب» گزارش واحد مالی
+RETURNED_SLS = ("123004", "123009")                # «حساب برگشتی» گزارش واحد مالی
+# کدهایی که گزارش واحد مالی حساب نمی‌کند (به درخواست واحد مالی)
+REPORT_EXCLUDED_CODES = {"848000"}                 # . فروش اینترنتی (لورینت)
+
+
+def _in_receivable_report(item: dict[str, Any], account: dict[str, Any]) -> bool:
+    """مشتری برند که در گزارش «مانده حساب مشتری» واحد مالی شمرده می‌شود: کد تفصیلی ۶ رقمی ۷xxxxx تا ۹xxxxx،
+    بدون هیبرید و انبار پخش (کدهای ۶۰xxxx اشخاص/کارکنان و خریداران مواد اولیه بیرون می‌مانند).
+    با فایل ۱۴۰۵/۰۲ واحد مالی تطبیق داده شد (۲۳۷ مشتری مشترک، اختلاف فقط ثبت‌های بعد از تاریخ فایل)."""
+    code = str(item.get("counterpart_code") or account.get("dl_code") or "").strip()
+    name = str(item.get("counterpart_name") or "").replace("ي", "ی").replace("ك", "ک")
+    return (len(code) == 6 and code[0] in "789" and code not in REPORT_EXCLUDED_CODES
+            and not any(w in name for w in ("هیبرید", "انبار")))
+import threading as _threading
+_PORTFOLIO_REFRESHING = _threading.Lock()
+_PORTFOLIO_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+
+
 class CustomerIntelligenceService:
     """Customer-only decision layer on top of explainable SQL predictions."""
 
@@ -104,19 +172,60 @@ class CustomerIntelligenceService:
         }
 
     def collection_portfolio(self, limit: int = 300) -> dict[str, Any]:
-        """Managerial customer-collection portfolio with account + cheque coverage in one dataset."""
+        """Managerial customer-collection portfolio with account + cheque coverage in one dataset.
+
+        ساخت کامل چند ثانیه است؛ نتیجه در حافظه می‌ماند. بعد از ۵ دقیقه همان نسخه قبلی فوری برگردانده می‌شود
+        و نسخه تازه در پس‌زمینه ساخته می‌شود (هیچ کاربری منتظر ساخت دوباره نمی‌ماند).
+        """
+        import threading
+        import time
+        hit = _PORTFOLIO_CACHE.get(limit)
+        if hit:
+            # بعد از ۶۰ ثانیه تازه‌سازی در پس‌زمینه (ساخت ~۶ ثانیه است؛ اسناد راهکاران مدام اضافه می‌شوند)
+            if time.time() - hit[0] >= 60 and _PORTFOLIO_REFRESHING.acquire(blocking=False):
+                def refresh():
+                    try:
+                        _PORTFOLIO_CACHE[limit] = (time.time(), self._collection_portfolio(limit))
+                    finally:
+                        _PORTFOLIO_REFRESHING.release()
+                threading.Thread(target=refresh, daemon=True).start()
+            return hit[1]
+        result = self._collection_portfolio(limit)
+        _PORTFOLIO_CACHE[limit] = (time.time(), result)
+        return result
+
+    def _collection_portfolio(self, limit: int) -> dict[str, Any]:
         dashboard = self.dashboard(limit=limit)
+        # فهرست کامل = مشتریان دارای چک (موتور رفتار چک) + همه خریداران فعال سال جاری و قبل؛ کلید همیشه کد تفصیلی است
+        # تا یک شخص با دو برند (دو تفصیلی) دو ردیف جدا داشته باشد.
+        try:
+            buyers = active_rahkaran_buyers()
+        except Exception:
+            buyers = {}
+        items = [dict(x) for x in dashboard.get("customers", []) if x.get("counterpart_ref") is not None]
+        known = {int(x["counterpart_ref"]) for x in items}
+        for x in items:
+            x.update({k: v for k, v in (buyers.get(int(x["counterpart_ref"])) or {}).items() if k not in ("counterpart_name",)})
+        for ref, b in buyers.items():
+            if ref not in known:
+                items.append({**b, "historical_cheque_count": 0, "open_exposure": 0.0, "overdue_open_amount": 0.0,
+                              "returned_cheque_count": 0, "returned_cheque_amount": 0.0, "future_open_cheque_count": 0,
+                              "future_open_cheque_amount": 0.0, "risk_level": "low", "no_cheque_history": True})
+        for x in items:
+            x["is_active_buyer"] = bool(x.get("invoice_current_year_count") or x.get("invoice_previous_year_count"))
         # One bulk query instead of one ~0.5s query per customer (was ~2 minutes for 300).
         try:
-            positions = self.prediction.bulk_customer_account_positions(
-                [int(x["counterpart_ref"]) for x in dashboard.get("customers", []) if x.get("counterpart_ref") is not None]
-            )
+            # در دسته‌های ۲۵۰تایی: کوئری فهرست کدها را چند بار به‌کار می‌برد و با ۶۰۰ کد از سقف پارامتر ODBC می‌گذرد.
+            refs = [int(x["counterpart_ref"]) for x in items]
+            positions = {}
+            for i in range(0, len(refs), 250):
+                positions.update(self.prediction.bulk_customer_account_positions(refs[i:i + 250]))
         except Exception as exc:
             positions, bulk_error = {}, str(exc)
         else:
             bulk_error = None
         rows: list[dict[str, Any]] = []
-        for item in dashboard.get("customers", []):
+        for item in items:
             # Defensive guard: dashboard already excludes Hybrid customers, but keep
             # the portfolio protected if its upstream source changes later.
             if _is_hybrid_customer(item):
@@ -125,35 +234,28 @@ class CustomerIntelligenceService:
             if ref is None:
                 continue
             account = positions.get(int(ref)) or {"found": False, **({"error": bulk_error} if bulk_error else {})}
-            balance = float(account.get("balance_rial", 0) or 0) if account.get("found") else 0.0
-            open_account = max(balance, 0.0)
-            customer_credit = max(-balance, 0.0)
-            open_cheques = float(item.get("open_exposure", 0) or 0)
-            exposure = round(open_account + open_cheques, 2)
-            rows.append({
-                **item,
-                "account_position": account,
-                "collection_position": {
-                    "open_account_receivable_rial": round(open_account, 2),
-                    "customer_credit_rial": round(customer_credit, 2),
-                    "open_cheque_amount_rial": round(open_cheques, 2),
-                    "total_collection_exposure_rial": exposure,
-                    "cheque_coverage_percent": round(open_cheques / exposure * 100, 1) if exposure else 0.0,
-                    "uncovered_percent": round(open_account / exposure * 100, 1) if exposure else 0.0,
-                },
-            })
+            rows.append({**item, "account_position": account, "collection_position": _collection_position(item, account)})
         rows.sort(key=lambda x: float(x.get("collection_position", {}).get("total_collection_exposure_rial", 0) or 0), reverse=True)
-        return {
-            "status": "success",
-            "summary": {
-                "customer_count": len(rows),
-                "open_account_receivable_rial": round(sum(float(x["collection_position"]["open_account_receivable_rial"]) for x in rows), 2),
-                "open_cheque_amount_rial": round(sum(float(x["collection_position"]["open_cheque_amount_rial"]) for x in rows), 2),
-                "total_collection_exposure_rial": round(sum(float(x["collection_position"]["total_collection_exposure_rial"]) for x in rows), 2),
-                "customer_credit_rial": round(sum(float(x["collection_position"]["customer_credit_rial"]) for x in rows), 2),
-            },
-            "customers": rows,
-        }
+        return {"status": "success", "summary": _portfolio_summary(rows), "customers": rows}
+
+    def portfolio_as_of(self, limit: int, as_of) -> dict[str, Any]:
+        """همان پرتفوی، با مانده حساب هر مشتری تا پایان روز as_of (فیلتر ماه پرونده مشتری).
+
+        فهرست مشتریان و ستون‌های چک همان فهرست زنده است؛ فقط ستون‌های مانده (بدهی، بستانکار، برگشتی، رسمی/غیررسمی)
+        از اسناد تا as_of دوباره حساب می‌شود (یک کوئری، چند ثانیه).
+        """
+        from app.utils.jalali import format_jalali_date
+        base = self.collection_portfolio(limit)
+        refs = [int(x["counterpart_ref"]) for x in base.get("customers", [])]
+        positions = self.prediction.bulk_customer_account_positions(refs, as_of=as_of)
+        rows = []
+        for x in base.get("customers", []):
+            account = positions.get(int(x["counterpart_ref"])) or {"found": False}
+            rows.append({**x, "account_position": account, "collection_position": _collection_position(x, account)})
+        rows.sort(key=lambda x: float(x["collection_position"].get("total_collection_exposure_rial", 0) or 0), reverse=True)
+        return {"status": "success", "as_of": as_of.isoformat(), "as_of_jalali": format_jalali_date(as_of),
+                "summary": _portfolio_summary(rows), "customers": rows}
+
 
     def customer(self, counterpart_ref: int) -> dict[str, Any]:
         report = self.prediction.customer_prediction(counterpart_ref)
@@ -303,3 +405,53 @@ class CustomerIntelligenceService:
             "bad_signals": bad or ["هشدار بحرانی مشتری مشاهده نشد."],
             "next_best_action": "از سه مشتری اول در فهرست اولویت وصول شروع کنید و شرایط فروش اعتباری آن‌ها را بازبینی کنید." if high else "پایش هفتگی رفتار مشتریان و کنترل سیاست ۹۰ روزه ادامه پیدا کند.",
         }
+
+
+def _collection_position(item: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+    """ستون‌های مانده یک مشتری، مثل گزارش واحد مالی «مانده حساب مشتری بر اساس تجاری و برگشتی»:
+    مانده حساب = 123003 (تجاری) + 123011 (اشخاص) خالص؛ اگر مثبت بدهی، اگر منفی بستانکار (از بدهی کل کم نمی‌شود)؛
+    حساب برگشتی = 123004 + 123009 خالص، جدا. رسمی = 123003؛ غیررسمی = 123011 + حساب‌های برگشتی.
+    """
+    by_sl = {str(a.get("sl_code")): float(a.get("balance_rial") or 0)
+             for a in (account.get("account_breakdown") or [])} if account.get("found") else {}
+    main = sum(by_sl.get(sl, 0.0) for sl in MAIN_SLS)
+    returned_net = sum(by_sl.get(sl, 0.0) for sl in RETURNED_SLS)
+    open_account = max(main, 0.0)
+    official = by_sl.get(OFFICIAL_SL, 0.0)
+    unofficial = sum(b for sl, b in by_sl.items() if sl in UNOFFICIAL_SLS)
+    open_cheques = float(item.get("open_exposure", 0) or 0)
+    exposure = round(open_account + open_cheques, 2)
+    return {
+        "open_account_receivable_rial": round(open_account, 2),
+        "customer_credit_rial": round(max(-main, 0.0), 2),
+        "returned_account_rial": round(max(returned_net, 0.0), 2),
+        "in_receivable_report": _in_receivable_report(item, account),
+        "official_balance_rial": round(official, 2),
+        "unofficial_balance_rial": round(unofficial, 2),
+        "unofficial_minus_official_rial": round(unofficial - official, 2),
+        "open_cheque_amount_rial": round(open_cheques, 2),
+        "total_collection_exposure_rial": exposure,
+        "cheque_coverage_percent": round(open_cheques / exposure * 100, 1) if exposure else 0.0,
+        "uncovered_percent": round(open_account / exposure * 100, 1) if exposure else 0.0,
+    }
+
+
+def _portfolio_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+                "customer_count": len(rows),
+                "active_customer_count": sum(1 for x in rows if x.get("is_active_buyer")),
+                "active_current_year_count": sum(1 for x in rows if x.get("invoice_current_year_count")),
+                "with_cheque_count": sum(1 for x in rows if not x.get("no_cheque_history")),
+                "open_account_receivable_rial": round(sum(float(x["collection_position"]["open_account_receivable_rial"]) for x in rows), 2),
+                "open_cheque_amount_rial": round(sum(float(x["collection_position"]["open_cheque_amount_rial"]) for x in rows), 2),
+                "total_collection_exposure_rial": round(sum(float(x["collection_position"]["total_collection_exposure_rial"]) for x in rows), 2),
+                "customer_credit_rial": round(sum(float(x["collection_position"]["customer_credit_rial"]) for x in rows), 2),
+                **{k: round(sum(float(x["collection_position"][k]) for x in rows), 2)
+                   for k in ("official_balance_rial", "unofficial_balance_rial", "unofficial_minus_official_rial")},
+                # همان جمع گزارش واحد مالی: فقط مشتریان برند (بدون هیبرید، انبار پخش، فروش اینترنتی و اشخاص)
+                "report_customer_count": sum(1 for x in rows if x["collection_position"]["in_receivable_report"]),
+                **{f"report_{k}": round(sum(float(x["collection_position"][k]) for x in rows
+                                            if x["collection_position"]["in_receivable_report"]), 2)
+                   for k in ("open_account_receivable_rial", "customer_credit_rial", "returned_account_rial",
+                             "official_balance_rial", "unofficial_balance_rial", "unofficial_minus_official_rial")},
+    }

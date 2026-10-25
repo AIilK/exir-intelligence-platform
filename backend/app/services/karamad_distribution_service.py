@@ -1,10 +1,11 @@
-"""توزیع بار کارآمد: فاکتورهایی که هنوز حواله خروج ندارند، حواله‌های باز، سرعت خروج بار و عملکرد موزعان.
+"""توزیع بار کارآمد: فاکتورهایی که هنوز حواله خروج ندارند، سرعت خروج بار و عملکرد موزعان.
 
 ساختار کارآمد (بررسی‌شده روی KDB):
 - هر فاکتور فروش (tblFactorF) با ExitRef به حواله خروج (tblExit) وصل می‌شود؛ فاکتور بدون
-  ExitRef هنوز برای توزیع بار نشده است. فیلد Delivered در این نصب همیشه صفر است و استفاده نمی‌شود.
+  ExitRef، یا با حواله‌ای که Status آن ۰ است، هنوز توزیع‌نشده حساب می‌شود (V175).
+  فیلد Delivered در این نصب همیشه صفر است و استفاده نمی‌شود.
 - حواله خروج: DateE (تاریخ خروج)، DeliverRef (موزع، tblDeliver)، DriverRef (راننده، tblDriver)،
-  Status (در این نصب ۰ یا ۱؛ معنی ۰ هنوز از واحد توزیع تأیید نشده و جدا نمایش داده می‌شود).
+  Status (۰ یا ۱) نمایش داده نمی‌شود؛ حواله‌های وضعیت ۰ به درخواست مدیریت از صفحه حذف شده‌اند.
 - فاکتورهای صفر/جایزه‌ای (کمتر از MIN_LAST_INVOICE_AMOUNT_RIAL) کنار گذاشته می‌شوند.
 - فاکتوری که به‌طور کامل مرجوع شده (tblFactorB.FactorFRef) توزیع لازم ندارد و حذف می‌شود.
 """
@@ -66,7 +67,7 @@ class KaramadDistributionService:
         1,982 customers match exactly given the same data:
         - sales of the month = each sales invoice dated in the month (قابل پرداخت) minus the returns
           dated in the month that point to it (FactorFRef, else same branch + FactorNo = invoice Code);
-        - توزیع نشده = invoices with no exit document (ExitRef); توزیع شده = the rest;
+        - توزیع نشده = invoices with no exit document (ExitRef) or whose exit has Status 0; توزیع شده = the rest;
         - وصول = cash + draft + cheque settled on the month's invoices (vwFactorFPayoff);
         - مانده سیستم = customer ledger balance (posted + not yet posted);
         - مانده فاکتورهای ماه = MIN(مانده سیستم, توزیع شده − وصول), per customer.
@@ -93,12 +94,29 @@ class KaramadDistributionService:
                 """
                 SELECT f.[ID], f.[Code], f.[DateE], f.[FactorPriceP], f.[ExitRef], f.[BranchRef], b.[Name] AS BranchName,
                        cu.[DLRef], cu.[Name] AS CustomerName, cu.[Code] AS CustomerCode, v.[Name] AS VisitorName,
-                       ISNULL(p.[CashN], 0) + ISNULL(p.[Draft], 0) + ISNULL(p.[Cheque], 0) AS Collected
+                       ISNULL(p.[CashN], 0) + ISNULL(p.[Draft], 0) + ISNULL(p.[Cheque], 0) AS Collected,
+                       CASE WHEN f.[ExitRef] IS NOT NULL AND ISNULL(e.[Status], 1) <> 0 THEN 1 ELSE 0 END AS [Distributed],
+                       -- ستون‌های «کنترل وصول» گزارش واحد مالی
+                       dl.[Code] AS DLCode, ln.[Name] AS LineName, pt.[Name] AS PaymentName, ct.[Name] AS CityName,
+                       dv.[Name] AS DeliverName, e.[Code] AS ExitCode, e.[DateE] AS ExitDate,
+                       f.[FactorPrice], f.[FactorDiscount], f.[FactorCashDiscount], f.[FactorVat],
+                       ISNULL(p.[CashN], 0) AS CashN, ISNULL(p.[Draft], 0) AS Draft, ISNULL(p.[Cheque], 0) AS Cheque,
+                       ISNULL(p.[FactorB], 0) AS PayoffReturn, ISNULL(p.[Barter], 0) AS Barter,
+                       ISNULL(p.[SharedFactor], 0) + ISNULL(p.[SharedCustomerDebt], 0) + ISNULL(p.[SharedReturnCheque], 0)
+                         + ISNULL(p.[SharedReturn], 0) AS Shared,
+                       rm.[UnPaid]
                 FROM dbo.[tblFactorF] f
                 JOIN dbo.[tblBranch] b ON b.[ID] = f.[BranchRef]
+                LEFT JOIN dbo.[tblExit] e ON e.[ID] = f.[ExitRef]
                 LEFT JOIN dbo.[tblCustomer] cu ON cu.[ID] = f.[CustomerRef]
+                LEFT JOIN dbo.[tblDL] dl ON dl.[ID] = cu.[DLRef]
                 LEFT JOIN dbo.[tblVisitor] v ON v.[ID] = f.[VisitorRef]
+                LEFT JOIN dbo.[tblLine] ln ON ln.[ID] = f.[LineRef]
+                LEFT JOIN dbo.[tblPaymentType] pt ON pt.[ID] = f.[PaymentRef]
+                LEFT JOIN dbo.[tblCity] ct ON ct.[ID] = cu.[CityRef]
+                LEFT JOIN dbo.[tblDeliver] dv ON dv.[ID] = e.[DeliverRef]
                 LEFT JOIN dbo.[vwFactorFPayoff] p ON p.[ID] = f.[ID]
+                LEFT JOIN dbo.[vwFactorFRemain] rm ON rm.[ID] = f.[ID]
                 WHERE f.[DateE] >= :start AND f.[DateE] < :end AND b.[Name] LIKE N'%هیبرید%'
                 """
             ), params).mappings().all()
@@ -106,6 +124,20 @@ class KaramadDistributionService:
                 """
                 SELECT r.[FactorFRef], r.[FactorNo], r.[BranchRef], r.[FactorPriceP]
                 FROM dbo.[tblFactorB] r WHERE r.[DateE] >= :start AND r.[DateE] < :end
+                """
+            ), params).mappings().all()
+            # فروش کل ماه (تعریف گزارش فروش واحد مالی): همه شعب، قابل پرداخت بعد از تخفیف (با ارزش افزوده)،
+            # منهای همه برگشتی‌هایی که در همین ماه ثبت شده‌اند (هر فاکتوری که باشد).
+            company = connection.execute(text(
+                """
+                SELECT b.[Name] AS BranchName,
+                       SUM(CASE WHEN x.[k] = 0 THEN x.[P] ELSE 0 END) AS Invoices,
+                       SUM(CASE WHEN x.[k] = 1 THEN x.[P] ELSE 0 END) AS Returns
+                FROM (SELECT [BranchRef], [FactorPriceP] AS P, 0 AS k FROM dbo.[tblFactorF] WHERE [DateE] >= :start AND [DateE] < :end
+                      UNION ALL
+                      SELECT [BranchRef], [FactorPriceP], 1 FROM dbo.[tblFactorB] WHERE [DateE] >= :start AND [DateE] < :end) x
+                LEFT JOIN dbo.[tblBranch] b ON b.[ID] = x.[BranchRef]
+                GROUP BY b.[Name]
                 """
             ), params).mappings().all()
 
@@ -122,6 +154,7 @@ class KaramadDistributionService:
         branches: dict[str, dict[str, Any]] = {}
         customers: dict[tuple[str, Any], dict[str, Any]] = {}
         undistributed = []
+        control = []
         for r in invoices:
             inv_id = int(r["ID"])
             net = float(r["FactorPriceP"] or 0) - returned.get(inv_id, 0.0)
@@ -130,12 +163,13 @@ class KaramadDistributionService:
                                              "distributed_rial": 0.0, "collected_rial": 0.0, "remaining_rial": 0.0,
                                              "undistributed_count": 0})
             dl = int(r["DLRef"]) if r["DLRef"] is not None else None
-            c = customers.setdefault((branch, dl), {"branch_name": branch, "dl_ref": dl, "customer_name": _text(r["CustomerName"]),
+            c = customers.setdefault((branch, dl), {"branch_name": branch, "dl_ref": dl, "dl_code": _text(r["DLCode"]),
+                                                   "customer_name": _text(r["CustomerName"]),
                                                    "customer_code": _text(r["CustomerCode"]), "distributed_rial": 0.0,
                                                    "undistributed_rial": 0.0, "collected_rial": 0.0})
             b["sales_rial"] += net
             c["collected_rial"] += float(r["Collected"] or 0)
-            if r["ExitRef"] is None:
+            if not r["Distributed"]:
                 b["undistributed_rial"] += net
                 b["undistributed_count"] += 1
                 c["undistributed_rial"] += net
@@ -143,11 +177,29 @@ class KaramadDistributionService:
                 undistributed.append({
                     "invoice_id": inv_id, "number": _text(r["Code"]), "date_jalali": format_jalali_date(issued),
                     "days_waiting": (today - issued).days if issued else None, "amount_rial": _num(net),
+                    "invoice_rial": _num(r["FactorPriceP"]), "returned_rial": _num(returned.get(inv_id, 0.0)),
                     "branch_name": branch, "customer_name": _text(r["CustomerName"]),
                     "customer_code": _text(r["CustomerCode"]), "visitor_name": _text(r["VisitorName"]),
                 })
             else:
                 c["distributed_rial"] += net
+            exit_date = _as_date(r["ExitDate"]) if r["Distributed"] else None
+            control.append({
+                "invoice_id": inv_id, "branch_name": branch, "line_name": _text(r["LineName"]), "number": _text(r["Code"]),
+                "exit_code": _text(r["ExitCode"]) if r["Distributed"] else "",
+                "date_jalali": format_jalali_date(_as_date(r["DateE"])),
+                "distribution_date_jalali": format_jalali_date(exit_date) if exit_date else "",
+                "days_since_distribution": (today - exit_date).days if exit_date else None,
+                "payment_name": _text(r["PaymentName"]), "customer_code": _text(r["CustomerCode"]),
+                "customer_name": _text(r["CustomerName"]), "visitor_name": _text(r["VisitorName"]),
+                "city_name": _text(r["CityName"]), "deliver_name": _text(r["DeliverName"]) if r["Distributed"] else "",
+                "gross_rial": _num(r["FactorPrice"]), "volume_discount_rial": _num(r["FactorDiscount"]),
+                "cash_discount_rial": _num(r["FactorCashDiscount"]), "vat_rial": _num(r["FactorVat"]),
+                "payable_rial": _num(r["FactorPriceP"]), "cash_rial": _num(r["CashN"]), "draft_rial": _num(r["Draft"]),
+                "cheque_rial": _num(r["Cheque"]), "collected_rial": _num(r["Collected"]),
+                "returned_rial": _num(r["PayoffReturn"]), "shared_rial": _num(r["Shared"]), "barter_rial": _num(r["Barter"]),
+                "unpaid_rial": _num(r["UnPaid"]), "distributed": bool(r["Distributed"]),
+            })
 
         rows = []
         for c in customers.values():
@@ -167,14 +219,25 @@ class KaramadDistributionService:
         return {
             "status": "success",
             "year": year, "month": month, "month_label": f"{JALALI_MONTHS[month - 1]} {year}",
+            "company_sales": {
+                "invoices_rial": _num(sum(float(r["Invoices"] or 0) for r in company)),
+                "returns_rial": _num(sum(float(r["Returns"] or 0) for r in company)),
+                "net_rial": _num(sum(float(r["Invoices"] or 0) - float(r["Returns"] or 0) for r in company)),
+                "by_branch": sorted(({"branch_name": _text(r["BranchName"]) or "—",
+                                      "net_rial": _num(float(r["Invoices"] or 0) - float(r["Returns"] or 0))} for r in company),
+                                    key=lambda x: -x["net_rial"]),
+                "rule": "همه شعب، فاکتور فروش ماه منهای همه برگشتی‌های ثبت‌شده در همان ماه (قابل پرداخت، با ارزش افزوده).",
+            },
             "branches": branch_rows,
             "totals": totals,
             "customers": sorted(rows, key=lambda x: (x["branch_name"], -x["distributed_rial"])),
             "undistributed": sorted(undistributed, key=lambda x: -(x["days_waiting"] or 0)),
+            # «کنترل وصول»: هر فاکتور ماه با اجزای مبلغ و تسویه (همان ستون‌های گزارش واحد مالی)
+            "collection_control": sorted(control, key=lambda x: (x["branch_name"], x["date_jalali"], x["number"])),
         }
 
     # ------------------------------------------------------------- per-invoice timeline
-    def timeline(self, days: int = 14) -> dict[str, Any]:
+    def timeline(self, days: int = 14, year: int | None = None, month: int | None = None) -> dict[str, Any]:
         """زمان‌بندی توزیع هر فاکتور: تاریخ فاکتور، ثبت در سیستم، ثبت حواله خروج و تاریخ خروج.
 
         - ثبت فاکتور = tblFactorF.CreateDate (ساعت واقعی ثبت؛ ممکن است بعد از تاریخ فاکتور باشد).
@@ -182,21 +245,29 @@ class KaramadDistributionService:
           tblExit خودش زمان ثبت ندارد. چند ذخیره = حواله بعداً ویرایش شده است.
         - لاگ‌هایی که ساعت کامپیوترشان اشتباه است (مثلاً سال ۲۰۴۹) کنار گذاشته می‌شوند.
         """
+        from datetime import timedelta
         safe_days = max(1, min(int(days), 90))
-        key = ("timeline", safe_days)
+        if year and month:
+            # یک ماه شمسی کامل (برای نمای ماهانه)
+            start, end = _month_range(int(year), int(month))
+            key = ("timeline_month", int(year), int(month))
+            label = f"{JALALI_MONTHS[int(month) - 1]} {int(year)}"
+        else:
+            start, end = date.today() - timedelta(days=safe_days), None
+            key = ("timeline", safe_days)
+            label = None
         with _lock:
             hit = _month_cache.get(key)
             if hit and time.time() - hit[0] < CACHE_SECONDS:
                 return hit[1]
-        data = self._timeline(safe_days)
+        data = self._timeline(safe_days, start, end, label)
         with _lock:
             _month_cache[key] = (time.time(), data)
         return data
 
-    def _timeline(self, days: int) -> dict[str, Any]:
+    def _timeline(self, days: int, start: date, end: date | None = None, label: str | None = None) -> dict[str, Any]:
         from datetime import datetime, timedelta
         today = date.today()
-        start = today - timedelta(days=days)
         prefix = "ذخیره خروج کالا از انبار با شناسه"
         with self.engine.connect() as connection:
             rows = connection.execute(text(
@@ -205,7 +276,7 @@ class KaramadDistributionService:
                     SELECT f.[ID], f.[Code], f.[DateE], f.[CreateDate], f.[FactorPriceP], f.[ExitRef], f.[UserRef],
                            f.[BranchRef], f.[CustomerRef], f.[VisitorRef]
                     FROM dbo.[tblFactorF] f
-                    WHERE f.[DateE] >= :start AND f.[FactorPriceP] >= :min_amount
+                    WHERE f.[DateE] >= :start AND (:end IS NULL OR f.[DateE] < :end) AND f.[FactorPriceP] >= :min_amount
                       AND NOT EXISTS (SELECT 1 FROM dbo.[tblFactorB] rb WHERE rb.[FactorFRef] = f.[ID]
                                       GROUP BY rb.[FactorFRef] HAVING SUM(rb.[FactorPriceP]) >= f.[FactorPriceP])
                 ),
@@ -225,7 +296,7 @@ class KaramadDistributionService:
                        b.[Name] AS BranchName, cu.[Name] AS CustomerName, cu.[Code] AS CustomerCode,
                        v.[Name] AS VisitorName, iu.[Name] AS InvoiceUser,
                        e.[ID] AS ExitID, e.[Code] AS ExitCode, e.[DateE] AS ExitDate, e.[DisDateE] AS DistributionDate,
-                       e.[Status] AS ExitStatus, eu.[Name] AS ExitUser,
+                       eu.[Name] AS ExitUser,
                        dl.[Name] AS DeliverName, dl2.[Name] AS Deliver2Name, dr.[Name] AS DriverName,
                        lg.[FirstSave], lg.[LastSave], lg.[Saves],
                        (SELECT COUNT(*) FROM dbo.[tblFactorF] ff WHERE ff.[ExitRef] = e.[ID]) AS ExitInvoiceCount
@@ -242,7 +313,7 @@ class KaramadDistributionService:
                 LEFT JOIN exit_log lg ON lg.[ExitID] = e.[ID]
                 ORDER BY i.[CreateDate] DESC, i.[ID] DESC
                 """
-            ), {"start": start, "min_amount": MIN_LAST_INVOICE_AMOUNT_RIAL, "prefix": prefix}).mappings().all()
+            ), {"start": start, "end": end, "min_amount": MIN_LAST_INVOICE_AMOUNT_RIAL, "prefix": prefix}).mappings().all()
 
         def stamp(value: Any) -> dict[str, Any] | None:
             if not isinstance(value, datetime):
@@ -287,7 +358,6 @@ class KaramadDistributionService:
                 "exit_user": _text(r["ExitUser"]),
                 "exit_date_jalali": format_jalali_date(exit_date),
                 "distribution_date_jalali": format_jalali_date(r["DistributionDate"]),
-                "exit_status": None if r["ExitStatus"] is None else int(bool(r["ExitStatus"])),
                 "exit_invoice_count": int(r["ExitInvoiceCount"] or 0),
                 "deliver_name": _text(r["DeliverName"]),
                 "deliver2_name": _text(r["Deliver2Name"]),
@@ -301,8 +371,9 @@ class KaramadDistributionService:
         return {
             "status": "success",
             "days": days,
+            "month_label": label,
             "from_date_jalali": format_jalali_date(start),
-            "to_date_jalali": format_jalali_date(today),
+            "to_date_jalali": format_jalali_date(min(today, end - timedelta(days=1)) if end else today),
             "branches": sorted({x["branch_name"] for x in invoices if x["branch_name"]}),
             "invoices": invoices,
             "notes": [
@@ -327,7 +398,10 @@ class KaramadDistributionService:
                 LEFT JOIN dbo.[tblBranch] b ON b.[ID] = f.[BranchRef]
                 LEFT JOIN dbo.[tblCustomer] cu ON cu.[ID] = f.[CustomerRef]
                 LEFT JOIN dbo.[tblVisitor] v ON v.[ID] = f.[VisitorRef]
-                WHERE f.[FiscalYear] = :fy AND f.[ExitRef] IS NULL AND f.[FactorPriceP] >= :min_amount
+                WHERE f.[FiscalYear] = :fy AND f.[FactorPriceP] >= :min_amount
+                  -- an exit document with Status 0 has not shipped the load yet (V175)
+                  AND (f.[ExitRef] IS NULL
+                       OR EXISTS (SELECT 1 FROM dbo.[tblExit] e WHERE e.[ID] = f.[ExitRef] AND e.[Status] = 0))
                   AND NOT EXISTS (SELECT 1 FROM dbo.[tblFactorB] rb WHERE rb.[FactorFRef] = f.[ID]
                                   GROUP BY rb.[FactorFRef] HAVING SUM(rb.[FactorPriceP]) >= f.[FactorPriceP])
                 ORDER BY f.[DateE], f.[ID]
@@ -345,31 +419,6 @@ class KaramadDistributionService:
                     "customer_code": _text(r["CustomerCode"]),
                     "visitor_name": _text(r["VisitorName"]),
                 })
-
-            open_exits = [{
-                "exit_id": int(r["ID"]),
-                "code": _text(r["Code"]),
-                "date_jalali": format_jalali_date(r["DateE"]),
-                "days_open": (today - _as_date(r["DateE"])).days if r["DateE"] else None,
-                "branch_name": _text(r["BranchName"]),
-                "deliver_name": _text(r["DeliverName"]),
-                "driver_name": _text(r["DriverName"]),
-                "invoice_count": int(r["InvoiceCount"] or 0),
-                "amount_rial": _num(r["Amount"]),
-            } for r in connection.execute(text(
-                """
-                SELECT e.[ID], e.[Code], e.[DateE], b.[Name] AS BranchName, dl.[Name] AS DeliverName, dr.[Name] AS DriverName,
-                       COUNT(f.[ID]) AS InvoiceCount, SUM(f.[FactorPriceP]) AS Amount
-                FROM dbo.[tblExit] e
-                JOIN dbo.[tblFactorF] f ON f.[ExitRef] = e.[ID]
-                LEFT JOIN dbo.[tblBranch] b ON b.[ID] = e.[BranchRef]
-                LEFT JOIN dbo.[tblDeliver] dl ON dl.[ID] = e.[DeliverRef]
-                LEFT JOIN dbo.[tblDriver] dr ON dr.[ID] = e.[DriverRef]
-                WHERE e.[FiscalYear] = :fy AND e.[Status] = 0
-                GROUP BY e.[ID], e.[Code], e.[DateE], b.[Name], dl.[Name], dr.[Name]
-                ORDER BY e.[DateE], e.[ID]
-                """
-            ), params).mappings()]
 
             # Days from invoice to its exit, per branch (negative gaps are data-entry noise → 0).
             lead_time = [{
@@ -424,12 +473,174 @@ class KaramadDistributionService:
             "status": "success",
             "fiscal_year_label": fy["current_label"],
             "undistributed": undistributed,
-            "open_exits": open_exits,
             "lead_time": sorted(lead_time, key=lambda x: -x["average_days"]),
             "distributors": distributors,
             "notes": [
-                "فاکتور توزیع‌نشده = فاکتور فروش سال جاری که هنوز حواله خروج ندارد (بدون فاکتورهای صفر/جایزه‌ای و فاکتورهای کاملاً مرجوع‌شده).",
+                "فاکتور توزیع‌نشده = فاکتور فروش سال جاری که هنوز حواله خروج ندارد یا حواله‌اش وضعیت «۰» دارد (بدون فاکتورهای صفر/جایزه‌ای و فاکتورهای کاملاً مرجوع‌شده).",
                 "این فاکتورها از همین حالا در فروش و بدهی مشتری حساب شده‌اند.",
-                "حواله‌های با وضعیت «۰» جدا نمایش داده می‌شوند؛ معنی دقیق این وضعیت باید از واحد توزیع تأیید شود.",
             ],
         }
+
+
+# --------------------------------------------------------------------------- Excel
+def _timing_by_branch(invoices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """خلاصه زمان‌بندی هر هیبرید (همان شاخص‌های بالای خط زمان صفحه)."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for x in invoices:
+        groups.setdefault(x["branch_name"] or "—", []).append(x)
+    rows = []
+    for name, items in groups.items():
+        exited = [x for x in items if x["hours_to_exit_registration"] is not None]
+        hours = sorted(x["hours_to_exit_registration"] for x in exited)
+        leads = [x["days_invoice_to_exit"] for x in items if x["days_invoice_to_exit"] is not None]
+        same_day = sum(1 for x in exited
+                       if (x["invoice_created"] or {}).get("date_jalali") == (x["exit_registered"] or {}).get("date_jalali"))
+        waiting = [x for x in items if x["stage"] == "waiting"]
+        rows.append({
+            "branch_name": name,
+            "invoice_count": len(items),
+            "amount_rial": sum(x["amount_rial"] for x in items),
+            "waiting_count": len(waiting),
+            "waiting_amount_rial": sum(x["amount_rial"] for x in waiting),
+            "median_hours_to_exit": hours[len(hours) // 2] if hours else None,
+            "same_day_percent": round(100 * same_day / len(exited), 1) if exited else None,
+            "average_days_to_exit": round(sum(leads) / len(leads), 1) if leads else None,
+            "late_registered_count": sum(1 for x in items if (x["registration_delay_days"] or 0) > 0),
+            "max_waiting_days": max((x["days_waiting"] or 0 for x in waiting), default=0),
+        })
+    return sorted(rows, key=lambda r: -r["amount_rial"])
+
+
+def distribution_workbook(year: int, month: int, days: int = 30):
+    """Excel همه بخش‌های صفحه توزیع بار؛ هر بخش یک برگه با فیلتر. مبالغ به تومان."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    service = KaramadDistributionService()
+    monthly = service.monthly(year, month)
+    overview = service.overview()
+    timeline = service.timeline(days, year, month)
+
+    def toman(rial):
+        return round(float(rial or 0) / 10)
+
+    head = PatternFill("solid", fgColor="1F4E78")
+    wb = Workbook()
+    first = [True]
+
+    def sheet(title, headers, rows, widths, money=()):
+        ws = wb.active if first[0] else wb.create_sheet()
+        first[0] = False
+        ws.title = title[:31]
+        ws.sheet_view.rightToLeft = True
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = head
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for row in rows:
+            ws.append(row)
+        for col in money:
+            for cell in ws[get_column_letter(col)][1:]:
+                cell.number_format = "#,##0"
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "B2"
+        if rows:
+            ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(rows) + 1}"
+
+    label = monthly.get("month_label") or f"{year}-{month}"
+    t = monthly.get("totals") or {}
+    sheet(f"توزیع و وصول {label}",
+          ["هیبرید", "کل فروش", "توزیع نشده", "تعداد فاکتور توزیع‌نشده", "توزیع شده", "وصولی ماه", "مانده ماه"],
+          [[b["branch_name"], toman(b["sales_rial"]), toman(b["undistributed_rial"]), b["undistributed_count"],
+            toman(b["distributed_rial"]), toman(b["collected_rial"]), toman(b["remaining_rial"])]
+           for b in monthly.get("branches", [])]
+          + [["جمع کل", toman(t.get("sales_rial")), toman(t.get("undistributed_rial")), None,
+              toman(t.get("distributed_rial")), toman(t.get("collected_rial")), toman(t.get("remaining_rial"))]],
+          [24, 18, 18, 14, 18, 18, 18], (2, 3, 5, 6, 7))
+    sheet("مشتریان ماه",
+          ["کد تفضیلی", "هیبرید", "کد مشتری", "نام مشتری", "مانده سیستم", "توزیع شده", "توزیع نشده", "وصول", "مانده فاکتورهای ماه"],
+          [[c.get("dl_code"), c["branch_name"], c["customer_code"], c["customer_name"], toman(c.get("system_balance_rial")),
+            toman(c["distributed_rial"]), toman(c["undistributed_rial"]), toman(c["collected_rial"]),
+            toman(c.get("remaining_rial"))] for c in monthly.get("customers", [])],
+          [16, 20, 14, 34, 16, 16, 16, 16, 18], (5, 6, 7, 8, 9))
+    sheet("توزیع‌نشده‌های ماه",
+          ["هیبرید", "کد مشتری", "مشتری", "شماره فاکتور", "تاریخ", "روز انتظار", "ویزیتور", "قابل پرداخت", "برگشتی", "توزیع نشده"],
+          [[x["branch_name"], x["customer_code"], x["customer_name"], x["number"], x["date_jalali"], x["days_waiting"],
+            x["visitor_name"], toman(x.get("invoice_rial", x["amount_rial"])), toman(x.get("returned_rial")), toman(x["amount_rial"])]
+           for x in monthly.get("undistributed", [])],
+          [20, 14, 32, 12, 12, 10, 26, 16, 14, 16], (8, 9, 10))
+    sheet("کنترل وصول",
+          ["شعبه", "لاین", "شناسه", "شماره فاکتور", "خروجی", "تاریخ فاکتور", "تاریخ توزیع", "روز از توزیع", "نحوه پرداخت", "کد مشتری",
+           "نام مشتری", "فروشنده", "شهر", "عامل توزیع", "مبلغ ناخالص", "تخفیف حجمی", "تخفیف نقدی", "ارزش افزوده", "قابل پرداخت",
+           "نقد", "حواله", "چک", "پرداختی", "برگشت از فروش", "تسهیم", "تهاتر", "مانده"],
+          [[x["branch_name"], x["line_name"], x["invoice_id"], x["number"], x["exit_code"], x["date_jalali"], x["distribution_date_jalali"],
+            x["days_since_distribution"], x["payment_name"], x["customer_code"], x["customer_name"], x["visitor_name"], x["city_name"],
+            x["deliver_name"], toman(x["gross_rial"]), toman(x["volume_discount_rial"]), toman(x["cash_discount_rial"]), toman(x["vat_rial"]),
+            toman(x["payable_rial"]), toman(x["cash_rial"]), toman(x["draft_rial"]), toman(x["cheque_rial"]), toman(x["collected_rial"]),
+            toman(x["returned_rial"]), toman(x["shared_rial"]), toman(x["barter_rial"]), toman(x["unpaid_rial"])]
+           for x in monthly.get("collection_control", [])],
+          [18, 22, 10, 11, 9, 12, 12, 10, 14, 13, 28, 26, 14, 18] + [14] * 13, tuple(range(15, 28)))
+
+    undistributed = overview.get("undistributed", [])
+    by_branch: dict[str, dict[str, Any]] = {}
+    for x in undistributed:
+        b = by_branch.setdefault(x["branch_name"] or "—", {"n": 0, "amount": 0.0, "oldest": 0, "old14": 0})
+        b["n"] += 1
+        b["amount"] += x["amount_rial"]
+        b["oldest"] = max(b["oldest"], x["days_waiting"] or 0)
+        b["old14"] += 1 if (x["days_waiting"] or 0) > 14 else 0
+    lead = {item["branch_name"]: item for item in overview.get("lead_time", [])}
+    sheet("توزیع‌نشده به تفکیک هیبرید",
+          ["هیبرید", "فاکتور توزیع‌نشده", "مبلغ", "بیش از ۱۴ روز", "قدیمی‌ترین (روز)", "میانگین صدور تا خروج (روز)"],
+          sorted([[name, v["n"], toman(v["amount"]), v["old14"], v["oldest"], (lead.get(name) or {}).get("average_days")]
+                  for name, v in by_branch.items()], key=lambda r: -r[2]),
+          [24, 14, 18, 14, 14, 18], (3,))
+    sheet("فاکتورهای توزیع‌نشده",
+          ["هیبرید", "شماره فاکتور", "تاریخ", "روز انتظار", "کد مشتری", "مشتری", "ویزیتور", "مبلغ"],
+          [[x["branch_name"], x["number"], x["date_jalali"], x["days_waiting"], x["customer_code"], x["customer_name"],
+            x["visitor_name"], toman(x["amount_rial"])]
+           for x in sorted(undistributed, key=lambda x: -(x["days_waiting"] or 0))],
+          [20, 12, 12, 10, 14, 32, 26, 16], (8,))
+    sheet("سرعت خروج بار",
+          ["هیبرید", "تعداد فاکتور", "میانگین (روز)", "تا ۱ روز ٪", "تا ۳ روز ٪", "بیش از ۷ روز"],
+          [[item["branch_name"], item["invoice_count"], item["average_days"], item.get("within_1_day_percent"),
+            item.get("within_3_days_percent"), item.get("over_7_days")] for item in overview.get("lead_time", [])],
+          [24, 12, 12, 12, 12, 12])
+    sheet("عملکرد موزعان",
+          ["موزع", "هیبرید", "حواله", "فاکتور", "مبلغ بار", "میانگین صدور تا خروج (روز)", "آخرین خروج"],
+          [[d["deliver_name"], d["branch_name"], d["exit_count"], d["invoice_count"], toman(d["amount_rial"]),
+            d["average_lead_days"], d["last_exit_date_jalali"]] for d in overview.get("distributors", [])],
+          [24, 20, 10, 10, 18, 20, 14], (5,))
+
+    tlabel = timeline.get("month_label") or f"{days} روز اخیر"
+    sheet(f"زمان‌بندی هیبرید {tlabel}",
+          ["هیبرید", "فاکتور", "مبلغ", "در انتظار حواله", "مبلغ در انتظار", "میانه ثبت فاکتور تا حواله (ساعت)",
+           "حواله همان روز ٪", "میانگین فاکتور تا خروج (روز)", "ثبت دیرتر از تاریخ فاکتور", "بیشترین انتظار (روز)"],
+          [[r["branch_name"], r["invoice_count"], toman(r["amount_rial"]), r["waiting_count"],
+            toman(r["waiting_amount_rial"]), r["median_hours_to_exit"], r["same_day_percent"],
+            r["average_days_to_exit"], r["late_registered_count"], r["max_waiting_days"]]
+           for r in _timing_by_branch(timeline.get("invoices", []))],
+          [22, 10, 18, 14, 16, 20, 14, 18, 18, 14], (3, 5))
+    stage_fa = {"waiting": "در انتظار حواله خروج", "dispatched": "خارج شده", "scheduled": "خروج در روزهای آینده"}
+
+    def stamp_text(s):
+        return f'{s["date_jalali"]} {s["time"]}' if s else ""
+
+    sheet(f"زمان‌بندی فاکتور {tlabel}",
+          ["هیبرید", "شماره فاکتور", "مشتری", "کد مشتری", "ویزیتور", "مبلغ", "وضعیت", "تاریخ فاکتور", "ثبت فاکتور",
+           "ثبت‌کننده فاکتور", "ثبت حواله خروج", "کد حواله", "تاریخ خروج", "موزع", "راننده",
+           "ثبت فاکتور تا حواله (ساعت)", "فاکتور تا خروج (روز)", "روز انتظار"],
+          [[x["branch_name"], x["number"], x["customer_name"], x["customer_code"], x["visitor_name"],
+            toman(x["amount_rial"]), stage_fa.get(x["stage"], x["stage"]), x["invoice_date_jalali"],
+            stamp_text(x["invoice_created"]), x["invoice_user"], stamp_text(x["exit_registered"]), x["exit_code"],
+            x["exit_date_jalali"], x["deliver_name"], x["driver_name"], x["hours_to_exit_registration"],
+            x["days_invoice_to_exit"], x["days_waiting"]] for x in timeline.get("invoices", [])],
+          [18, 12, 30, 12, 24, 16, 18, 12, 18, 18, 18, 10, 12, 20, 20, 16, 14, 10], (6,))
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out

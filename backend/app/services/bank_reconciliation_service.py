@@ -2938,6 +2938,91 @@ def _load_book_ledger(
     }
 
 
+def _side_label(difference: float) -> str:
+    """Which side carries the balance difference (difference = bank − book)."""
+    if abs(difference) <= 0.01:
+        return ""
+    return "مانده بانک بیشتر از راهکاران" if difference > 0 else "مانده راهکاران بیشتر از بانک"
+
+
+def _explain_balance_differences(
+    daily: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+    used_lines: set[int],
+) -> None:
+    """For each mismatched day: which side is higher, and which document makes the gap.
+
+    The day difference is cumulative, so the documents behind a day are the ones whose effect
+    equals the change in difference since the previous day: a bank row with no Rahkaran voucher
+    (deposit +amount, withdrawal −amount) or a Rahkaran ledger line with no bank row (−net).
+    The gap is cumulative, so each day lists every document found since the last balanced day.
+    """
+
+    previous_difference = 0.0
+    open_documents: list[str] = []
+    for item in daily:
+        difference = item["difference"]
+        item["difference_side"] = _side_label(difference)
+        item["difference_documents"] = ""
+        item["difference_basis"] = ""
+        if item["matched"]:
+            previous_difference, open_documents = difference, []
+            continue
+        delta = round(difference - previous_difference, 2)
+        previous_difference = difference
+        item["difference_change"] = delta
+        if abs(delta) <= 0.01:
+            item["difference_documents"] = " | ".join(open_documents)
+            item["difference_basis"] = "اختلاف از روزهای قبل مانده است"
+            continue
+
+        day = date.fromisoformat(item["date"])
+        candidates: list[tuple[float, str]] = []
+        for result in results:
+            if result.get("bank_date") != item["date"] or result.get("business_status") != "unposted":
+                continue
+            amount = float(result.get("amount") or 0)
+            signed = amount if result.get("direction") == "deposit" else -amount
+            label = "واریز" if signed > 0 else "برداشت"
+            reference = result.get("bank_document_number") or result.get("reference") or ""
+            candidates.append((
+                signed,
+                f"بانک: ردیف {result.get('row_number')} {label} {abs(amount):,.0f}"
+                + (f" (سند بانک {reference})" if reference else "")
+                + " — سند راهکاران ندارد",
+            ))
+        for position, line in enumerate(lines):
+            if line["date"] != day or position in used_lines:
+                continue
+            net = float(line["net"])
+            candidates.append((
+                -net,
+                f"راهکاران: سند {line['voucher_number']} "
+                f"{'بدهکار' if net > 0 else 'بستانکار'} {abs(net):,.0f} — در بانک نیامده",
+            ))
+
+        exact = [text for value, text in candidates if abs(value - delta) <= 0.01]
+        if exact:
+            documents, basis = exact[:1], "مبلغ سند دقیقاً برابر اختلاف"
+        elif candidates and abs(sum(value for value, _ in candidates) - delta) <= 0.01:
+            documents, basis = [text for _, text in candidates], "جمع این اسناد برابر اختلاف"
+        elif candidates:
+            documents, basis = [text for _, text in candidates], "اسناد احتمالی همان روز (جمعشان با اختلاف برابر نیست)"
+        else:
+            documents, basis = [], "سند مشخصی در همان روز پیدا نشد؛ اختلاف از تاریخ یا مبلغ سند در روز دیگر است"
+        open_documents.extend(f"{item['date_jalali']} {text}" for text in documents)
+        item["difference_documents"] = " | ".join(open_documents)
+        item["difference_basis"] = basis
+
+    by_date = {item["date"]: item for item in daily}
+    for result in results:
+        item = by_date.get(result.get("bank_date"))
+        if item and not item["matched"]:
+            result["day_balance_side"] = item["difference_side"]
+            result["day_balance_documents"] = item["difference_documents"]
+
+
 def _attach_balances(
     results: list[dict[str, Any]],
     ledger: dict[str, Any],
@@ -3000,10 +3085,16 @@ def _attach_balances(
             result["book_day_end_balance"] = day_item["book_balance"]
             result["day_balance_difference"] = day_item["difference"]
             result["day_balance_matched"] = day_item["matched"]
+            # A day whose closing balance equals the Rahkaran book cannot hold a bank row without a
+            # voucher: the voucher exists (combined, or with a different description/reference).
             if result.get("business_status") == "unposted" and day_item["matched"]:
+                result["business_status"] = "posted"
+                result["business_status_fa"] = "سندخورده"
+                result["match_status"] = "matched"
+                result["match_method"] = "daily_balance_match"
                 result["reasons"] = list(result.get("reasons") or []) + [
-                    "مانده پایان روز بانک با مانده دفتر راهکاران برابر است؛ "
-                    "سند احتمالاً به شکل تجمیعی یا با شرح متفاوت ثبت شده است"
+                    "سند یک‌به‌یک پیدا نشد، ولی مانده پایان روز بانک با مانده دفتر راهکاران برابر است؛ "
+                    "پس این گردش در دفتر ثبت شده (احتمالاً تجمیعی یا با شرح متفاوت)"
                 ]
 
         transaction = result.get("matched_transaction")
@@ -3049,6 +3140,8 @@ def _attach_balances(
             )
             result["book_voucher_number"] = None
             result["book_balance_basis"] = "پایان روز سند"
+
+    _explain_balance_differences(daily, results, lines, used_lines)
 
     unmatched_days = [item for item in daily if not item["matched"]]
     return {

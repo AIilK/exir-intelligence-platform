@@ -288,9 +288,23 @@ async def _process_reconciliation_upload(
         ) from exc
     except Exception as exc:
         logger.exception("Bank reconciliation endpoint failed")
+        # Keep the traceback on disk (the backend console is often not visible) and show the
+        # cause to the operator so a failing statement can be diagnosed without the file itself.
+        try:
+            import traceback
+            from datetime import datetime
+            from pathlib import Path
+
+            log_path = Path(__file__).resolve().parents[2] / "data" / "reconciliation_errors.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as log_file:
+                log_file.write(f"\n=== {datetime.now():%Y-%m-%d %H:%M:%S} file={file.filename!r} size={len(content)}\n")
+                log_file.write(traceback.format_exc())
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="مغایرت‌گیری صورتحساب بانک با خطا مواجه شد.",
+            detail=f"مغایرت‌گیری صورتحساب بانک با خطا مواجه شد. ({type(exc).__name__}: {str(exc)[:300]})",
         ) from exc
     finally:
         await file.close()

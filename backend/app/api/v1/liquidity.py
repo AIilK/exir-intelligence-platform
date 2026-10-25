@@ -66,6 +66,11 @@ def liquidity_received_cheques(
                                           holding=holding, reliance_band=reliance_band, search=search, refresh=refresh)
 
 
+@router.get("/received-cheques/status/{kind}", summary="ریز چک‌های برگشتی یا تعیین تکلیف نشده (کارت‌های خلاصه مدیریتی)")
+def liquidity_received_status(kind: Literal["returned", "undetermined"], refresh: bool = Refresh):
+    return ReceivedChequeService().status_detail(kind=kind, refresh=refresh)
+
+
 @router.get("/received-cheques/customers/{system}/{customer_ref}", summary="ریز چک‌های باز یک مشتری با دلایل کسر اتکا")
 def liquidity_received_customer(system: Literal["rahkaran", "karamad"], customer_ref: str, refresh: bool = Refresh):
     return ReceivedChequeService().customer_detail(system=system, customer_ref=customer_ref, refresh=refresh)

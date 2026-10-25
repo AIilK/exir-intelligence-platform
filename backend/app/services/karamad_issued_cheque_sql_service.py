@@ -86,7 +86,8 @@ class KaramadIssuedChequeSQLService:
                 "days_to_due": days,
                 "amount": _num(row.get("Price")),
                 "amount_rial": _num(row.get("Price")),
-                "serial_number": row.get("inx"),
+                "serial_number": str(row.get("Code") or "").strip() or None,  # Code = شماره چک (inx فقط شناسه ردیف است)
+                "cheque_number": str(row.get("Code") or "").strip() or None,
                 "series": None,
                 "sayad_number": None,
                 "account_number": None,

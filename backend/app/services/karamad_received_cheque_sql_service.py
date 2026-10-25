@@ -142,7 +142,8 @@ class KaramadReceivedChequeSQLService:
             "bank_branch_code": row.get("BankBranchCode"),
             "bank_branch_name": row.get("BankBranchName"),
             "account_number": row.get("AccountNo"),
-            "serial_number": row.get("Serial"),
+            "serial_number": str(row.get("Code") or "").strip() or row.get("Serial"),  # Code = شماره چک
+            "series": row.get("Serial"),
             "sayad_number": None,
             "counterpart_name": row.get("DLName"),
             "counterpart_code": row.get("DLCode"),

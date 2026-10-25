@@ -87,7 +87,7 @@ RAHKARAN_OPEN_ISSUED_SQL = text("""
 
 # Final status 2 = «عادی» (open); 3 = collected.  Guarantee cheques carry «تضمین» in the SL.
 KARAMAD_OPEN_ISSUED_SQL = text("""
-    SELECT [ChequeRef] AS [ChequeID], [Price] AS [Amount], [DueDate], [inx] AS [SerialNumber],
+    SELECT [ChequeRef] AS [ChequeID], [Price] AS [Amount], [DueDate], CAST([Code] AS nvarchar(50)) AS [SerialNumber],
            CAST(NULL AS nvarchar(50)) AS [AccountNumber], [BankName], CAST(NULL AS nvarchar(200)) AS [BankBranchName],
            CAST([DLCode] AS nvarchar(50)) AS [PayeeCode], COALESCE([DLName], [DL2Name], [DL3Name], [Behalf]) AS [PayeeName],
            COALESCE([Description], [Behalf]) AS [Description], CAST([SLCode] AS nvarchar(50)) AS [SLCode]

@@ -19,15 +19,21 @@ def test_received_query_does_not_use_payable_note_status_link():
 
 
 def test_issued_query_binds_status_link_before_where():
+    from app.services.treasury_service import _issued_status_link_apply
+
     s = section('get_open_issued_cheques', 'get_latest_issued_cheques')
-    apply_pos = s.index(') AS status_link')
+    apply_pos = s.index('{_issued_status_link_apply("note")}')
     where_ref = s.index('status_link.[StatusDocumentID] IS NULL')
     assert apply_pos < where_ref
-    assert 'WHERE pnt.[PayableNoteRef] = note.[PayableNoteID]' in s
+    apply_sql = _issued_status_link_apply("note")
+    assert apply_sql.rstrip().endswith(') AS status_link')
+    assert 'WHERE pnt.[PayableNoteRef] = note.[PayableNoteID]' in apply_sql
 
 
 def test_issued_query_keeps_posted_cheques_out_of_open_set():
+    from app.services.treasury_service import _issued_status_link_apply
+
     s = section('get_open_issued_cheques', 'get_latest_issued_cheques')
     assert 'note.[State] = 11' in s
     assert 'status_link.[StatusDocumentID] IS NULL' in s
-    assert "LIKE N'%وصول چ%'" in s
+    assert "LIKE N'%وصول چ%'" in _issued_status_link_apply("note")

@@ -120,6 +120,65 @@ def _cheque_state_label(cheque_type: str, state: int) -> str:
 
 
 
+DURATION_CHANGE_STATUS_PREFIX = "تغییر مدت به روز"
+# FIN3.DL «سهامداران»: cheques moving money between the shareholders and the company.
+# Their text often says «جاری شرکا» rather than «سهامدار», so match the counterpart too.
+SHAREHOLDERS_DL_CODE = "950031"
+
+
+def _issued_status_link_apply(note_alias: str) -> str:
+    """OUTER APPLY ``status_link``: the approved document that posted an issued cheque.
+
+    Rahkaran posts a paid issued cheque in one of two ways while PayableNote.State stays 11:
+    - a PayableNoteTransaction whose line text says «تعیین وضعیت چک / وصول چک / ...»;
+    - an approved «DurationChange» document (long-term to current, credited to
+      «موجودی نزد بانکها»). Its text («وصول چک», «کارمزد بانکی», ...) is on the header
+      only and the transaction line is blank, so the keyword check alone missed ~6,000
+      paid cheques. Same rule as liquidity/issued_cheques.py.
+    """
+
+    return f"""
+        OUTER APPLY (
+            SELECT TOP (1)
+                posting.[StatusDocumentID], posting.[StatusDocumentNumber],
+                posting.[StatusDocumentDate], posting.[StatusDocumentDescription]
+            FROM (
+                SELECT
+                    pnt.[DocumentRef] AS [StatusDocumentID],
+                    pnt.[DocumentNumber] AS [StatusDocumentNumber],
+                    COALESCE(pnt.[DocumentDate], pnt.[Date]) AS [StatusDocumentDate],
+                    pnt.[Description] AS [StatusDocumentDescription]
+                FROM RPA3.[PayableNoteTransaction] AS pnt
+                WHERE pnt.[PayableNoteRef] = {note_alias}.[PayableNoteID]
+                  AND pnt.[State] = 11
+                  AND pnt.[DocumentItemType] IN (24, 26)
+                  AND pnt.[DocumentState] = 3
+                  AND (
+                        ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
+                     OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
+                     OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
+                     OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
+                     OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
+                  )
+                UNION ALL
+                SELECT
+                    dc.[DurationChangeID],
+                    dc.[Number],
+                    dc.[Date],
+                    N'{DURATION_CHANGE_STATUS_PREFIX}'
+                        + CASE WHEN ISNULL(dc.[Description], N'') = N'' THEN N''
+                               ELSE N' - ' + dc.[Description] END
+                FROM RPA3.[DurationChangePayableNote] AS dcp
+                INNER JOIN RPA3.[DurationChange] AS dc
+                    ON dc.[DurationChangeID] = dcp.[DurationChangeRef]
+                WHERE dcp.[PayableNoteRef] = {note_alias}.[PayableNoteID]
+                  AND dc.[ApproveState] = 3
+                  AND CAST(dcp.[DueDate] AS date) = CAST({note_alias}.[DueDate] AS date)
+            ) AS posting
+            ORDER BY posting.[StatusDocumentDate] DESC, posting.[StatusDocumentID] DESC
+        ) AS status_link"""
+
+
 def _issued_posting_status(state: Any, status_document_description: Any = None) -> tuple[bool, str]:
     """Return the Finance-approved accounting meaning of an issued cheque state.
 
@@ -131,7 +190,10 @@ def _issued_posting_status(state: Any, status_document_description: Any = None) 
 
     status_text = str(status_document_description or "").strip()
     normalized_status_text = status_text.replace("ي", "ی").replace("ك", "ک")
-    if any(marker in normalized_status_text for marker in ("تعیین وضعیت چک", "تعین وضعیت چک", "وصول چ", "پرداخت چک", "برداشت وجه چک")):
+    if normalized_status_text.startswith(DURATION_CHANGE_STATUS_PREFIX) or any(
+        marker in normalized_status_text
+        for marker in ("تعیین وضعیت چک", "تعین وضعیت چک", "وصول چ", "پرداخت چک", "برداشت وجه چک")
+    ):
         return True, "سند خورده / برداشت‌شده"
 
     try:
@@ -758,6 +820,30 @@ def get_latest_received_cheques(
     }
 
 
+EXCLUDED_RECEIVED_CHEQUES_FILE = "./data/excluded_received_cheques.json"
+
+
+def _excluded_received_cheque_keys() -> set[tuple[str, str, str]]:
+    """چک‌هایی که مدیریت از گزارش‌های داشبورد کنار گذاشته (منبع، شماره سند، سریال)."""
+    import json
+    from pathlib import Path
+
+    path = Path(EXCLUDED_RECEIVED_CHEQUES_FILE)
+    if not path.exists():
+        return set()
+    try:
+        items = json.loads(path.read_text(encoding="utf-8")).get("cheques") or []
+    except (OSError, ValueError):
+        return set()
+    return {(str(i.get("source_system") or "").lower(), str(i.get("document_number") or ""),
+             str(i.get("serial_number") or "")) for i in items}
+
+
+def _is_excluded_received_cheque(cheque: dict[str, Any], keys: set[tuple[str, str, str]]) -> bool:
+    return (str(cheque.get("source_system") or "").lower(), str(cheque.get("document_number") or ""),
+            str(cheque.get("serial_number") or "")) in keys
+
+
 def get_open_received_cheques(
     period: str = "all",
     engine: Engine | None = None,
@@ -831,11 +917,16 @@ def get_open_received_cheques(
         [row for row in _karamad_cheques("received_cheques") if received_cheque_is_approved_open_holding(row)],
         normalized_period,
     )
+    excluded_keys = _excluded_received_cheque_keys()
+    merged = rahkaran_cheques + karamad_cheques
+    excluded = [c for c in merged if _is_excluded_received_cheque(c, excluded_keys)]
     cheques = sorted(
-        rahkaran_cheques + karamad_cheques,
+        [c for c in merged if not _is_excluded_received_cheque(c, excluded_keys)],
         key=lambda item: (item.get("due_date") or "9999-12-31", str(item.get("cheque_id") or "")),
     )
     return {
+        "excluded_by_management_count": len(excluded),
+        "excluded_by_management_amount": sum(float(c.get("amount") or 0) for c in excluded),
         "status": "success",
         "report_type": "open_received_cheques",
         "state_filter": "approved_open_holding_only",
@@ -867,7 +958,7 @@ def get_open_issued_cheques(
     """
 
     query = text(
-        """
+        f"""
         SELECT
             note.[PayableNoteID] AS [ChequeID],
             note.[State] AS [ChequeState],
@@ -899,26 +990,7 @@ def get_open_issued_cheques(
               AND payment.[ApproveState] = 3
             ORDER BY payment.[Date] DESC, payment.[PaymentID] DESC
         ) AS document_link
-        OUTER APPLY (
-            SELECT TOP (1)
-                pnt.[DocumentRef] AS [StatusDocumentID],
-                pnt.[DocumentNumber] AS [StatusDocumentNumber],
-                COALESCE(pnt.[DocumentDate], pnt.[Date]) AS [StatusDocumentDate],
-                pnt.[Description] AS [StatusDocumentDescription]
-            FROM RPA3.[PayableNoteTransaction] AS pnt
-            WHERE pnt.[PayableNoteRef] = note.[PayableNoteID]
-              AND pnt.[State] = 11
-              AND pnt.[DocumentItemType] IN (24, 26)
-              AND pnt.[DocumentState] = 3
-              AND (
-                    ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
-              )
-            ORDER BY COALESCE(pnt.[DocumentDate], pnt.[Date]) DESC, pnt.[PayableNoteTransactionID] DESC
-        ) AS status_link
+        {_issued_status_link_apply("note")}
         WHERE note.[NoteType] = 1
           AND note.[State] = 11
           AND status_link.[StatusDocumentID] IS NULL
@@ -929,6 +1001,7 @@ def get_open_issued_cheques(
           AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%سهامدار%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%سود سهام%'
+          AND ISNULL(counterpart.[Code], N'') <> N'{SHAREHOLDERS_DL_CODE}'
         ORDER BY CASE WHEN note.[DueDate] IS NULL THEN 1 ELSE 0 END,
                  note.[DueDate] ASC, note.[PayableNoteID] DESC
         """
@@ -951,7 +1024,7 @@ def get_open_issued_cheques(
         "data_sources": ["راهکاران", "کارآمد"],
         "state_filter": [11],
         "paid_state_excluded": 28,
-        "posting_business_rule": "وجود سند تأییدشده تعیین وضعیت/وصول چک در PayableNoteTransaction یا State پرداخت‌شده = سند خورده و برداشت‌شده؛ از تعهدات باز و Cash Flow آینده حذف می‌شود",
+        "posting_business_rule": "وجود سند تأییدشده تعیین وضعیت/وصول چک در PayableNoteTransaction، سند تأییدشده تغییر مدت به روز (DurationChange) یا State پرداخت‌شده = سند خورده و برداشت‌شده؛ از تعهدات باز و Cash Flow آینده حذف می‌شود",
         "due_policy": "Rahkaran: from 20 days overdue through all future due dates; KarAmand: all live cheques whose final status is عادی (not yet cleared)",
         "row_limit": None,
         "guarantee_cheques_excluded": True,
@@ -1018,26 +1091,7 @@ def get_latest_issued_cheques(
             ON bank.[BankID] = note.[BankRef]
         LEFT JOIN FIN3.[DL] AS counterpart
             ON counterpart.[DLID] = note.[CounterPartRef]
-        OUTER APPLY (
-            SELECT TOP (1)
-                pnt.[DocumentRef] AS [StatusDocumentID],
-                pnt.[DocumentNumber] AS [StatusDocumentNumber],
-                COALESCE(pnt.[DocumentDate], pnt.[Date]) AS [StatusDocumentDate],
-                pnt.[Description] AS [StatusDocumentDescription]
-            FROM RPA3.[PayableNoteTransaction] AS pnt
-            WHERE pnt.[PayableNoteRef] = master_note.[PayableNoteID]
-              AND pnt.[State] = 11
-              AND pnt.[DocumentItemType] IN (24, 26)
-              AND pnt.[DocumentState] = 3
-              AND (
-                    ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
-                 OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
-              )
-            ORDER BY COALESCE(pnt.[DocumentDate], pnt.[Date]) DESC, pnt.[PayableNoteTransactionID] DESC
-        ) AS status_link
+        {_issued_status_link_apply("master_note")}
         WHERE payment.[ApproveState] = 3
           AND note.[NoteType] = 1
           AND COALESCE(
@@ -1054,6 +1108,7 @@ def get_latest_issued_cheques(
           AND ISNULL(note.[Description], N'') NOT LIKE N'%سود سهام%'
           AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سهامدار%'
           AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سود سهام%'
+          AND ISNULL(counterpart.[Code], N'') <> N'{SHAREHOLDERS_DL_CODE}'
           AND note.[DueDate] >= DATEADD(day, -20, CAST(GETDATE() AS date))
           {primary_future_filter}
         ORDER BY {primary_order}
@@ -1114,26 +1169,7 @@ def get_latest_issued_cheques(
                     ON bank.[BankID] = master_note.[BankRef]
                 LEFT JOIN FIN3.[DL] AS counterpart
                     ON counterpart.[DLID] = master_note.[CounterPartRef]
-                OUTER APPLY (
-                    SELECT TOP (1)
-                        pnt.[DocumentRef] AS [StatusDocumentID],
-                        pnt.[DocumentNumber] AS [StatusDocumentNumber],
-                        COALESCE(pnt.[DocumentDate], pnt.[Date]) AS [StatusDocumentDate],
-                        pnt.[Description] AS [StatusDocumentDescription]
-                    FROM RPA3.[PayableNoteTransaction] AS pnt
-                    WHERE pnt.[PayableNoteRef] = master_note.[PayableNoteID]
-                      AND pnt.[State] = 11
-                      AND pnt.[DocumentItemType] IN (24, 26)
-                      AND pnt.[DocumentState] = 3
-                      AND (
-                            ISNULL(pnt.[Description], N'') LIKE N'%تعیین وضعیت چک%'
-                         OR ISNULL(pnt.[Description], N'') LIKE N'%تعین وضعیت چک%'
-                         OR ISNULL(pnt.[Description], N'') LIKE N'%وصول چ%'
-                         OR ISNULL(pnt.[Description], N'') LIKE N'%پرداخت چک%'
-                         OR ISNULL(pnt.[Description], N'') LIKE N'%برداشت وجه چک%'
-                      )
-                    ORDER BY COALESCE(pnt.[DocumentDate], pnt.[Date]) DESC, pnt.[PayableNoteTransactionID] DESC
-                ) AS status_link
+                {_issued_status_link_apply("master_note")}
                 WHERE master_note.[NoteType] = 1
                   AND master_note.[NormalORGuarantee] = 1
                   AND ISNULL(master_note.[Description], N'') NOT LIKE N'%ضمانت%'
@@ -1141,6 +1177,7 @@ def get_latest_issued_cheques(
                   AND ISNULL(master_note.[Description], N'') NOT LIKE N'%حسن انجام%'
                   AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سهامدار%'
                   AND ISNULL(master_note.[Description], N'') NOT LIKE N'%سود سهام%'
+                  AND ISNULL(counterpart.[Code], N'') <> N'{SHAREHOLDERS_DL_CODE}'
                   AND master_note.[State] = 11
                   AND master_note.[DueDate] >= DATEADD(day, -20, CAST(GETDATE() AS date))
                   {fallback_future_filter}
@@ -1208,7 +1245,10 @@ def get_latest_issued_cheques(
         "normal_or_guarantee_filter": 1,
         "guarantee_cheques_excluded": True,
         "shareholder_paid_cheques_excluded": True,
-        "shareholder_exclusion_rules": ["Description does not contain سهامدار or سود سهام"],
+        "shareholder_exclusion_rules": [
+            "Description does not contain سهامدار or سود سهام",
+            f"Counterpart DL code is not {SHAREHOLDERS_DL_CODE} (سهامداران)",
+        ],
         "data_source": source,
         "fallback_used": source != "payment_document",
         "primary_query_error": primary_error,
