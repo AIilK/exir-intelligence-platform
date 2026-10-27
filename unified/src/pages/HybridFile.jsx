@@ -6,6 +6,7 @@ import { normName, branchCheques, chequesByVisitor, hybridLevel, yearCompare, LE
 import { useSalesSet, NETWORK_URL } from '../hooks.js'
 import { PageHead, Card, Pending, Bar, Kpi, Money } from '../ui.jsx'
 import { YearChart, ChequeHealth, DebtSummary, ChequesTab, DebtTab, InvoicesTab, VisitorsTable, visitorIds } from '../fileTabs.jsx'
+import { useHybridDistribution, DistributionGlance, DistributionTab } from '../distTab.jsx'
 
 const TABS = [
   { id: 'overview', label: 'نمای کلی', tone: 'text' },
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'debt', label: 'مطالبات', tone: 'fin' },
   { id: 'visitors', label: 'ویزیتورها', tone: 'text' },
   { id: 'invoices', label: 'فاکتورهای اخیر و وصول', tone: 'fin' },
+  { id: 'distribution', label: 'توزیع بار', tone: 'fin' },
 ]
 
 const short = (xs = []) => (xs.length ? `${xs.slice(0, 3).join('، ')}${xs.length > 3 ? ` و ${n0(xs.length - 3)} نفر دیگر` : ''}` : '—')
@@ -46,6 +48,7 @@ export default function HybridFile() {
   const fullPrev = findBranch(S.fullPrev.data, key)?.net
   const yg = ytdPrev >= MIN_GROWTH_BASE_RIAL ? growth(ytd, ytdPrev) : null
 
+  const dist = useHybridDistribution(name, P)
   const ch = useMemo(() => branchCheques(file.data), [file.data])
   const chq = useMemo(() => chequesByVisitor(ch.rows), [ch])
   const ids = useMemo(() => visitorIds(file.data?.visitors), [file.data])
@@ -129,6 +132,7 @@ export default function HybridFile() {
             <ChequeHealth file={file} ch={ch} go={go} />
             <MonthGlance detail={detail} salesKey={salesKey} P={P} go={go} />
           </div>
+          <DistributionGlance d={dist} go={go} />
           {!file.data ? <Card><Pending state={file} label="ویزیتورها" height={160} /></Card>
             : <VisitorsTable visitors={file.data.visitors} monthBy={monthBy} chq={chq} Y={Y} limit={8}
                 title={`ویزیتورها — ۸ نفر با بیشترین فروش ${yl}`}
@@ -141,6 +145,7 @@ export default function HybridFile() {
       {tab === 'visitors' && (!file.data ? <Card><Pending state={file} label="ویزیتورها" height={220} /></Card>
         : <VisitorsTable visitors={file.data.visitors} monthBy={monthBy} chq={chq} Y={Y} />)}
       {tab === 'invoices' && <InvoicesTab file={file} ids={ids} />}
+      {tab === 'distribution' && <DistributionTab d={dist} ids={ids} />}
     </div>
   )
 }

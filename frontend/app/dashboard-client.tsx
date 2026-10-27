@@ -1704,12 +1704,12 @@ function MonthlyDistributionReport({ ym, branch, onBranch }: { ym: YearMonth; br
   return <section className="cf-section dist-primary">
     <div className="cf-title">
       <div><h3><span className="dist-step">۱</span> توزیع و وصول فاکتورهای {data?.month_label ? faDigits(data.month_label) : monthLabel(ym)}{branch ? ` — ${branch}` : " — همه هیبریدها"}</h3>
-        <p>فروش ماه بعد از کسر برگشتیِ همان فاکتورها؛ توزیع‌نشده = فاکتور بدون حواله خروج یا با حواله وضعیت «۰»؛ وصول = نقد + حواله + چکِ تسویه‌شده روی فاکتورهای ماه؛ مانده = کمترینِ «مانده حساب مشتری» و «توزیع‌شده منهای وصول». مبالغ به تومان. {branch ? "" : "روی هر هیبرید کلیک کنید تا کل صفحه مخصوص همان هیبرید شود."}</p></div>
+        <p>کل فروش = همان عدد داشبورد فروش (با ارزش افزوده){data?.sales_source === "karamad" ? " — داشبورد فروش در دسترس نبود؛ فروش از کارآمد محاسبه شده" : ""}؛ توزیع‌شده = کل فروش منهای توزیع‌نشده؛ توزیع‌نشده = فاکتور بدون «خروجی» (خروجی کمتر از ۱)؛ وصول = نقد + حواله + چکِ تسویه‌شده روی فاکتورهای ماه؛ مانده = کمترینِ «مانده حساب مشتری» و «توزیع‌شده منهای وصول». مبالغ به تومان. {branch ? "" : "روی هر هیبرید کلیک کنید تا کل صفحه مخصوص همان هیبرید شود."}</p></div>
     </div>
     {error ? <div className="profile-warning">{error}</div> : !data ? <div className="profile-loading">در حال ساخت گزارش ماه از کارآمد...</div> : !branch ? <>
       <div className="cf-kpis">
         <article><small>کل فروش ماه</small><b>{fullToman(t.sales_rial)}</b><span>تومان</span></article>
-        <article className="cf-accent-red"><small>توزیع نشده</small><b>{fullToman(t.undistributed_rial)}</b><span>تومان</span></article>
+        <article className="cf-accent-red"><small>توزیع نشده (برگشتی‌ها کم شده)</small><b>{fullToman(t.undistributed_rial)}</b><span>{fa(t.undistributed_count || 0)} فاکتور · با برگشتی: {fullToman(t.undistributed_gross_rial)} تومان ({fa(t.undistributed_gross_count || 0)} فاکتور)</span></article>
         <article><small>توزیع شده</small><b>{fullToman(t.distributed_rial)}</b><span>تومان</span></article>
         <article><small>وصولی ماه</small><b>{fullToman(t.collected_rial)}</b><span>تومان</span></article>
         <article className="cf-accent-red"><small>مانده ماه</small><b>{fullToman(t.remaining_rial)}</b><span>تومان</span></article>
@@ -1731,7 +1731,7 @@ function MonthlyDistributionReport({ ym, branch, onBranch }: { ym: YearMonth; br
     </> : <>
       <div className="cf-kpis">
         <article><small>کل فروش {branch}</small><b>{fullToman(b?.sales_rial)}</b><span>تومان</span></article>
-        <article className="cf-accent-red"><small>توزیع نشده</small><b>{fullToman(b?.undistributed_rial)}</b><span>{fa(b?.undistributed_count || 0)} فاکتور</span></article>
+        <article className="cf-accent-red"><small>توزیع نشده (برگشتی‌ها کم شده)</small><b>{fullToman(b?.undistributed_rial)}</b><span>{fa(b?.undistributed_count || 0)} فاکتور · با برگشتی: {fullToman(b?.undistributed_gross_rial)} تومان ({fa(b?.undistributed_gross_count || 0)} فاکتور)</span></article>
         <article><small>توزیع شده</small><b>{fullToman(b?.distributed_rial)}</b><span>تومان</span></article>
         <article><small>وصولی ماه</small><b>{fullToman(b?.collected_rial)}</b><span>تومان</span></article>
         <article className="cf-accent-red"><small>مانده ماه</small><b>{fullToman(b?.remaining_rial)}</b><span>تومان</span></article>
@@ -2161,7 +2161,7 @@ function DistributionPage() {
       </section>
 
       <section className="cf-section">
-        <div className="cf-title"><div><h3><span className="dist-step">۵</span> فاکتورهای توزیع‌نشده — {scopeLabel}</h3><p>همه فاکتورهای بدون حواله خروج یا با حواله وضعیت «۰»؛ پیش‌فرض: قدیمی‌ترین بالا.</p></div></div>
+        <div className="cf-title"><div><h3><span className="dist-step">۵</span> فاکتورهای توزیع‌نشده — {scopeLabel}</h3><p>همه فاکتورهای بدون «خروجی» (خروجی کمتر از ۱)؛ پیش‌فرض: قدیمی‌ترین بالا.</p></div></div>
         <SortTable rows={invoiceRows} rowKey={(r) => r.invoice_id} initialSort="wait" placeholder="شماره فاکتور، مشتری، ویزیتور یا هیبرید..."
           toolbar={<label className="distribution-check"><input type="checkbox" checked={onlyStale} onChange={(e) => setOnlyStale(e.target.checked)} /> فقط بیش از {fa(staleDays)} روز</label>}
           empty="فاکتوری با این فیلترها نیست."

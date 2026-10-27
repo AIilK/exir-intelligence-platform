@@ -21,7 +21,21 @@ function replaceOrThrow(code, file, from, to, { all = false } = {}) {
 
 const FIN_ABS_API = /`http:\/\/\$\{[^`}]*\}:8000\/api\/v1/g
 
-const CONTROLLED_PAGE = `export default function Page(__props: { view?: View; onViewChange?: (v: View) => void } = {}) {
+// one shared portal host; display: contents (unified.css) so the scope's page background never shows
+const FIN_PORTAL_ROOT = `
+function __finPortalRoot() {
+  let el = document.getElementById("fin-portal-root");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "fin-portal-root";
+    el.className = "fin-scope fin-portal";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+`
+
+const CONTROLLED_PAGE =`export default function Page(__props: { view?: View; onViewChange?: (v: View) => void } = {}) {
   const [__innerView, __setInnerView] = useState<View>(__props.view ?? "management");
   const view: View = __props.view ?? __innerView;
   const setView = (v: View) => { if (__props.onViewChange) __props.onViewChange(v); else __setInnerView(v); };
@@ -40,6 +54,11 @@ export default function embedSources({ financeApp, salesSrc }) {
         if (FIN_ABS_API.test(out)) {
           FIN_ABS_API.lastIndex = 0
           out = out.replace(FIN_ABS_API, '`/api/v1')
+        }
+        // drawers / peek panels / chatbot portal into document.body, outside .fin-scope where the
+        // finance CSS lives; give them a .fin-scope container of their own instead
+        if (out.includes(', document.body)') && /\bcreatePortal\b/.test(out)) {
+          out = out.split(', document.body)').join(', __finPortalRoot())') + FIN_PORTAL_ROOT
         }
         if (file.endsWith('/dashboard-client.tsx')) {
           out = replaceOrThrow(out, id,

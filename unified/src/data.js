@@ -46,6 +46,9 @@ const nf1 = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 })
 export const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
 export const mt = (rial) => (isNum(rial) ? nf0.format(rial / 1e7) : '—') // million toman
 export const bt = (rial) => (isNum(rial) ? nf1.format(rial / 1e10) : '—') // billion toman
+const nfFull = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 })
+/** exact amount for hover titles, e.g. «۲۶٬۸۳۱٬۲۳۴٬۵۶۷ تومان» */
+export const fullToman = (rial) => (isNum(rial) ? `${nfFull.format(rial / 10)} تومان` : undefined)
 export const n0 = (v) => (isNum(v) ? nf0.format(v) : '—')
 export const pct = (v, d = 0) => (isNum(v) ? `${new Intl.NumberFormat('fa-IR', { maximumFractionDigits: d }).format(v)}٪` : '—')
 export const signedPct = (v) => (isNum(v) ? `${v >= 0 ? '▲' : '▼'} ${pct(Math.abs(v))}` : '—')

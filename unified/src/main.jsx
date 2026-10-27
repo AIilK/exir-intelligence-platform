@@ -13,6 +13,8 @@ import ManagerOverview from './pages/ManagerOverview.jsx'
 import HybridList from './pages/HybridList.jsx'
 import HybridFile from './pages/HybridFile.jsx'
 import VisitorFile from './pages/VisitorFile.jsx'
+import RahkaranList from './pages/RahkaranList.jsx'
+import RahkaranFile from './pages/RahkaranFile.jsx'
 import FinanceView from './FinanceView.jsx'
 import SalesFrame from './SalesFrame.jsx'
 import SalesOverview from '@sales/pages/Overview.jsx'
@@ -21,10 +23,12 @@ import Team from '@sales/pages/Team.jsx'
 import Products from '@sales/pages/Products.jsx'
 import Customers from '@sales/pages/Customers.jsx'
 import Analysis from '@sales/pages/Analysis.jsx'
+import Inventory from '@sales/pages/Inventory.jsx'
 import Detail from '@sales/pages/Detail.jsx'
 import DataSource from '@sales/pages/DataSource.jsx'
 import Rahkaran from '@sales/pages/Rahkaran.jsx'
 import { CustomerBrand, TotalReport } from '@sales/pages/RahkaranReports.jsx'
+import RahkaranCompare from '@sales/pages/RahkaranCompare.jsx'
 import Export from '@sales/pages/Export.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -37,6 +41,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="files/hybrids" element={<HybridList />} />
             <Route path="files/hybrids/:name" element={<HybridFile />} />
             <Route path="files/visitors/:id" element={<VisitorFile />} />
+            <Route path="files/rahkaran" element={<RahkaranList />} />
+            <Route path="files/rahkaran/:code" element={<RahkaranFile />} />
             <Route path="finance/:view" element={<FinanceView />} />
             <Route element={<SalesFrame />}>
               <Route path="sales" element={<SalesOverview />} />
@@ -45,9 +51,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
               <Route path="products" element={<Products />} />
               <Route path="customers" element={<Customers />} />
               <Route path="analysis" element={<Analysis />} />
+              <Route path="inventory" element={<Inventory />} />
               <Route path="rahkaran" element={<Rahkaran />} />
               <Route path="rahkaran/customer-brand" element={<CustomerBrand />} />
               <Route path="rahkaran/total-report" element={<TotalReport />} />
+              <Route path="rahkaran/compare" element={<RahkaranCompare />} />
               <Route path="rahkaran/export" element={<Export />} />
               <Route path="detail/:dim/:key" element={<Detail />} />
               <Route path="data" element={<DataSource />} />

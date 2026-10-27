@@ -182,8 +182,7 @@ function CountryTable({ rows, y, ly, onCustomer }) {
               </tr>
               {!closed.has(c.key) && c.customers.map((r) => (
                 <tr key={r.key} className="clickable" onClick={() => onCustomer(r.key)}>
-                  <td style={{ paddingRight: 28 }}>{r.label} <span className="muted small">کد {faDigits(r.key)}</span>{' '}
-                    {r.source === 'auto' && <span className="rk-new" title="کد صادراتی جدید در راهکاران که در شیت MAP نبود؛ خودکار اضافه شده">جدید</span>}</td>{cells(r)}<td className="num">{fmtPct(r.growth)}</td>
+                  <td style={{ paddingRight: 28 }}>{r.label} <span className="muted small">کد {faDigits(r.key)}</span></td>{cells(r)}<td className="num">{fmtPct(r.growth)}</td>
                 </tr>
               ))}
             </Fragment>

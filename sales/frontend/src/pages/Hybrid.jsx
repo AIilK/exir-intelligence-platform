@@ -13,6 +13,8 @@ export default function Hybrid() {
   const nav = useNavigate()
   const [level, setLevel] = useState('branch')
   const [heatSrc, setHeatSrc] = useState('sales')
+  const [heatBy, setHeatBy] = useState('net')      // نقشه حرارتی: مبلغ یا تعداد
+  const [convDir, setConvDir] = useState('desc')   // نرخ تبدیل: نزولی یا صعودی
   if (loading && !data) return <Loading />
   if (error) return <ErrorBox error={error} />
   const branches = data.branches
@@ -24,7 +26,9 @@ export default function Hybrid() {
     C.net, C.share, C.forecast, C.daily_avg, C.req_net, C.req_conv, C.req_forecast,
     C.disc_rate, C.return_rate, C.invoices, C.customers, C.avg_invoice, C.qty,
   ]
-  const byConv = branches.filter((b) => b.req_net > 0).sort((a, b) => (b.req_conv ?? 0) - (a.req_conv ?? 0))
+  const byConv = branches.filter((b) => b.req_net > 0)
+    .sort((a, b) => ((b.req_conv ?? 0) - (a.req_conv ?? 0)) * (convDir === 'desc' ? 1 : -1))
+  const qtyHeat = heatBy === 'qty'
   return (
     <>
       <PageHead title="عملکرد هیبرید" desc="مقایسه شعب هیبرید: فروش، درخواست، پیش‌بینی ماه و کیفیت فروش" />
@@ -38,20 +42,28 @@ export default function Hybrid() {
           <HBar rows={[...branches].sort((a, b) => (b.forecast ?? 0) - (a.forecast ?? 0)).map((r) => ({ ...r }))}
             value="forecast" unit={unit} onClick={(r) => nav(detailPath('branch', r.key))} />
         </Card>
-        <Card title="نرخ تبدیل درخواست به فاکتور" subtitle="سهم مبلغی درخواست‌های با وضعیت «۱»">
+        <Card title="نرخ تبدیل درخواست به فاکتور" subtitle="سهم مبلغی درخواست‌های با وضعیت «۱»"
+          actions={<Tabs value={convDir} onChange={setConvDir}
+            tabs={[{ value: 'desc', label: 'نزولی' }, { value: 'asc', label: 'صعودی' }]} />}>
           <HBar rows={byConv} value="req_conv" valueType="pct" unit={unit} colorIndex={2}
             onClick={(r) => nav(detailPath('branch', r.key))} />
         </Card>
         <Card title={heatSrc === 'sales' ? 'نقشه حرارتی فروش روزانه شعب' : 'نقشه حرارتی درخواست روزانه شعب'} className="span2"
           subtitle={heatSrc === 'sales'
-            ? 'فروش خالص هر شعبه در هر روز (روزهای با فروش مثبت)'
+            ? (qtyHeat ? 'تعداد فروش خالص (فروش منهای برگشتی) هر شعبه در هر روز (روزهای با فروش مثبت)'
+              : 'فروش خالص هر شعبه در هر روز (روزهای با فروش مثبت)')
+            : qtyHeat ? 'تعداد درخواست (سفارش) هر شعبه در هر روز، بدون درخواست‌های باطل‌شده'
             : `درخواست (سفارش) هر شعبه در هر روز، بدون درخواست‌های باطل‌شده؛ ${vat
               ? 'مبلغ با ارزش افزوده، مثل ستون «مبلغ» گزارش تاریخچه تبدیل درخواست کارآمد'
               : 'خالص = جمع قبل تخفیف − تخفیف حجمی، بدون ارزش افزوده'}`}
-          actions={<Tabs value={heatSrc} onChange={setHeatSrc}
-            tabs={[{ value: 'sales', label: 'فاکتور فروش' }, { value: 'requests', label: 'درخواست' }]} />}>
+          actions={<>
+            <Tabs value={heatBy} onChange={setHeatBy} tabs={[{ value: 'net', label: 'مبلغ' }, { value: 'qty', label: 'تعداد' }]} />
+            <Tabs value={heatSrc} onChange={setHeatSrc}
+              tabs={[{ value: 'sales', label: 'فاکتور فروش' }, { value: 'requests', label: 'درخواست' }]} />
+          </>}>
           {(heatSrc === 'sales' ? data.heat : data.heat_req || []).length ? (
-            <Heatmap rows={heatSrc === 'sales' ? data.heat : data.heat_req} xKey="date" yKey="branch" vKey="net" unit={unit}
+            <Heatmap rows={heatSrc === 'sales' ? data.heat : data.heat_req} xKey="date" yKey="branch" vKey={heatBy} unit={unit}
+              valueType={qtyHeat ? 'int' : 'money'}
               palette={heatSrc === 'sales' ? SEQ : SEQ_ORANGE} onClickY={(b) => nav(detailPath('branch', b))} />
           ) : <Empty />}
         </Card>

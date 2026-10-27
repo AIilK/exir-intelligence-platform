@@ -455,6 +455,9 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     df["ly_cur"] = mq[ly1].reindex(codes).fillna(0.0) if ly1 in mq else np.nan
     df["ly_next"] = mq[ly2].reindex(codes).fillna(0.0) if ly2 in mq else np.nan
     df["cur_month"] = mq[cur].reindex(codes).fillna(0.0) if cur in mq else 0.0
+    # فروش خالص تعدادی از ابتدای سال جاری تا امروز (همه ماه‌ها، حتی غیرعادی و ماه جاری ناقص)
+    ytd_months = [m for m in months if m[:4] == cur[:4]]
+    df["ytd"] = mq.reindex(index=codes, fill_value=0.0)[ytd_months].sum(axis=1)
     df["last_sale"] = last_sale.reindex(codes)
     df["idle_days"] = [days.diff(d, today) if isinstance(d, str) else None for d in df["last_sale"]]
 
@@ -694,7 +697,7 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
             "avail", "req_short", "fc_now", "fc_next", "fc_next_model", "ly_next_used", "ly_growth", "sf_next",
             "need", "target", "safety", "safety_pct", "order", "cartons", "unity", "order_value", "price", "value",
             "base", "mean", "median", "min", "max", "months_sold", "cv", "trend", "ret_rate", "n_cust", "top_share",
-            "top_cust", "ly_cur", "ly_next", "cur_month", "daily", "cover_days", "cover_months", "runout", "order_by",
+            "top_cust", "ly_cur", "ly_next", "cur_month", "ytd", "daily", "cover_days", "cover_months", "runout", "order_by",
             "last_sale", "idle_days", "last_buy", "buy_days", "sf_now", "bought_90", "sold_90", "rk_open", "rk_transit", "incoming", "open_since",
             "factory_stock", "factory_free", "factory_short", "c_low",
             "ret_keep", "ret_keep_months", "ret_qty", "ret_cartons", "ret_value", "why"]
@@ -707,7 +710,7 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
                    "deadline": deadline, "deadline_items": deadline_items,
                    "days_to_deadline": days.diff(today, deadline) if deadline else None,
                    "cover_days": days.diff(today, arr1)},
-        "base_months": base_months, "kpis": kpis, "ly_used": ly_used, "next_month": nxt,
+        "base_months": base_months, "ytd_from": ytd_months[0] if ytd_months else None, "kpis": kpis, "ly_used": ly_used, "next_month": nxt,
         "break_month": brk, "inactive": bool(inactive), "last_branch_sale": last_branch_sale,
         "data_issue": data_issue if len(purch) else None,
         "suppliers": sup.replace([np.inf, -np.inf], np.nan).sort_values("value", ascending=False),

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useJson, mt, n0, pct, isNum, faDigits, moneyText, growth, signedPct } from './data.js'
 import { normName } from './model.js'
-import { Card, Pending, Bar, Money, PairBars } from './ui.jsx'
+import { Card, Pending, Bar, Money, PairBars, Mt } from './ui.jsx'
 
 export const visitorPath = (id, tab) => `/files/visitors/${id}${tab ? `?tab=${tab}` : ''}`
 export const cleanName = (s) => String(s || '—').replace(/\/.*$/, '').trim()
@@ -12,13 +12,13 @@ const RISK = { high: 'احتمال برگشت بالا', medium: 'متوسط', l
 /** visitor name → visitor id, so names inside cheque/debt rows can link to the visitor file */
 export const visitorIds = (visitors) => new Map((visitors || []).map((v) => [normName(v.visitor_name), v.visitor_id]))
 
-function VisitorName({ name, ids }) {
+export function VisitorName({ name, ids }) {
   const id = ids?.get(normName(name))
   return id ? <Link className="u-cell-link" to={visitorPath(id)}>{cleanName(name)}</Link> : <>{cleanName(name)}</>
 }
 
 /** Sortable header cell. */
-function Th({ k, sort, setSort, children, className, unit }) {
+export function Th({ k, sort, setSort, children, className, unit }) {
   const on = sort.key === k
   return (
     <th className={className}>
@@ -28,7 +28,7 @@ function Th({ k, sort, setSort, children, className, unit }) {
     </th>
   )
 }
-const sorter = (sort) => (a, b) => {
+export const sorter = (sort) => (a, b) => {
   const x = a[sort.key], y = b[sort.key]
   if (typeof x === 'string' || typeof y === 'string') return sort.dir * String(x ?? '').localeCompare(String(y ?? ''), 'fa')
   return sort.dir * ((isNum(x) ? x : -Infinity) - (isNum(y) ? y : -Infinity))
@@ -147,7 +147,7 @@ export function ChequesTab({ file, ch, bucket, go, scopeLabel = 'این هیبر
                   {showVisitor && <td><VisitorName name={x.visitor_name} ids={ids} /></td>}
                   <td className="t-muted">{x.bank || '—'}</td>
                   <td className="t-muted">{faDigits(x.cheque_number || '—')}</td>
-                  <td><b>{mt(x.amount_rial)}</b></td>
+                  <td><b><Mt rial={x.amount_rial} /></b></td>
                   <td><span className={`u-pill ${x.bucket === 'returned' || x.bucket === 'overdue' ? 'bad' : 'muted'}`}>{x.bucket === 'returned' ? 'برگشتی' : x.cheque_status || 'باز'}</span></td>
                   <td title={(x.return_risk?.reasons || []).join('\n')}>
                     {x.return_risk?.level
@@ -209,8 +209,8 @@ export function DebtTab({ file, detailUrl, dso, ids, showVisitors = true }) {
                 {(x.customers || []).slice(0, 30).map((c) => (
                   <tr key={c.dl_ref}>
                     <td>{c.customer_name || '—'}<small className="u-sub">کد {faDigits(c.customer_code || '—')}</small></td>
-                    <td className="t-bad"><b>{mt(c.debt_rial)}</b></td>
-                    <td>{c.returned_cheque_rial > 0 ? mt(c.returned_cheque_rial) : '—'}</td>
+                    <td className="t-bad"><b><Mt rial={c.debt_rial} /></b></td>
+                    <td>{c.returned_cheque_rial > 0 ? <Mt rial={c.returned_cheque_rial} /> : '—'}</td>
                     <td>{faDigits(c.oldest_unpaid_invoice_date_jalali || '—')}</td>
                     <td>{faDigits(c.last_payment_date_jalali || '—')}</td>
                     {showVisitors && <td>{(c.visitors || []).map((v, i) => <span key={i}>{i > 0 && '، '}<VisitorName name={v.visitor_name} ids={ids} /></span>)}</td>}
@@ -240,9 +240,9 @@ export function InvoicesTab({ file, ids, showVisitor = true }) {
                 <td>{faDigits(x.number)}</td>
                 <td>{faDigits(x.date_jalali)}</td>
                 {showVisitor && <td><VisitorName name={x.visitor_name} ids={ids} /></td>}
-                <td><b>{mt(x.amount_rial)}</b></td>
+                <td><b><Mt rial={x.amount_rial} /></b></td>
                 <td><span className="u-inline-bar"><Bar value={x.collected_percent || 0} max={100} tone="fin" /><b>{pct(x.collected_percent)}</b></span></td>
-                <td className={x.remaining_rial > 0 ? 't-warn' : ''}>{mt(x.remaining_rial)}</td>
+                <td className={x.remaining_rial > 0 ? 't-warn' : ''}><Mt rial={x.remaining_rial} /></td>
                 <td className="t-muted">{(x.collection_breakdown || []).map((b, i) => <small key={i} className="u-sub">{b.method || 'وصول'}: {moneyText(b.amount_rial)}</small>)}{!(x.collection_breakdown || []).length && '—'}</td>
               </tr>
             ))}
@@ -298,13 +298,13 @@ export function VisitorsTable({ visitors, monthBy, chq, Y, limit, title, sub, ac
               <tr key={v.visitor_id}>
                 <td><Link className="u-row-link" to={visitorPath(v.visitor_id)}>{v.name} <span>←</span></Link>{!v.active && <small className="u-sub">غیرفعال</small>}</td>
                 <td className="t-muted">{v.supervisor || '—'}</td>
-                <td><b>{mt(v.cur)}</b></td>
-                <td className="t-muted">{mt(v.prev)}</td>
-                <td>{mt(v.month)}</td>
-                <td><Link className="u-cell-link" to={visitorPath(v.visitor_id, 'debt')}><span className="u-inline-bar"><Bar value={v.debtRial} max={max} tone="warn" /><b>{mt(v.debtRial)}</b></span></Link><small className="u-sub">{n0(v.debt?.debtor_customer_count)} مشتری بدهکار</small></td>
+                <td><b><Mt rial={v.cur} /></b></td>
+                <td className="t-muted"><Mt rial={v.prev} /></td>
+                <td><Mt rial={v.month} /></td>
+                <td><Link className="u-cell-link" to={visitorPath(v.visitor_id, 'debt')}><span className="u-inline-bar"><Bar value={v.debtRial} max={max} tone="warn" /><b><Mt rial={v.debtRial} /></b></span></Link><small className="u-sub">{n0(v.debt?.debtor_customer_count)} مشتری بدهکار</small></td>
                 <td className={v.ratio > 40 ? 't-bad' : v.ratio > 25 ? 't-warn' : ''}>{pct(v.ratio)}</td>
-                <td>{v.overdue > 0 ? <Link className="u-cell-link t-bad" to={`${visitorPath(v.visitor_id, 'cheques')}&bucket=overdue`}>{mt(v.overdue)}<small className="u-sub">{n0(v.overdueN)} فقره</small></Link> : <span className="t-muted">—</span>}</td>
-                <td>{v.returned > 0 ? <Link className="u-cell-link t-bad" to={`${visitorPath(v.visitor_id, 'cheques')}&bucket=returned`}>{mt(v.returned)}<small className="u-sub">{n0(v.returnedN)} فقره</small></Link> : <span className="t-muted">—</span>}</td>
+                <td>{v.overdue > 0 ? <Link className="u-cell-link t-bad" to={`${visitorPath(v.visitor_id, 'cheques')}&bucket=overdue`}><Mt rial={v.overdue} /><small className="u-sub">{n0(v.overdueN)} فقره</small></Link> : <span className="t-muted">—</span>}</td>
+                <td>{v.returned > 0 ? <Link className="u-cell-link t-bad" to={`${visitorPath(v.visitor_id, 'cheques')}&bucket=returned`}><Mt rial={v.returned} /><small className="u-sub">{n0(v.returnedN)} فقره</small></Link> : <span className="t-muted">—</span>}</td>
                 <td>{faDigits(v.last_invoice_date_jalali || '—')}</td>
               </tr>
             ))}

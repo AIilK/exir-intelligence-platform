@@ -13,6 +13,7 @@ const GROUPS = [
       { to: '/products', label: 'محصولات و گروه‌ها', icon: '▦' },
       { to: '/customers', label: 'مشتریان (فروش)', icon: '◎' },
       { to: '/analysis', label: 'تحلیل فروش', icon: '◔' },
+      { to: '/inventory', label: 'موجودی و سفارش', icon: '▤' },
     ],
   },
   {
@@ -20,6 +21,7 @@ const GROUPS = [
       { to: '/rahkaran', label: 'نمایندگان B2B', icon: '◉', end: true },
       { to: '/rahkaran/customer-brand', label: 'مشتری × برند', icon: '▦' },
       { to: '/rahkaran/total-report', label: 'گزارش کل (Total)', icon: '☰' },
+      { to: '/rahkaran/compare', label: 'مقایسه', icon: '⇄' },
       { to: '/rahkaran/export', label: 'فروش صادراتی', icon: '✈' },
     ],
   },
@@ -29,9 +31,12 @@ const GROUPS = [
       { to: '/finance/cheques', label: 'چک و سررسید', icon: '◷' },
       { to: '/finance/cashBank', label: 'نقد و حواله', icon: '⇄' },
       { to: '/finance/companyPayments', label: 'حواله‌های پرداختی شرکت', icon: '↗' },
+      { to: '/finance/payables', label: 'پرداخت تجاری', icon: '◧' },
       { to: '/finance/b2bRemittances', label: 'حواله‌های مشتریان B2B', icon: '⇢' },
       { to: '/finance/liquidity', label: 'نقدینگی', icon: '₪' },
       { to: '/finance/cashflow', label: 'پیش‌بینی نقدینگی', icon: '⌁' },
+      { to: '/finance/inventoryPricing', label: 'قیمت‌گذاری انبار', icon: '▦' },
+      { to: '/finance/purchaseDocs', label: 'اسناد خرید', icon: '▤' },
       { to: '/finance/monthlyExcel', label: 'Cash Flow روزانه', icon: '▥' },
       { to: '/finance/collections', label: 'مرکز عملیات وصول', icon: '✓' },
       { to: '/finance/distribution', label: 'توزیع بار', icon: '⛟' },
@@ -41,8 +46,9 @@ const GROUPS = [
   {
     id: 'files', label: 'پرونده‌ها', dot: 'var(--u-text)', items: [
       { to: '/files/hybrids', label: 'هیبریدها', icon: '⬢' },
+      { to: '/files/rahkaran', label: 'نمایندگان راهکاران', icon: '◉' },
       { to: '/finance/customers', label: 'پرونده مشتری', icon: '◎' },
-      { to: '/finance/representatives', label: 'نمایندگان', icon: '♙' },
+      { to: '/finance/representatives', label: 'تحلیل نماینده (مالی)', icon: '♙' },
     ],
   },
   {

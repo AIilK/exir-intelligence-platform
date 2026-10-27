@@ -18,6 +18,7 @@ import Inventory from './pages/Inventory.jsx'
 import Rahkaran from './pages/Rahkaran.jsx'
 import { CustomerBrand, TotalReport } from './pages/RahkaranReports.jsx'
 import Export from './pages/Export.jsx'
+import RahkaranCompare from './pages/RahkaranCompare.jsx'
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppProvider>
@@ -35,6 +36,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="rahkaran" element={<Rahkaran />} />
             <Route path="rahkaran/customer-brand" element={<CustomerBrand />} />
             <Route path="rahkaran/total-report" element={<TotalReport />} />
+            <Route path="rahkaran/compare" element={<RahkaranCompare />} />
             <Route path="rahkaran/export" element={<Export />} />
             <Route path="detail/:dim/:key" element={<Detail />} />
             <Route path="data" element={<DataSource />} />

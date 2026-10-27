@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { mt, n0, signedPct, isNum, faDigits } from './data.js'
 import { LEVEL } from './model.js'
-import { Bar } from './ui.jsx'
+import { Bar, Mt } from './ui.jsx'
 
 export const hybridPath = (name, tab) => `/files/hybrids/${encodeURIComponent(name)}${tab ? `?tab=${tab}` : ''}`
 
@@ -63,14 +63,14 @@ export default function HybridTable({ rows, prevLabel, year, limit }) {
                 {r.people.length > 0 && <small className="u-sub">{r.people.slice(0, 2).join('، ')}{r.people.length > 2 ? ` و ${n0(r.people.length - 2)} نفر دیگر` : ''}</small>}
               </td>
               {hasYtd && <>
-                <td><b>{mt(r.ytdNet)}</b></td>
+                <td><b><Mt rial={r.ytdNet} /></b></td>
                 <td className={growthCls(r.ytdGrowth)}>{signedPct(r.ytdGrowth)}</td>
-                <td className="t-muted">{mt(r.fullPrevNet)}</td>
+                <td className="t-muted"><Mt rial={r.fullPrevNet} /></td>
               </>}
-              <td>{mt(r.salesNet)}</td>
+              <td><Mt rial={r.salesNet} /></td>
               <td className={growthCls(r.growth)}>{signedPct(r.growth)}</td>
-              <td><Link className="u-cell-link" to={hybridPath(r.name, 'debt')}>{mt(r.debt)}</Link>{isNum(r.debtors) && <small className="u-sub">{n0(r.debtors)} مشتری بدهکار</small>}</td>
-              <td><Link className="u-cell-link" to={hybridPath(r.name, 'cheques')}>{mt(r.openCheques)}</Link>{isNum(r.openChequeCount) && <small className="u-sub">{n0(r.openChequeCount)} فقره</small>}</td>
+              <td><Link className="u-cell-link" to={hybridPath(r.name, 'debt')}><Mt rial={r.debt} /></Link>{isNum(r.debtors) && <small className="u-sub">{n0(r.debtors)} مشتری بدهکار</small>}</td>
+              <td><Link className="u-cell-link" to={hybridPath(r.name, 'cheques')}><Mt rial={r.openCheques} /></Link>{isNum(r.openChequeCount) && <small className="u-sub">{n0(r.openChequeCount)} فقره</small>}</td>
               <td>
                 <span className="u-inline-bar">
                   <Bar value={r.dso || 0} max={maxDso} tone={r.dso > 120 ? 'danger' : r.dso > 75 ? 'warn' : 'fin'} />

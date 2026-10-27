@@ -1,8 +1,10 @@
 """توزیع بار کارآمد: فاکتورهایی که هنوز حواله خروج ندارند، سرعت خروج بار و عملکرد موزعان.
 
 ساختار کارآمد (بررسی‌شده روی KDB):
-- هر فاکتور فروش (tblFactorF) با ExitRef به حواله خروج (tblExit) وصل می‌شود؛ فاکتور بدون
-  ExitRef، یا با حواله‌ای که Status آن ۰ است، هنوز توزیع‌نشده حساب می‌شود (V175).
+- هر فاکتور فروش (tblFactorF) با ExitRef به حواله خروج (tblExit) وصل می‌شود؛ فقط فاکتوری که
+  «خروجی» (کد حواله خروج) ندارد، یعنی خروجی کمتر از ۱، توزیع‌نشده حساب می‌شود — برای هر تاریخ و
+  همه هیبریدها. Status حواله در این تعریف دخالتی ندارد (تطبیق با «توزیع وصول.xlsx» شهریور ۱۴۰۵:
+  حواله‌های Status ۰ خروجی دارند و توزیع‌شده‌اند).
   فیلد Delivered در این نصب همیشه صفر است و استفاده نمی‌شود.
 - حواله خروج: DateE (تاریخ خروج)، DeliverRef (موزع، tblDeliver)، DriverRef (راننده، tblDriver)،
   Status (۰ یا ۱) نمایش داده نمی‌شود؛ حواله‌های وضعیت ۰ به درخواست مدیریت از صفحه حذف شده‌اند.
@@ -12,10 +14,14 @@
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 from datetime import date
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from sqlalchemy import text
 
@@ -29,6 +35,29 @@ _lock = threading.Lock()
 _month_cache: dict[tuple[int, int], tuple[float, dict[str, Any]]] = {}
 
 JALALI_MONTHS = ("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
+
+
+SALES_API = os.environ.get("SALES_API_URL", "http://127.0.0.1:8000").rstrip("/")
+SALES_TIMEOUT_SECONDS = 120
+
+
+def _norm_branch(name: Any) -> str:
+    return " ".join(str(name or "").replace("ي", "ی").replace("ك", "ک").replace("‌", " ").split())
+
+
+def sales_dashboard_branch_sales(year: int, month: int) -> dict[str, float] | None:
+    """فروش خالص هر هیبرید در ماه، همان عدد داشبورد فروش (/api/hybrid، با ارزش افزوده = قابل پرداخت).
+    None اگر داشبورد فروش در دسترس نباشد؛ آن‌وقت گزارش با فروش محاسبه‌شده از کارآمد می‌ماند."""
+    import jdatetime
+    last = (jdatetime.date(year + 1, 1, 1) if month == 12 else jdatetime.date(year, month + 1, 1)) - jdatetime.timedelta(days=1)
+    query = urlencode({"date_from": f"{year}/{month:02d}/01", "date_to": last.strftime("%Y/%m/%d"), "vat": "1"})
+    try:
+        with urlopen(Request(f"{SALES_API}/api/hybrid?{query}", headers={"Accept": "application/json"}),
+                     timeout=SALES_TIMEOUT_SECONDS) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    return {_norm_branch(b.get("key")): float(b.get("net") or 0) for b in data.get("branches") or []}
 
 
 def _month_range(year: int, month: int) -> tuple[date, date]:
@@ -67,7 +96,7 @@ class KaramadDistributionService:
         1,982 customers match exactly given the same data:
         - sales of the month = each sales invoice dated in the month (قابل پرداخت) minus the returns
           dated in the month that point to it (FactorFRef, else same branch + FactorNo = invoice Code);
-        - توزیع نشده = invoices with no exit document (ExitRef) or whose exit has Status 0; توزیع شده = the rest;
+        - توزیع نشده = invoices with no exit code («خروجی» < 1, i.e. no ExitRef), whatever the exit's Status; توزیع شده = the rest;
         - وصول = cash + draft + cheque settled on the month's invoices (vwFactorFPayoff);
         - مانده سیستم = customer ledger balance (posted + not yet posted);
         - مانده فاکتورهای ماه = MIN(مانده سیستم, توزیع شده − وصول), per customer.
@@ -95,7 +124,7 @@ class KaramadDistributionService:
                 SELECT f.[ID], f.[Code], f.[DateE], f.[FactorPriceP], f.[ExitRef], f.[BranchRef], b.[Name] AS BranchName,
                        cu.[DLRef], cu.[Name] AS CustomerName, cu.[Code] AS CustomerCode, v.[Name] AS VisitorName,
                        ISNULL(p.[CashN], 0) + ISNULL(p.[Draft], 0) + ISNULL(p.[Cheque], 0) AS Collected,
-                       CASE WHEN f.[ExitRef] IS NOT NULL AND ISNULL(e.[Status], 1) <> 0 THEN 1 ELSE 0 END AS [Distributed],
+                       CASE WHEN ISNULL(e.[Code], 0) >= 1 THEN 1 ELSE 0 END AS [Distributed],
                        -- ستون‌های «کنترل وصول» گزارش واحد مالی
                        dl.[Code] AS DLCode, ln.[Name] AS LineName, pt.[Name] AS PaymentName, ct.[Name] AS CityName,
                        dv.[Name] AS DeliverName, e.[Code] AS ExitCode, e.[DateE] AS ExitDate,
@@ -161,7 +190,9 @@ class KaramadDistributionService:
             branch = _text(r["BranchName"])
             b = branches.setdefault(branch, {"branch_name": branch, "sales_rial": 0.0, "undistributed_rial": 0.0,
                                              "distributed_rial": 0.0, "collected_rial": 0.0, "remaining_rial": 0.0,
-                                             "undistributed_count": 0})
+                                             "undistributed_count": 0,
+                                             # همان توزیع‌نشده‌ها پیش از کسر برگشتی (فاکتورهای ابطالی صفر حساب نمی‌شوند)
+                                             "undistributed_gross_rial": 0.0, "undistributed_gross_count": 0})
             dl = int(r["DLRef"]) if r["DLRef"] is not None else None
             c = customers.setdefault((branch, dl), {"branch_name": branch, "dl_ref": dl, "dl_code": _text(r["DLCode"]),
                                                    "customer_name": _text(r["CustomerName"]),
@@ -169,7 +200,11 @@ class KaramadDistributionService:
                                                    "undistributed_rial": 0.0, "collected_rial": 0.0})
             b["sales_rial"] += net
             c["collected_rial"] += float(r["Collected"] or 0)
-            if not r["Distributed"]:
+            if not r["Distributed"] and float(r["FactorPriceP"] or 0) > 0:
+                b["undistributed_gross_rial"] += float(r["FactorPriceP"] or 0)
+                b["undistributed_gross_count"] += 1
+            # فاکتور ابطالی (قابل پرداخت صفر) یا کاملاً مرجوع‌شده خروجی ندارد ولی باری هم برای توزیع ندارد
+            if not r["Distributed"] and net > 0:
                 b["undistributed_rial"] += net
                 b["undistributed_count"] += 1
                 c["undistributed_rial"] += net
@@ -210,12 +245,19 @@ class KaramadDistributionService:
             b["collected_rial"] += c["collected_rial"]
             b["remaining_rial"] += c["remaining_rial"]
             rows.append({k: (_num(v) if k.endswith("_rial") else v) for k, v in c.items()})
+        # «کل فروش» هر هیبرید از داشبورد فروش خوانده می‌شود تا دو داشبورد یک عدد نشان دهند
+        dashboard_sales = sales_dashboard_branch_sales(year, month)
         for b in branches.values():
+            if dashboard_sales is not None:
+                b["sales_rial"] = dashboard_sales.get(_norm_branch(b["branch_name"]), 0.0)
             b["distributed_rial"] = b["sales_rial"] - b["undistributed_rial"]
         branch_rows = sorted(({k: (_num(v) if k.endswith("_rial") else v) for k, v in b.items()} for b in branches.values()),
                              key=lambda x: x["branch_name"])
         totals = {k: _num(sum(b[k] for b in branch_rows)) for k in
-                  ("sales_rial", "undistributed_rial", "distributed_rial", "collected_rial", "remaining_rial")}
+                  ("sales_rial", "undistributed_rial", "distributed_rial", "collected_rial", "remaining_rial",
+                   "undistributed_gross_rial")}
+        totals["undistributed_count"] = sum(b["undistributed_count"] for b in branch_rows)
+        totals["undistributed_gross_count"] = sum(b["undistributed_gross_count"] for b in branch_rows)
         return {
             "status": "success",
             "year": year, "month": month, "month_label": f"{JALALI_MONTHS[month - 1]} {year}",
@@ -228,6 +270,7 @@ class KaramadDistributionService:
                                     key=lambda x: -x["net_rial"]),
                 "rule": "همه شعب، فاکتور فروش ماه منهای همه برگشتی‌های ثبت‌شده در همان ماه (قابل پرداخت، با ارزش افزوده).",
             },
+            "sales_source": "sales_dashboard" if dashboard_sales is not None else "karamad",
             "branches": branch_rows,
             "totals": totals,
             "customers": sorted(rows, key=lambda x: (x["branch_name"], -x["distributed_rial"])),
@@ -399,9 +442,8 @@ class KaramadDistributionService:
                 LEFT JOIN dbo.[tblCustomer] cu ON cu.[ID] = f.[CustomerRef]
                 LEFT JOIN dbo.[tblVisitor] v ON v.[ID] = f.[VisitorRef]
                 WHERE f.[FiscalYear] = :fy AND f.[FactorPriceP] >= :min_amount
-                  -- an exit document with Status 0 has not shipped the load yet (V175)
-                  AND (f.[ExitRef] IS NULL
-                       OR EXISTS (SELECT 1 FROM dbo.[tblExit] e WHERE e.[ID] = f.[ExitRef] AND e.[Status] = 0))
+                  -- توزیع‌نشده = «خروجی» کمتر از ۱ (حواله خروج ندارد)، مستقل از Status حواله
+                  AND NOT EXISTS (SELECT 1 FROM dbo.[tblExit] e WHERE e.[ID] = f.[ExitRef] AND e.[Code] >= 1)
                   AND NOT EXISTS (SELECT 1 FROM dbo.[tblFactorB] rb WHERE rb.[FactorFRef] = f.[ID]
                                   GROUP BY rb.[FactorFRef] HAVING SUM(rb.[FactorPriceP]) >= f.[FactorPriceP])
                 ORDER BY f.[DateE], f.[ID]
@@ -476,7 +518,7 @@ class KaramadDistributionService:
             "lead_time": sorted(lead_time, key=lambda x: -x["average_days"]),
             "distributors": distributors,
             "notes": [
-                "فاکتور توزیع‌نشده = فاکتور فروش سال جاری که هنوز حواله خروج ندارد یا حواله‌اش وضعیت «۰» دارد (بدون فاکتورهای صفر/جایزه‌ای و فاکتورهای کاملاً مرجوع‌شده).",
+                "فاکتور توزیع‌نشده = فاکتور فروش سال جاری که هنوز «خروجی» (حواله خروج) ندارد، یعنی خروجی کمتر از ۱ (بدون فاکتورهای صفر/جایزه‌ای و فاکتورهای کاملاً مرجوع‌شده).",
                 "این فاکتورها از همین حالا در فروش و بدهی مشتری حساب شده‌اند.",
             ],
         }

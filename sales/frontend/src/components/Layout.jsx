@@ -18,6 +18,7 @@ const NAV = [
   { to: '/rahkaran', label: 'نمایندگان B2B', icon: '◉' },
   { to: '/rahkaran/customer-brand', label: 'مشتری × برند', icon: '▦' },
   { to: '/rahkaran/total-report', label: 'گزارش کل (Total)', icon: '☰' },
+  { to: '/rahkaran/compare', label: 'مقایسه', icon: '⇄' },
   { to: '/rahkaran/export', label: 'فروش صادراتی', icon: '✈' },
 ]
 

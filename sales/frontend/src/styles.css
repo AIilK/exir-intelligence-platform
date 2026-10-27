@@ -221,6 +221,22 @@ tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--accent-soft); }
 tr.active-row td { background: var(--accent-soft); }
 .pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 10px; }
+/* ستون اصلی هنگام اسکرول افقی ثابت می‌ماند: در DataTable ستون نام (sticky-col)، در جدول‌های ساده ستون اول */
+.sticky-col,
+.table-scroll > table:not(.dt):not(.tree):not(.matrix) th:first-child,
+.table-scroll > table:not(.dt):not(.tree):not(.matrix) td:first-child,
+.rk-xtable .rk-name {
+  position: sticky; right: 0; z-index: 1; background: var(--surface); box-shadow: inset -1px 0 0 var(--border);
+}
+th.sticky-col,
+.table-scroll > table:not(.dt):not(.tree):not(.matrix) th:first-child,
+.rk-xtable th.rk-name { z-index: 3; background: var(--surface-2); }
+tr.clickable:hover td.sticky-col, tr.active-row td.sticky-col,
+.rk-xtable tr.clickable:hover td.rk-name, .rk-xtable tr.active-row td.rk-name { background: var(--accent-soft); }
+.rk-xtable tr.rk-total td.rk-name { background: var(--accent-soft); }
+.rk-xtable tr.rk-brand td.rk-name { background: var(--surface-2); }
+/* در جدول‌های راهکاران ستون نام ثابت است، نه ستون اول (استان / برند) */
+table.tree.rk-xtable thead th:first-child:not(.rk-name) { right: auto; z-index: 2; }
 
 /* ---------------- misc */
 .pareto-head { font-size: 14px; line-height: 1.8; margin-bottom: 4px; }
@@ -453,4 +469,54 @@ tr.abn-row td { background: var(--abn); }
 /* فروش صادراتی */
 .rk-slicers { position: static; margin-bottom: 12px; }
 .rk-sheet-tabs { margin: 4px 0 12px; }
-.rk-new { font-size: 10.5px; color: var(--ok); border: 1px solid var(--ok); border-radius: 999px; padding: 0 6px; margin-right: 4px; }
+
+/* ---------------------------------------------------------------- مقایسه راهکاران */
+.cmp-setup { display: flex; flex-direction: column; gap: 12px; }
+.cmp-step { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.cmp-step-l { min-width: 150px; font-weight: 600; font-size: 13px; color: var(--text-2); }
+.cmp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cmp-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 13px; background: var(--surface); }
+.cmp-chip i, .cmp-head-name i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; display: inline-block; }
+.cmp-chip button { background: none; border: 0; cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1; padding: 0 2px; }
+.cmp-chip button:hover { color: var(--text); }
+.cmp-toolbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 4px 0 12px; }
+.cmp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
+@media (max-width: 1100px) { .cmp-grid { grid-template-columns: minmax(0, 1fr); } }
+.cmp-table th.cmp-head { border-top: 3px solid var(--c); min-width: 130px; vertical-align: bottom; }
+.cmp-head-name { display: flex; gap: 6px; align-items: center; justify-content: flex-end; font-weight: 700; white-space: normal; }
+.cmp-table .rk-name { min-width: 190px; }
+.cmp-table tr.cmp-strong td { font-weight: 700; }
+.cmp-table td.cmp-best { background: var(--accent-soft); font-weight: 700; }
+.cmp-table td.cmp-diff { color: var(--text-2); }
+.cmp-sub { font-size: 11.5px; color: var(--muted); font-weight: 400; }
+.cmp-delta { font-size: 11.5px; white-space: nowrap; }
+.cmp-delta.up { color: var(--ok); }
+.cmp-delta.down { color: var(--neg, #c0392b); }
+.cmp-reset { display: inline-flex; align-items: center; gap: 6px; }
+.cmp-reset:not(:disabled) { color: var(--neg); border-color: var(--neg); }
+.cmp-reset:disabled { opacity: .45; cursor: default; }
+.cmp-count { background: var(--neg); color: #fff; border-radius: 999px; font-size: 11px; min-width: 18px; padding: 0 5px; line-height: 18px; text-align: center; }
+.cmp-actives { border-top: 1px dashed var(--border); padding-top: 10px; }
+.cmp-chip.flt { background: var(--accent-soft); border-color: transparent; color: var(--text); }
+.cmp-insights { display: flex; gap: 12px; align-items: flex-start; background: var(--accent-soft); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; }
+.cmp-insights-t { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.cmp-insights ul { margin: 0; padding: 0 16px 0 0; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; }
+.cmp-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.cmp-card { background: var(--surface); border: 1px solid var(--border); border-top: 4px solid var(--c); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cmp-card-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.cmp-card-name { display: flex; gap: 6px; align-items: center; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-card-name i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+.cmp-rank { font-size: 11.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; flex: none; }
+.cmp-card-big { font-size: 26px; font-weight: 800; line-height: 1.2; }
+.cmp-card-big span { font-size: 13px; font-weight: 400; color: var(--muted); }
+.cmp-card-bar, .cmp-cell-bar { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.cmp-card-bar span, .cmp-cell-bar span { display: block; height: 100%; background: var(--c); border-radius: 999px; }
+.card-actions .cmp-reset { margin-top: 0; }
+.cmp-cell-bar { height: 3px; margin-top: 3px; opacity: .8; }
+.cmp-cell-bar.b { opacity: .35; }
+.cmp-table th.cmp-head-b { border-top-style: dashed; background: var(--surface-2); }
+.cmp-period { font-size: 11.5px; color: var(--muted); font-weight: 400; white-space: normal; }
+.cmp-card-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12.5px; color: var(--text-2); align-items: center; }
+.cmp-card-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 6px; margin-top: 2px; }
+.cmp-card-foot b { color: var(--text); font-weight: 600; }
+.cmp-more { margin-top: 8px; font-size: 13px; }

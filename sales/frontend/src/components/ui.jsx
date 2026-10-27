@@ -123,6 +123,10 @@ export function DataTable({ rows, columns, unit, onRowClick, pageSize = 15, sear
     return r
   }, [rows, q, sort, columns])
 
+  // ستون اصلی (نام) هنگام اسکرول افقی ثابت می‌ماند: ستون sticky، وگرنه label / product، وگرنه ستون اول
+  const stickyKey = (columns.find((c) => c.sticky) || columns.find((c) => c.key === 'label' || c.key === 'product') || columns[0])?.key
+  const sc = (c) => (c.key === stickyKey ? ' sticky-col' : '')
+
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const view = filtered.slice(page * pageSize, page * pageSize + pageSize)
   const toggle = (key) =>
@@ -147,11 +151,11 @@ export function DataTable({ rows, columns, unit, onRowClick, pageSize = 15, sear
         </div>
       )}
       <div className="table-scroll">
-        <table>
+        <table className="dt">
           <thead>
             <tr>
               {columns.map((c) => (
-                <th key={c.key} className={NUMERIC.has(c.type) ? 'num' : ''} onClick={() => toggle(c.key)} title={c.hint}>
+                <th key={c.key} className={(NUMERIC.has(c.type) ? 'num' : '') + sc(c)} onClick={() => toggle(c.key)} title={c.hint}>
                   {c.label}
                   {c.type === 'money' && <span className="th-unit"> ({UNITS[unit].label})</span>}
                   {sort?.key === c.key && <span className="sort">{sort.dir === 'desc' ? ' ▼' : ' ▲'}</span>}
@@ -163,7 +167,7 @@ export function DataTable({ rows, columns, unit, onRowClick, pageSize = 15, sear
             {view.map((r, i) => (
               <tr key={r.key ?? i} onClick={onRowClick ? () => onRowClick(r) : undefined} className={onRowClick ? 'clickable' : ''}>
                 {columns.map((c) => (
-                  <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${isNeg(r[c.key], c.type) ? 'neg' : ''}`}
+                  <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${isNeg(r[c.key], c.type) ? 'neg' : ''}${sc(c)}`}
                     title={c.render ? undefined : fullTitle(r[c.key], c.type)}>
                     {c.render ? c.render(r) : cell(r[c.key], c.type, unit)}
                   </td>

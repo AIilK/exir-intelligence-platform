@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { money } from './data.js'
+import { money, mt, fullToman, isNum } from './data.js'
 
 export function PageHead({ crumb, title, desc, children }) {
   return (
@@ -50,8 +50,11 @@ export function MaybeLink({ to, className, children }) {
 /** Amount with its unit, e.g. «۳۱٫۴ میلیارد تومان» (value bold, unit small). */
 export function Money({ rial, className = '' }) {
   const m = money(rial)
-  return <span className={`u-money ${className}`}><b>{m.v}</b>{m.u && <small>{m.u}</small>}</span>
+  return <span className={`u-money ${className}`} title={fullToman(rial)}><b>{m.v}</b>{m.u && <small>{m.u}</small>}</span>
 }
+
+/** Million-toman table figure; hovering shows the exact amount in toman. */
+export const Mt = ({ rial }) => <span className="u-full" title={fullToman(rial)}>{mt(rial)}</span>
 
 /**
  * Management KPI card: label, amount (with unit) or plain value, a comparison line and a note.
@@ -84,7 +87,8 @@ export function PairBars({ items, aKey, bKey, aTone, bTone, fmt, height = 160, l
         {items.map((x) => (
           <div key={x[labelKey]} className="u-pair">
             {[[aKey, aTone, aName], [bKey, bTone, bName]].map(([k, tone, nm]) => (
-              <div key={k} className="u-pair-col" title={`${x[labelKey]}${nm ? ` · ${nm}` : ''}: ${fmt(x[k])}`}>
+              <div key={k} className="u-pair-col" title={`${x[labelKey]}${nm ? ` · ${nm}` : ''}: ${fmt(x[k])}${isNum(x[k]) ? `
+${fullToman(x[k])}` : ''}`}>
                 {!dense && <small className={`t-${tone}`}>{fmt(x[k])}</small>}
                 <i className={tone} style={{ height: `${x[k] == null ? 0 : Math.max(2, (Math.abs(x[k] || 0) / max) * (height - (dense ? 8 : 28)))}px` }} />
               </div>

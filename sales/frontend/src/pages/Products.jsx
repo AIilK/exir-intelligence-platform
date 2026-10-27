@@ -44,6 +44,7 @@ export default function Products() {
   const [level, setLevel] = useState('product')
   const [topBy, setTopBy] = useState('qty')   // ۱۵ کالای پرفروش: پیش‌فرض بر اساس تعداد
   const [catBy, setCatBy] = useState('qty')   // ۱۵ گروه کالای برتر: پیش‌فرض بر اساس تعداد
+  const [paretoBy, setParetoBy] = useState('sku')   // پارتو: هر کالا یا هر گروه کالا
   if (loading && !data) return <Loading />
   if (error) return <ErrorBox error={error} />
   const cls = Object.fromEntries((data.pareto.classes || []).map((c) => [c.abc, c]))
@@ -82,9 +83,12 @@ export default function Products() {
             value={topBy} valueType={topBy === 'qty' ? 'int' : 'money'} unit={unit}
             onClick={(r) => nav(detailPath('product', r.key))} />
         </Card>
-        <Card title="تحلیل پارتو (ABC) کالاها"
-          subtitle="کالاها از پرفروش به کم‌فروش؛ منحنی = سهم تجمعی از فروش خالص. A: کالاهایی که ۸۰٪ اول فروش را می‌سازند، B: تا ۹۵٪، C: بقیه">
-          <ParetoChart curve={data.pareto.curve} classes={data.pareto.classes} what="کالا" />
+        <Card title={paretoBy === 'sku' ? 'تحلیل پارتو (ABC) کالاها' : 'تحلیل پارتو (ABC) گروه‌های کالا'}
+          subtitle={`${paretoBy === 'sku' ? 'هر کالا (SKU)' : 'هر گروه کالا'} از پرفروش به کم‌فروش؛ منحنی = سهم تجمعی از فروش خالص ریالی. A: مواردی که ۸۰٪ اول فروش را می‌سازند، B: تا ۹۵٪، C: بقیه`}
+          actions={<Tabs value={paretoBy} onChange={setParetoBy} tabs={[{ value: 'sku', label: 'کالا (SKU)' }, { value: 'category', label: 'گروه کالا' }]} />}>
+          {paretoBy === 'sku'
+            ? <ParetoChart curve={data.pareto.curve} classes={data.pareto.classes} what="کالا" />
+            : <ParetoChart key="category" curve={data.pareto_cat?.curve || []} classes={data.pareto_cat?.classes || []} what="گروه" />}
         </Card>
         <Card title="گزارش کالا: برند ← گروه ← زیرگروه ← کالا" className="span2"
           subtitle="میانگین روزانه، روز گزارش، از ابتدای ماه و پیش‌بینی ریالی و تعدادی با جمع جزء هر سطح — معادل شیت Goods&Group">

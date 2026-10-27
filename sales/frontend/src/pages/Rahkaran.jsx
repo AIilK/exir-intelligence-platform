@@ -32,8 +32,8 @@ export function ProductFilter({ value, onChange, list }) {
   return <MultiSelect label="کالا" value={value} onChange={onChange} options={options} />
 }
 
-/** single: پرونده یک کد مشتری (کارت شمارش مشتری نمی‌آید) */
-function RkKpis({ k, single = false }) {
+/** single: پرونده یک کد مشتری (کارت شمارش مشتری نمی‌آید)؛ onInactive: کلیک کارت مشتری فعال، فهرست بدون خریدها را باز می‌کند */
+function RkKpis({ k, single = false, onInactive, inactiveOpen }) {
   return (
     <div className="kpis">
       <Kpi label="فروش ناخالص" value={k.gross} hint="جمع مبلغ ناخالص اقلام فاکتور (قبل از کسور)؛ GROSS SALES شیت Bubble Chart"
@@ -48,6 +48,8 @@ function RkKpis({ k, single = false }) {
         sub={`میانگین فاکتور ${money(k.avg_invoice)}`} />
       {!single && (
         <Kpi label="مشتری فعال" value={k.customers} type="int"
+          onClick={onInactive && k.customers_inactive > 0 ? onInactive : undefined} active={inactiveOpen}
+          more={inactiveOpen ? 'بستن فهرست ▲' : `فهرست ${fmtInt(k.customers_inactive)} مشتری بدون خرید ▼`}
           hint="تعداد مشتری = تعداد کد مشتری یکتا (هر برند یک نماینده کد جدا دارد). فعال = کدی که از ابتدای سال جاری فاکتور فروش با مبلغ خالص مثبت داشته، مستقل از دوره انتخاب‌شده"
           sub={`از ${fmtInt(k.customers_total)} کد مشتری · ${fmtInt(k.customers_inactive)} بدون خرید از ابتدای سال${k.customers_period !== k.customers ? ` · ${fmtInt(k.customers_period)} خرید در این دوره` : ''}`} />
       )}
@@ -174,15 +176,41 @@ function MonthlyBars({ monthly, unit, onClick }) {
   )
 }
 
+const nfa = (s) => (s || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک').trim()
+
+/** مشتریان فهرست که از ابتدای سال خرید (فروش خالص مثبت) نداشته‌اند؛ همان «بدون خرید» کارت مشتری فعال */
+function InactiveList({ brand, province, products, unit, onCustomer, onClose }) {
+  const { data, loading, error } = useRkFetch(`/api/rk_sales/customers?${q({ period: 'YTD', product: products })}`)
+  if (loading && !data) return <Card><Loading /></Card>
+  if (error) return <ErrorBox error={error} />
+  const rows = data.customers.filter((r) => !(r.net > 0) && (!brand || r.brand === brand) && (!province || nfa(r.province) === nfa(province)))
+  const cols = [
+    { key: 'short', label: 'نماینده', render: (r) => <span title={r.name}>{r.short}</span> },
+    { key: 'city', label: 'شهر' }, ...(province ? [] : [{ key: 'province', label: 'استان' }]), { key: 'brand', label: 'برند' },
+    { key: 'last_date', label: 'آخرین خرید', type: 'date' },
+    { key: 'ly_net', label: 'فروش همین بازه سال قبل', type: 'money' },
+    { key: 'code', label: 'کد مشتری' },
+  ]
+  return (
+    <Card title={`مشتریان بدون خرید از ابتدای سال${province ? ` — استان ${province}` : ''}${brand ? ` — ${brand}` : ''}`} className="span2"
+      subtitle={`${fmtInt(rows.length)} کد مشتری که امسال فاکتور فروش با مبلغ خالص مثبت ندارند؛ «آخرین خرید» از کل داده (از ۱۴۰۴)، خالی یعنی در این مدت خریدی نداشته. برای پرونده روی سطر کلیک کنید`}
+      actions={<button className="btn ghost sm" onClick={onClose}>بستن ✕</button>}>
+      <DataTable rows={rows} columns={cols} unit={unit} pageSize={20} exportName="rahkaran-inactive"
+        defaultSort={{ key: 'last_date', dir: 'desc' }} onRowClick={(r) => onCustomer(r.code)} />
+    </Card>
+  )
+}
+
 const growthCol = { key: 'growth', label: 'رشد نسبت به سال قبل', type: 'pct' }
 const withGrowth = (rows) => rows.map((r) => ({ ...r, growth: r.ly_net ? r.net / r.ly_net - 1 : null }))
 
 function ProvinceDetail({ name, period, brand, products, unit, onCustomer, onClose }) {
   const { data, loading, error } = useRkFetch(`/api/rk_sales/province?${q({ name, period, brand, product: products })}`)
+  const [inactive, setInactive] = useState(false)
   if (loading && !data) return <Loading />
   if (error) return <ErrorBox error={error} />
   const cols = [
-    { key: 'short', label: 'نماینده', render: (r) => <span title={r.name}>{r.short} {r.source === 'auto' && <span className="rk-new" title="کد جدید در راهکاران که در شیت draft نبود؛ خودکار اضافه شده">جدید</span>}</span> },
+    { key: 'short', label: 'نماینده', render: (r) => <span title={r.name}>{r.short}</span> },
     { key: 'city', label: 'شهر' }, { key: 'brand', label: 'برند' },
     { key: 'net', label: 'فروش خالص', type: 'money' }, { key: 'share', label: 'سهم', type: 'pct' },
     { key: 'cash', label: 'تخفیف نقدی', type: 'money' }, { key: 'net_cash', label: 'جمع کل (خالص + تخفیف نقدی)', type: 'money' },
@@ -196,8 +224,10 @@ function ProvinceDetail({ name, period, brand, products, unit, onCustomer, onClo
         <h2>استان {data.province}{brand ? ` — ${brand}` : ''}</h2>
         <button className="btn ghost sm" onClick={onClose}>بستن ✕</button>
       </div>
-      <RkKpis k={data.kpis} />
+      <RkKpis k={data.kpis} onInactive={() => setInactive(!inactive)} inactiveOpen={inactive} />
       <div className="grid g2">
+        {inactive && <InactiveList brand={brand} province={data.province} products={products} unit={unit}
+          onCustomer={onCustomer} onClose={() => setInactive(false)} />}
         <Card title="فروش خالص شهرها" subtitle="جمع نمایندگان هر شهر (شهر از شیت draft)">
           <HBar rows={data.cities.map((c) => ({ ...c, label: `${c.key} (${fmtInt(c.active)}/${fmtInt(c.customers)})` }))} unit={unit} />
         </Card>
@@ -273,6 +303,7 @@ export default function Rahkaran() {
     setSp(next)
   }
   const { data, loading, error } = useRkFetch(`/api/rk_sales?${q({ period, brand, product: products })}`)
+  const [inactive, setInactive] = useState(false)
   const setProducts = (v) => {
     const next = new URLSearchParams(sp)
     next.delete('product')
@@ -318,8 +349,10 @@ export default function Rahkaran() {
           </span>
         </div>
       </PageHead>
-      <RkKpis k={k} />
+      <RkKpis k={k} onInactive={() => setInactive(!inactive)} inactiveOpen={inactive} />
       <div className="grid g2">
+        {inactive && <InactiveList brand={brand} products={products} unit={unit}
+          onCustomer={openCustomer} onClose={() => setInactive(false)} />}
         <Card title="نقشه حبابی فروش خالص استان‌ها" className="span2"
           subtitle={`اندازه حباب و پررنگی استان = فروش خالص ${data.period === 'YTD' ? 'از ابتدای سال' : monthLabel(data.period)}${mapBrand ? ` برند ${mapBrand}` : ''} (${UNITS[unit].label})؛ برای جزئیات روی استان کلیک کنید`}
           actions={!brand && (

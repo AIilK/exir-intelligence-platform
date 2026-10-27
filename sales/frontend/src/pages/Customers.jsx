@@ -55,9 +55,6 @@ export default function Customers() {
         <Card title="توزیع مشتریان بر اساس تعداد فاکتور مؤثر" subtitle="تعداد روزهایی که مشتری خرید خالص مثبت داشته است">
           <HBar rows={[...freq].reverse()} value="count" valueType="int" unit={unit} colorIndex={2} />
         </Card>
-        <Card title="۲۰ شهر برتر" subtitle="فروش خالص بر اساس شهر مشتری">
-          <HBar rows={data.cities} unit={unit} onClick={(r) => nav(detailPath('city', r.key))} />
-        </Card>
         {data.master && (
           <Card title="پوشش مشتریان ثبت‌شده در کارآمد" className="span2"
             subtitle="خرید و درخواست در محدوده فیلترهای فعال شمرده می‌شوند. پوشش خرید = دارای خرید ÷ ثبت‌شده؛ پوشش کل = دارای خرید یا درخواست ÷ ثبت‌شده">

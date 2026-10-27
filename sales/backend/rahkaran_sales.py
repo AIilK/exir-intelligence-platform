@@ -351,6 +351,12 @@ def _customer_rows(snap: dict, s: pd.DataFrame, ly: pd.DataFrame, cust: pd.DataF
     return rows.sort_values("net", ascending=False)
 
 
+def customer_list(snap: dict, period: str) -> dict:
+    """همه مشتریان فهرست B2B با فروش دوره و همان بازه سال قبل (برای پرونده یکپارچه نمایندگان در داشبورد unified)"""
+    s, r, ly, keep, period = _scope(snap, period, None)
+    return {"period": period, "customers": _customer_rows(snap, s, ly, snap["customers"])}
+
+
 def province(snap: dict, name: str, period: str, brand: str | None) -> dict:
     s, r, ly, keep, period = _scope(snap, period, brand, province=name)
     cust = snap["customers"]
@@ -492,3 +498,107 @@ def total_report(snap: dict, day: str | None, month: str | None, cats: list[str]
     months = [today[:7]] + [p["value"] for p in periods(snap)[1:] if p["value"] != today[:7]]
     return {"day": day, "month": month, "days": days, "months": [{"value": m, "label": m} for m in months], "cats": cats, "cat_list": categories(snap),
             "groups": groups, "total": vals(cust.index.tolist())}
+
+
+# ---------------------------------------------------------------- مقایسه
+# بُعد مقایسه ← ستون سطرها؛ «نماینده» = کد مشتری (هر برند یک نماینده کد جدا دارد)
+COMPARE_DIMS = {"customer": "code", "brand": "brand", "province": "province", "cat1": "cat1", "cat2": "cat2", "product": "product_code"}
+COMPARE_MAX = 8
+
+
+def _cmp_kpis(d: pd.DataFrame) -> dict:
+    """شاخص‌های یک مورد در یک بازه؛ d سطرهای فاکتور، برگشتی و درخواست همان بازه است. تعداد = MajorUnitQuantity."""
+    s, r, q = d[d["kind"].eq("S")], d[d["kind"].eq("R")], d[d["kind"].eq("Q")]
+    qty, net, gross, cash = (float(s[k].sum()) for k in ("qty", "net", "gross", "cash"))
+    inv = int(s.drop_duplicates(["code", "date"]).shape[0])
+    req_qty, ret_qty = float(q["qty"].sum()), float(r["qty"].sum())
+    return {"qty": qty, "net": net, "gross": gross, "cash": cash, "net_cash": net + cash, "invoices": inv,
+            "days": int(s["date"].nunique()), "customers": int(s.loc[s["net"] > 0, "code"].nunique()),
+            "skus": int(s.loc[s["qty"] > 0, "product_code"].nunique()),
+            "avg_price": net / qty if qty else None, "qty_per_invoice": qty / inv if inv else None,
+            "req_qty": req_qty, "req_gross": float(q["gross"].sum()), "fill": qty / req_qty if req_qty else None,
+            "ret_qty": ret_qty, "ret_net": float(r["net"].sum()), "ret_rate": ret_qty / qty if qty else None,
+            "first_date": s["date"].min() if len(s) else None, "last_date": s["date"].max() if len(s) else None}
+
+
+def _cmp_daily(d: pd.DataFrame) -> dict:
+    """تعداد، خالص و فاکتور فروش هر روز: {تاریخ: [qty, net, inv]}"""
+    s = d[d["kind"].eq("S")]
+    if not len(s):
+        return {}
+    g = s.groupby("date").agg(qty=("qty", "sum"), net=("net", "sum"))
+    g["inv"] = s.drop_duplicates(["code", "date"]).groupby("date").size()
+    return {k: [float(v.qty), float(v.net), int(v.inv)] for k, v in g.fillna(0).iterrows()}
+
+
+def _cmp_labels(snap: dict, col: str, keys) -> dict:
+    """برچسب و توضیح هر مورد بُعد"""
+    keys = list(keys)
+    if col == "code":
+        info = snap["customers"].set_index("code")
+        return {k: ({"label": info.at[k, "short"], "sub": f"{info.at[k, 'brand']} · {info.at[k, 'city'] or info.at[k, 'province']} · کد {k}"}
+                    if k in info.index else {"label": k, "sub": ""}) for k in keys}
+    if col == "product_code":
+        p = snap["lines"].drop_duplicates("product_code", keep="last").set_index("product_code")
+        return {k: ({"label": p.at[k, "product"], "sub": f"کد {k} · {p.at[k, 'cat2']}"} if k in p.index else {"label": k, "sub": ""})
+                for k in keys}
+    return {k: {"label": k, "sub": ""} for k in keys}
+
+
+def compare(snap: dict, dim: str, items: list[str], a: tuple[str, str], b: tuple[str, str] | None,
+            bd: str, scope: dict[str, list[str]]) -> dict:
+    """مقایسه چند مورد از یک بُعد (نماینده، برند، استان، گروه کالا، زیرگروه یا کالا) در بازه a و در صورت انتخاب بازه b؛
+    scope فیلترهای محدوده (برند، استان، گروه کالا) روی همه سطرهاست. بدون مورد انتخابی، items خالی است (پیش‌فرضی انتخاب نمی‌شود)."""
+    dim = dim if dim in COMPARE_DIMS else "customer"
+    col = COMPARE_DIMS[dim]
+    bd = bd if bd in COMPARE_DIMS and COMPARE_DIMS[bd] != col else ("cat2" if col != "cat2" else "product")
+    bcol = COMPARE_DIMS[bd]
+    df = snap["lines"]
+    df = df.assign(province=df["province"].map({p: norm(p) for p in df["province"].unique()}))
+    keep = pd.Series(True, index=df.index)
+    for k, vals in scope.items():
+        if vals and k in COMPARE_DIMS:
+            keep &= df[COMPARE_DIMS[k]].isin(vals)
+    df = df[keep]
+    in_a = df["date"].between(*a)
+    in_b = df["date"].between(*b) if b else pd.Series(False, index=df.index)
+    sa = df[in_a & df["kind"].eq("S")]
+    ranking = sa.groupby(col)["qty"].sum()
+    ranking = ranking[ranking > 0].sort_values(ascending=False)
+    # فهرست انتخاب: همه موردهای بُعد، پرفروش‌ترها (تعدادی در بازه a) اول
+    if col == "code":
+        pool = snap["customers"]["code"].tolist()
+    else:
+        pool = df[col].dropna().unique().tolist()
+    pool = sorted(set(pool), key=lambda k: (-ranking.get(k, 0.0), str(k)))
+    labels = _cmp_labels(snap, col, pool)
+    options = [{"value": k, "label": labels[k]["label"], "group": labels[k]["sub"], "qty": float(ranking.get(k, 0.0))} for k in pool]
+    items = [i for i in dict.fromkeys(items) if i in labels][:COMPARE_MAX]
+    rank = {k: i + 1 for i, k in enumerate(ranking.index)}
+    out = []
+    for it in items:
+        d = df[df[col].eq(it)]
+        out.append({"key": it, **labels.get(it, {"label": it, "sub": ""}), "rank": rank.get(it),
+                    "a": _cmp_kpis(d[in_a]), "b": _cmp_kpis(d[in_b]) if b else None, "daily": _cmp_daily(d[in_a | in_b])})
+    # تفکیک: تعداد و خالص هر مورد در هر سطر بُعد تفکیک (بازه a) و تعداد بازه b
+    sel = df[df[col].isin(items) & df["kind"].eq("S")]
+    pa = sel[in_a].groupby([bcol, col]).agg(qty=("qty", "sum"), net=("net", "sum"))
+    pb = sel[in_b].groupby([bcol, col])["qty"].sum() if b else pd.Series(dtype=float)
+    keys = sorted(set(pa.index.get_level_values(0)) | set(pb.index.get_level_values(0) if len(pb) else []))
+    blabels = _cmp_labels(snap, bcol, keys)
+    rows = []
+    for k in keys:
+        row = {"key": k, **blabels[k], "qty": {}, "net": {}, "bqty": {}}
+        for it in items:
+            if (k, it) in pa.index:
+                row["qty"][it], row["net"][it] = float(pa.at[(k, it), "qty"]), float(pa.at[(k, it), "net"])
+            if (k, it) in pb.index:
+                row["bqty"][it] = float(pb.at[(k, it)])
+        rows.append(row)
+    rows.sort(key=lambda r: -sum(r["qty"].values()))
+    days = df.loc[df["kind"].isin(["S", "Q"]), "date"].unique().tolist()
+    return {"dim": dim, "bd": bd, "a": list(a), "b": list(b) if b else None, "items": out, "options": options,
+            "ranked": int(len(ranking)), "scope_a": _cmp_kpis(df[in_a]), "scope_b": _cmp_kpis(df[in_b]) if b else None,
+            "breakdown": rows, "dates": sorted(days),
+            "scope_lists": {"brand": brand_order(snap), "province": sorted(snap["customers"]["province"].map(norm).unique().tolist()),
+                            "cat1": categories(snap)}}

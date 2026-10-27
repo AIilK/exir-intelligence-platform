@@ -1,8 +1,21 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 
 const PROXY_PREFIX = "/__reconciliation_proxy";
+
+// صفحه‌ها آدرس بک‌اند را ثابت «:8000» نوشته‌اند. در نصب یکپارچه پورت 8000 مال بک‌اند فروش است و
+// بک‌اند مالی روی پورت دیگری (BACKEND_BASE_URL در .env.local) است؛ اینجا همان پورت جایگزین می‌شود.
+function backendPort(port: string): Plugin {
+  return {
+    name: "exir-backend-port",
+    enforce: "pre",
+    transform(code, id) {
+      if (port === "8000" || !/\.[jt]sx?$/.test(id.split("?")[0]) || !code.includes("}:8000/api/v1")) return null;
+      return { code: code.replaceAll("}:8000/api/v1", `}:${port}/api/v1`), map: null };
+    },
+  };
+}
 
 // پنل مغایرت‌گیری صفحه ورود ندارد. کلید API بک‌اند را Proxy همین فرانت اضافه می‌کند تا مرورگر
 // اپراتور کلید را نبیند. اگر فرانت .env.local نداشت، کلید از backend/.env خوانده می‌شود.
@@ -31,6 +44,7 @@ export default defineConfig(({ mode }) => {
   };
 
   return {
+    plugins: [backendPort(new URL(backendBaseUrl).port || "80")],
     server: { host: "0.0.0.0", port: 3000, proxy },
     preview: { host: "0.0.0.0", port: 3000, proxy },
   };

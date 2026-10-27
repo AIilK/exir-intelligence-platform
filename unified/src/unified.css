@@ -283,6 +283,8 @@ button.u-bucket { background: none; font: inherit; text-align: right; cursor: po
 /* ---------------- embedded original dashboards */
 /* finance: its own sidebar is replaced by the unified one */
 .fin-embedded { min-height: 100vh; }
+/* host of the finance drawers / peek panels / chatbot (portals): scope for their CSS, no box of its own */
+#fin-portal-root.fin-scope.fin-portal { display: contents !important; }
 .fin-scope.fin-embedded .fd > aside,
 .fin-scope.fin-embedded main.fd > aside { display: none !important; }
 .fin-scope.fin-embedded .fd,
@@ -325,3 +327,6 @@ button.u-bucket { background: none; font: inherit; text-align: right; cursor: po
   .u-foot3 { grid-template-columns: 1fr 1fr; }
   .u-flow-rows { grid-template-columns: 80px repeat(5, minmax(0, 1fr)); font-size: 11px; gap: 6px; }
 }
+
+/* amounts with the exact figure in their hover title */
+.u-full, .u-money[title] { cursor: help; }

@@ -27,7 +27,8 @@ function summary(from, to, months, cur) {
   return f ? `از ${dayLabel(from)}` : `تا ${dayLabel(to)}`
 }
 
-export default function DateRange({ filters, setFilters, meta }) {
+/** label: عنوان دکمه؛ curHint: توضیح میانبر «ماه جاری» (null = بدون توضیح) */
+export default function DateRange({ filters, setFilters, meta, label = 'تاریخ', curHint = 'با پیش‌بینی پایان ماه' }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState('month')
   const [pending, setPending] = useState(null)   // روز شروع انتخاب‌شده در تقویم، منتظر روز پایان
@@ -67,7 +68,7 @@ export default function DateRange({ filters, setFilters, meta }) {
   // ---------------- میانبرها
   const cy = parseDate(today).jy
   const presets = [
-    { label: 'ماه جاری', hint: 'با پیش‌بینی پایان ماه', f: '', t: '' },
+    { label: 'ماه جاری', hint: curHint, f: '', t: '' },
     months[1] && { label: 'ماه قبل', f: months[1].from, t: months[1].to },
     { label: '۷ روز اخیر', f: clamp(addDays(today, -6)), t: today },
     { label: '۳۰ روز اخیر', f: clamp(addDays(today, -29)), t: today },
@@ -114,7 +115,7 @@ export default function DateRange({ filters, setFilters, meta }) {
   return (
     <div className={`ms dr ${from || to ? 'on' : ''}`} ref={ref}>
       <button className="ms-btn dr-btn" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <span className="ms-label">تاریخ:</span> <span className="ms-val">{summary(from, to, months, cur)}</span> <span className="caret">▾</span>
+        <span className="ms-label">{label}:</span> <span className="ms-val">{summary(from, to, months, cur)}</span> <span className="caret">▾</span>
       </button>
       {open && (
         <div className="ms-pop dr-pop" role="dialog" aria-label="انتخاب بازه تاریخ">

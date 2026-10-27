@@ -438,9 +438,9 @@ def overview(req: Request):
 def hybrid(req: Request):
     tx, rq, c, f = frames(req)
     g = A.group_metrics(tx, rq, "branch", c, f, ["supervisor"])
-    heat = tx.groupby(["branch", "date"])["net"].sum().reset_index()
+    heat = tx.groupby(["branch", "date"])[["net", "qty"]].sum().reset_index()
     # درخواست خالص (بدون باطل‌شده‌ها) هر شعبه در هر روز
-    heat_req = rq.groupby(["branch", "date"])["net"].sum().reset_index() if rq is not None and len(rq) else heat.iloc[0:0]
+    heat_req = rq.groupby(["branch", "date"])[["net", "qty"]].sum().reset_index() if rq is not None and len(rq) else heat.iloc[0:0]
     sup = A.group_metrics(tx, rq, "supervisor", c, f, ["branch"])
     return {"kpis": A.kpis(tx, rq, c, f), "branches": A.records(g[[x for x in BASE_COLS + ["supervisor"] if x in g]]),
             "supervisors": A.records(sup[[x for x in BASE_COLS + ["branch"] if x in sup]]),
@@ -526,7 +526,9 @@ def products(req: Request):
     brands = A.group_metrics(tx, rq, "brand", c, f)
     cats = A.group_metrics(tx, rq, "category", c, f)
     groups = A.group_metrics(tx, rq, "group", c, f, ["category", "brand"])
-    return {"kpis": A.kpis(tx, rq, c, f),
+    abc_cat = A.pareto(cats)
+    abc_cat.pop("abc", None)
+    return {"kpis": A.kpis(tx, rq, c, f), "pareto_cat": abc_cat,
             "brands": A.records(brands[[x for x in BASE_COLS if x in brands]]),
             "categories": A.records(cats[[x for x in BASE_COLS if x in cats]]),
             "groups": A.records(groups[[x for x in BASE_COLS + ["category", "brand"] if x in groups]]),
@@ -1254,6 +1256,13 @@ def rk_sales_province(req: Request, name: str, period: str = "YTD", brand: str |
     return _rk_payload(snap, RS.province(_by_product(snap, req), name, period, brand or None))
 
 
+@app.get("/api/rk_sales/customers")
+def rk_sales_customers(req: Request, period: str = "YTD"):
+    """همه نمایندگان B2B با فروش دوره (هر مشتری یک سطر، حتی بدون خرید)"""
+    snap = _rk_sales()
+    return _rk_payload(snap, RS.customer_list(_by_product(snap, req), period))
+
+
 @app.get("/api/rk_sales/customer")
 def rk_sales_customer(req: Request, code: str, period: str = "YTD"):
     snap = _rk_sales()
@@ -1275,6 +1284,20 @@ def rk_sales_total_report(req: Request, day: str | None = None, month: str | Non
     """شیت Total report: برند ← نماینده، بلوک‌های روز / ماه / سال و گروه‌های کالا"""
     snap = _rk_sales()
     return _rk_payload(snap, RS.total_report(_by_product(snap, req), day, month, req.query_params.getlist("cat") or None))
+
+
+@app.get("/api/rk_sales/compare")
+def rk_sales_compare(req: Request, dim: str = "customer", a_from: str | None = None, a_to: str | None = None,
+                     b_from: str | None = None, b_to: str | None = None, bd: str = "cat2"):
+    """مقایسه چند نماینده / برند / استان / گروه کالا / کالا در یک بازه و در صورت انتخاب، در بازه دوم.
+    item تکراری = موردهای مقایسه؛ s_brand، s_province و s_cat1 محدوده؛ product فیلتر کالا. پیش‌فرض بازه: از ابتدای سال تا امروز"""
+    snap = _rk_sales()
+    today = snap["today"]
+    a = (a_from or f"{today[:4]}/01/01", a_to or today)
+    b = (b_from, b_to) if b_from and b_to else None
+    p = req.query_params
+    scope = {k: p.getlist(f"s_{k}") for k in ("brand", "province", "cat1")}
+    return _rk_payload(snap, RS.compare(_by_product(snap, req), dim, p.getlist("item"), a, b, bd, scope))
 
 
 @app.get("/api/rk_sales/products")

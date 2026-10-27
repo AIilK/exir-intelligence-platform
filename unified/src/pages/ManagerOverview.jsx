@@ -4,7 +4,7 @@ import { useApp } from '@sales/lib.jsx'
 import { useJson, mt, bt, n0, pct, signedPct, growth, isNum, monthName, faDigits, moneyText } from '../data.js'
 import { useSalesSet } from '../hooks.js'
 import { receivedOverview, issuedOverview, weeklyFlow, hybridRows } from '../model.js'
-import { PageHead, Card, Chip, Pending, Bar, MaybeLink, PairBars, Money } from '../ui.jsx'
+import { PageHead, Card, Chip, Pending, Bar, MaybeLink, PairBars, Money, Mt } from '../ui.jsx'
 import HybridTable, { hybridPath } from '../HybridTable.jsx'
 import FinanceAgents from '../FinanceAgents.jsx'
 
@@ -183,11 +183,11 @@ export default function ManagerOverview() {
             <PairBars items={flow.weeks} aKey="inflow" bKey="outflow" aTone="fin" bTone="out" fmt={mt} height={180} />
             <div className="u-flow-rows">
               <span>خالص هفته<small className="u-sub">میلیون تومان</small></span>
-              {flow.weeks.map((w) => <b key={w.label} className={w.net >= 0 ? 't-good' : 't-bad'}>{mt(w.net)}</b>)}
+              {flow.weeks.map((w) => <b key={w.label} className={w.net >= 0 ? 't-good' : 't-bad'}><Mt rial={w.net} /></b>)}
               <span>خالص تجمعی</span>
-              {flow.weeks.map((w) => <span key={w.label} className={w.closing >= 0 ? '' : 't-warn'}>{mt(w.closing)}</span>)}
+              {flow.weeks.map((w) => <span key={w.label} className={w.closing >= 0 ? '' : 't-warn'}><Mt rial={w.closing} /></span>)}
               <span>از آن چک پرداختی</span>
-              {flow.weeks.map((w) => <span key={w.label} className="t-muted">{mt(w.issued)}</span>)}
+              {flow.weeks.map((w) => <span key={w.label} className="t-muted"><Mt rial={w.issued} /></span>)}
             </div>
             <small className="u-note">موجودی بانک‌ها طبق تصمیم مدیریت (۱۴۰۵/۰۷/۱۳) تا آمدن صورت‌حساب بانکی در داشبورد نمی‌آید؛ اعداد تجمعی از صفر شروع می‌شوند.</small>
           </>}

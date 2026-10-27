@@ -720,6 +720,7 @@ function OrderTab({ data }) {
               { key: 'min', label: 'کمترین فروش ماهانه', type: 'int', hint: 'کمترین فروش خالص یک ماه در ماه‌های پایه' },
               { key: 'mean', label: 'فروش ماهانه', type: 'int', hint: 'میانگین فروش خالص ماهانه در ماه‌های پایه' },
               { key: 'max', label: 'بیشترین فروش ماهانه', type: 'int', hint: 'بیشترین فروش خالص یک ماه در ماه‌های پایه' },
+              ytdCol(data),
               { key: 'cover_days', label: 'روز باقی‌مانده', type: 'int', hint: 'موجودی ÷ فروش روزانه (با ضریب فصل)' },
               ...incoming,
               { key: 'order', label: 'سفارش (عدد)', type: 'int' },
@@ -813,6 +814,12 @@ function ItemDetail({ data, row, onClose }) {
   )
 }
 
+// ستون فروش تعدادی از ابتدای سال جاری؛ کنار کمترین / میانگین / بیشترین فروش ماهانه
+const ytdCol = (data) => ({
+  key: 'ytd', label: `فروش از ابتدای ${data.ytd_from ? faDigits(data.ytd_from.slice(0, 4)) : 'سال'}`, type: 'int',
+  hint: 'فروش خالص تعدادی (فروش منهای برگشتی) از ابتدای سال تا امروز، با همه ماه‌ها حتی ماه جاری',
+})
+
 // ---------------------------------------------------------------- همه کالاها
 // فیلتر وضعیت در «همه کالاها»: «نامنظم» و «سابقه ناکافی» یکی است
 const ALL_FILTERS = [['all', 'همه'], ['orange', 'سفارش بعدی'], ['ok', 'کافی'], ['excess', 'مازاد'], ['dead', 'راکد'], ['c', 'نامنظم']]
@@ -848,6 +855,7 @@ function AllTab({ data, status, setStatus }) {
             { key: 'min', label: 'کمترین فروش ماهانه', type: 'int', hint: 'کمترین فروش خالص یک ماه در ماه‌های پایه' },
             { key: 'mean', label: 'فروش ماهانه', type: 'int', hint: 'میانگین فروش خالص ماهانه در ماه‌های پایه' },
             { key: 'max', label: 'بیشترین فروش ماهانه', type: 'int', hint: 'بیشترین فروش خالص یک ماه در ماه‌های پایه' },
+            ytdCol(data),
             { key: 'cover_months', label: 'پوشش (ماه)', type: 'num1' },
             { key: 'cover_days', label: 'روز باقی‌مانده', type: 'int' },
             { key: 'order', label: 'سفارش پیشنهادی', type: 'int' },

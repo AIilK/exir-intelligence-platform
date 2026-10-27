@@ -175,7 +175,7 @@ export function CustomerBrand() {
                 <tr key={r.key} className={`clickable${sel === r.code ? ' active-row' : ''}`} onClick={() => open(r)}>
                   <td>{r.province}</td>
                   <td>{faDigits(r.code)}</td>
-                  <td className="rk-name" title={r.name}>{r.short} <span className="muted small">{r.city}</span> {r.source === 'auto' && <span className="rk-new" title="کد جدید در راهکاران که در شیت draft نبود؛ خودکار اضافه شده">جدید</span>}</td>
+                  <td className="rk-name" title={r.name}>{r.short} <span className="muted small">{r.city}</span></td>
                   <td>{r.brand}</td>
                   {totalMetrics.map(([k]) => <td key={k} className="num rk-sum"><Num v={r[k]} type={k} unit={unit} /></td>)}
                   {brands.map((b) => metrics.map(([k]) => (

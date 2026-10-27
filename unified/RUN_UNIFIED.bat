@@ -19,6 +19,12 @@ netstat -ano | findstr /R /C:":8010 .*LISTENING" >nul || (
   start "Finance API 8010" /min cmd /k "cd /d "%FINANCE_BACKEND%" && python -m uvicorn app.main:app --host 0.0.0.0 --port 8010"
 )
 
+rem ---- standalone finance frontend (port 3000; talks to 8010 via frontend\.env.local)
+netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul || (
+  echo Starting finance frontend on 3000...
+  start "Finance UI 3000" /min cmd /k "cd /d "%~dp0..\frontend" && npx vite"
+)
+
 rem ---- unified frontend (port 5180)
 if not exist node_modules (
   echo Installing frontend packages...

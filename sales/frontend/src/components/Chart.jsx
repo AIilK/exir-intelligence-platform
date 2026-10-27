@@ -171,7 +171,9 @@ export function CompareBars({ rows, series, unit, onClick }) {
 }
 
 /** نقشه حرارتی (رنگ ترتیبی تک‌فام). */
-export function Heatmap({ rows, xKey, yKey, vKey, unit, onClickY, palette = SEQ }) {
+export function Heatmap({ rows, xKey, yKey, vKey, unit, onClickY, palette = SEQ, valueType = 'money' }) {
+  const money = valueType === 'money'
+  const fmt = (v) => (money ? fmtMoney(v, unit) : fmtInt(v))
   const xs = [...new Set(rows.map((r) => r[xKey]))].sort()
   const ys = [...new Set(rows.map((r) => r[yKey]))]
   const tot = Object.fromEntries(ys.map((y) => [y, rows.filter((r) => r[yKey] === y).reduce((a, r) => a + r[vKey], 0)]))
@@ -185,13 +187,13 @@ export function Heatmap({ rows, xKey, yKey, vKey, unit, onClickY, palette = SEQ 
       option={(t) => ({
         grid: { left: 12, right: 12, top: 8, bottom: 56, containLabel: true },
         tooltip: { ...baseOption(t).tooltip, formatter: (p) =>
-          `${ys[p.value[1]]} — ${faDigits(xs[p.value[0]])}<br/><b>${fmtMoney(p.value[2], unit)}</b> ${UNITS[unit].label}<br/><span style="opacity:.75">${fmtFull(p.value[2])}</span>` },
+          `${ys[p.value[1]]} — ${faDigits(xs[p.value[0]])}<br/><b>${fmt(p.value[2])}</b> ${money ? UNITS[unit].label : 'عدد'}<br/><span style="opacity:.75">${money ? fmtFull(p.value[2]) : fmtExact(p.value[2])}</span>` },
         xAxis: { type: 'category', inverse: true, data: xs.map((x) => faDigits(x.slice(5))), axisLabel: { color: t.text },
           splitArea: { show: false }, axisTick: { show: false } },
         yAxis: { type: 'category', position: 'right', data: ys, axisLabel: { color: t.text }, axisTick: { show: false } },
-        visualMap: { min: 0, max, calculable: false, text: [fmtMoney(max, unit), '۰'], orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 140,
+        visualMap: { min: 0, max, calculable: false, text: [fmt(max), '۰'], orient: 'horizontal', left: 'center', bottom: 0, itemHeight: 140,
           inRange: { color: t.dark ? [...palette].reverse() : palette }, textStyle: { color: t.text },
-          formatter: (v) => fmtMoney(v, unit) },
+          formatter: (v) => fmt(v) },
         series: [{ type: 'heatmap', data: data.filter((d) => d[2] > 0), itemStyle: { borderColor: t.surface, borderWidth: 2, borderRadius: 3 },
           cursor: onClickY ? 'pointer' : 'default' }],
       })}
