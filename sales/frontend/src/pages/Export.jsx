@@ -13,6 +13,8 @@ const SHEETS = [
   { value: 'sku', label: 'کالا و گروه (SKU)' }, { value: 'country', label: 'کشور' }, { value: 'trend', label: 'روند YTD' },
 ]
 const SLICERS = [['month', 'ماه'], ['brand', 'برند'], ['cat', 'گروه کالا'], ['country', 'کشور'], ['customer', 'مشتری'], ['product', 'کالا']]
+const METRIC_TABS = [{ value: 'net', label: 'دلار خالص' }, { value: 'gross', label: 'دلار ناخالص' }, { value: 'pcs', label: 'تعداد' },
+  { value: 'req', label: 'درخواست $' }, { value: 'req_pcs', label: 'درخواست تعداد' }]
 const usd = (v) => (isNum(v) ? `${fmtInt(v)} $` : '—')
 const growth = (g, what = '') => (isNum(g) ? `${g >= 0 ? '▲' : '▼'} ${fmtPct(Math.abs(g))} نسبت به همین بازه سال قبل${what}` : 'بدون فروش در همین بازه سال قبل')
 
@@ -76,13 +78,16 @@ function CustomerFile({ code, query, onClose }) {
           </div>
           <div className="kpis">
             <Kpi label={`فروش دلاری ${faDigits(data.year)}`} value={data.kpis.net} type="int" sub={growth(data.kpis.growth)} />
+            <Kpi label={`فروش ناخالص ${faDigits(data.year)}`} value={data.kpis.gross} type="int" />
             <Kpi label={`فروش تعدادی ${faDigits(data.year)}`} value={data.kpis.pcs} type="int" />
+            <Kpi label={`درخواست ${faDigits(data.year)}`} value={data.kpis.req} type="int" sub={`${fmtInt(data.kpis.req_pcs)} عدد`}
+              hint="ناخالص درخواست‌های فروش تأییدشده و بسته‌شده (دلار)" />
             <Kpi label={`کل سال ${faDigits(data.ly)}`} value={data.kpis.net_ly_full} type="int" sub={`${fmtInt(data.kpis.pcs_ly_full)} عدد`} />
             <Kpi label="فاکتور" value={data.kpis.invoices} type="int" hint="ترکیب (کد مشتری، روز) با مبلغ" />
           </div>
           <div className="grid g2">
             <Card title="روند ماهانه، دو سال" className="span2"
-              actions={<Tabs value={metric} onChange={setMetric} tabs={[{ value: 'net', label: 'دلار' }, { value: 'pcs', label: 'تعداد' }]} />}>
+              actions={<Tabs value={metric} onChange={setMetric} tabs={METRIC_TABS} />}>
               <YearsChart rows={data.monthly} metric={metric} year={data.year} ly={data.ly} />
             </Card>
             <Card title="برندها"><Bars rows={data.brands} value="net" colorOf={(r, t) => brandColor(r.key, t)} /></Card>
@@ -92,9 +97,9 @@ function CustomerFile({ code, query, onClose }) {
                 columns={[{ key: 'product_code', label: 'کد کالا' }, { key: 'product', label: 'نام کالا' }, { key: 'brand', label: 'برند' },
                   { key: 'cat2', label: 'گروه' }, { key: 'pcs', label: 'تعداد', type: 'int' }, { key: 'net', label: 'دلار', type: 'int' }]} />
             </Card>
-            <Card title="فاکتورها" className="span2">
+            <Card title="فاکتورها و درخواست‌ها" className="span2" subtitle="مبلغ فاکتور خالص و مبلغ درخواست ناخالص، به دلار">
               <DataTable rows={data.invoices} pageSize={12} exportName={`export-invoices-${data.code}`} defaultSort={{ key: 'date', dir: 'desc' }}
-                columns={[{ key: 'inv', label: 'شماره' }, { key: 'date', label: 'تاریخ', type: 'date' }, { key: 'code', label: 'کد مشتری' },
+                columns={[{ key: 'kind', label: 'نوع' }, { key: 'inv', label: 'شماره' }, { key: 'date', label: 'تاریخ', type: 'date' }, { key: 'code', label: 'کد مشتری' },
                   { key: 'pcs', label: 'تعداد', type: 'int' }, { key: 'net', label: 'دلار', type: 'int' }, { key: 'lines', label: 'سطر', type: 'int' }]} />
             </Card>
           </div>
@@ -200,6 +205,7 @@ export default function Export() {
   const picked = Object.fromEntries(SLICERS.map(([k]) => [k, sp.getAll(k)]))
   const query = useMemo(() => {
     const p = new URLSearchParams()
+    if (sp.get('year')) p.set('year', sp.get('year'))
     for (const [k] of SLICERS) sp.getAll(k).forEach((v) => p.append(k, v))
     return p.toString()
   }, [sp])
@@ -215,6 +221,9 @@ export default function Export() {
   if (loading && !data) return <Loading />
   if (error) return <ErrorBox error={error} />
   const { kpis: k, year: y, ly } = data
+  // سال جاری: تا امروز؛ سال‌های گذشته: کل سال
+  const span = data.current ? '' : ' (کل سال)'
+  const g = (v) => (data.current ? growth(v) : isNum(v) ? `${v >= 0 ? '▲' : '▼'} ${fmtPct(Math.abs(v))} نسبت به کل ${faDigits(ly)}` : `بدون فروش در ${faDigits(ly)}`)
   const options = {
     month: MONTHS.map((m, i) => ({ value: String(i + 1).padStart(2, '0'), label: m })),
     ...Object.fromEntries(['brand', 'cat', 'country'].map((key) => [key, data.options[key].map((v) => ({ value: v, label: v }))])),
@@ -225,20 +234,32 @@ export default function Export() {
   const open = (name) => setFile(name)
   return (
     <>
-      <PageHead title="فروش صادراتی" desc={`فروش صادراتی به ${fmtInt(data.options.customer.length)} کد مشتری در ${fmtInt(data.options.country.length)} کشور، به دلار، لایو از راهکاران؛ معادل فایل Export SalesReport`}>
+      <PageHead title="فروش صادراتی" desc={`فروش و درخواست صادراتی به ${fmtInt(data.options.customer.length)} کد مشتری در ${fmtInt(data.options.country.length)} کشور، به دلار، از ${faDigits(data.years.at(-1))}، لایو از راهکاران؛ معادل فایل Export SalesReport`}>
         <span className={`rk-live ${data.live ? 'on' : ''}`} title={`خوانده‌شده: ${data.fetched}`}>
           {data.live ? 'لایو' : `بروزرسانی ${faDigits((data.fetched || '').slice(11, 16))}`}
         </span>
       </PageHead>
       <div className="filterbar rk-slicers">
+        <label className="inline-field">
+          <span>سال</span>
+          <select value={y} onChange={(e) => set('year', e.target.value === data.years[0] ? null : e.target.value)}>
+            {data.years.map((v) => <option key={v} value={v}>{faDigits(v)}</option>)}
+          </select>
+        </label>
         {SLICERS.map(([key, label]) => <MultiSelect key={key} label={label} value={picked[key]} onChange={(v) => set(key, v)} options={options[key]} />)}
-        {active && <button className="btn ghost" onClick={() => setSp(sheet === 'dashboard' ? {} : { sheet })}>حذف فیلترها</button>}
+        {active && <button className="btn ghost" onClick={() => setSp(Object.fromEntries([['sheet', sheet], ['year', sp.get('year')]].filter(([key, v]) => v && v !== 'dashboard')))}>حذف فیلترها</button>}
       </div>
       <div className="kpis">
-        <Kpi label={`فروش دلاری (NetSales $) ${faDigits(y)}`} value={k.net} type="int" sub={growth(k.growth)}
-          hint="مبلغ خالص اقلام فاکتورهای صادراتی (دلار)، از ابتدای سال؛ مقایسه با همان بازه سال قبل" />
-        <Kpi label={`فروش تعدادی (NetSales PCS) ${faDigits(y)}`} value={k.pcs} type="int" sub={growth(k.growth_pcs)}
+        <Kpi label={`فروش دلاری (NetSales $) ${faDigits(y)}${span}`} value={k.net} type="int" sub={g(k.growth)}
+          hint="مبلغ خالص اقلام فاکتورهای صادراتی (دلار)، از ابتدای سال؛ مقایسه با همان بازه سال قبل. تا ۱۴۰۳ فاکتورهای ریالی با نرخ دلار همان ماه به دلار تبدیل شده‌اند" />
+        <Kpi label={`فروش ناخالص (GrossSales $) ${faDigits(y)}${span}`} value={k.gross} type="int"
+          sub={<>{g(k.growth_gross)}{isNum(k.disc_rate) && <><br />کسورات {fmtPct(k.disc_rate)} از ناخالص</>}</>}
+          hint="مبلغ اقلام فاکتور پیش از کسور و اضافات (دلار)" />
+        <Kpi label={`فروش تعدادی (NetSales PCS) ${faDigits(y)}${span}`} value={k.pcs} type="int" sub={g(k.growth_pcs)}
           hint="همه اقلام فاکتور، از جمله نمونه و هدیه بدون مبلغ" />
+        <Kpi label={`درخواست فروش ${faDigits(y)}${span}`} value={k.req} type="int"
+          sub={<>{g(k.growth_req)}<br />{fmtInt(k.req_pcs)} عدد{isNum(k.fill) && ` · ${fmtPct(k.fill)} آن فاکتور شده (تعدادی)`}</>}
+          hint="مبلغ ناخالص درخواست‌های فروش صادراتی «تأییدشده» و «بسته‌شده» (دلار)" />
         <Kpi label={`کل سال ${faDigits(ly)}`} value={k.net_ly_full} type="int" sub={`${fmtInt(k.pcs_ly_full)} عدد`} />
         <Kpi label="مشتری فعال" value={k.customers} type="int"
           hint="تعداد مشتری = تعداد کد مشتری یکتا (هر برند یک مشتری کد جدا دارد). فعال = کدی که از ابتدای سال جاری خرید داشته"
@@ -252,7 +273,7 @@ export default function Export() {
             <Bars rows={data.brands} value="net" colorOf={(r, t) => brandColor(r.key, t)} onClick={(r) => set('brand', [r.key])} />
           </Card>
           <Card title="روند ماهانه" subtitle={`${faDigits(y)} در برابر ${faDigits(ly)}`}
-            actions={<Tabs value={metric} onChange={setMetric} tabs={[{ value: 'net', label: 'دلار' }, { value: 'pcs', label: 'تعداد' }]} />}>
+            actions={<Tabs value={metric} onChange={setMetric} tabs={METRIC_TABS} />}>
             <YearsChart rows={data.trend} metric={metric} year={y} ly={ly} />
           </Card>
           <Card title="گروه کالا — فروش دلاری" subtitle="Category (Cate1)؛ برای فیلتر کلیک کنید">
@@ -274,7 +295,9 @@ export default function Export() {
           <Card title="جدول مشتریان" className="span2">
             <DataTable rows={data.customers} pageSize={20} exportName="export-customers" onRowClick={(r) => open(r.key)}
               columns={[{ key: 'key', label: 'کد مشتری' }, { key: 'label', label: 'مشتری' }, { key: 'country', label: 'کشور' }, { key: 'name', label: 'نام حساب' },
-                ...twoYearCols(ly, y).slice(1), { key: 'growth', label: 'رشد دلاری', type: 'pct' }]} />
+                ...twoYearCols(ly, y).slice(1), { key: 'gross', label: `${faDigits(y)} ناخالص`, type: 'int' },
+                { key: 'req', label: `${faDigits(y)} درخواست $`, type: 'int' }, { key: 'req_pcs', label: `${faDigits(y)} درخواست تعداد`, type: 'int' },
+                { key: 'growth', label: 'رشد دلاری', type: 'pct' }]} />
           </Card>
         </div>
       )}
@@ -291,7 +314,7 @@ export default function Export() {
       {sheet === 'trend' && (
         <div className="grid g2">
           <Card title="روند انباشته از ابتدای سال" className="span2" subtitle={`${faDigits(y)} (خط پررنگ) در برابر ${faDigits(ly)}؛ برای یک گروه کالا از فیلتر «گروه کالا» استفاده کنید`}
-            actions={<Tabs value={metric} onChange={setMetric} tabs={[{ value: 'pcs', label: 'تعداد (PCS)' }, { value: 'net', label: 'دلار' }]} />}>
+            actions={<Tabs value={metric} onChange={setMetric} tabs={METRIC_TABS} />}>
             <YearsChart rows={data.trend} metric={metric} cum year={y} ly={ly} height={340} />
           </Card>
           <Card title="جدول ماهانه" className="span2">
@@ -299,7 +322,10 @@ export default function Export() {
               columns={[{ key: 'month', label: 'ماه' },
                 { key: 'pcs_ly', label: `${faDigits(ly)} تعداد`, type: 'int' }, { key: 'cum_pcs_ly', label: `${faDigits(ly)} تعداد انباشته`, type: 'int' },
                 { key: 'pcs', label: `${faDigits(y)} تعداد`, type: 'int' }, { key: 'cum_pcs', label: `${faDigits(y)} تعداد انباشته`, type: 'int' },
-                { key: 'net_ly', label: `${faDigits(ly)} دلار`, type: 'int' }, { key: 'net', label: `${faDigits(y)} دلار`, type: 'int' }]} />
+                { key: 'net_ly', label: `${faDigits(ly)} دلار`, type: 'int' }, { key: 'net', label: `${faDigits(y)} دلار`, type: 'int' },
+                { key: 'gross_ly', label: `${faDigits(ly)} ناخالص`, type: 'int' }, { key: 'gross', label: `${faDigits(y)} ناخالص`, type: 'int' },
+                { key: 'req_ly', label: `${faDigits(ly)} درخواست $`, type: 'int' }, { key: 'req', label: `${faDigits(y)} درخواست $`, type: 'int' },
+                { key: 'req_pcs', label: `${faDigits(y)} درخواست تعداد`, type: 'int' }]} />
           </Card>
         </div>
       )}
