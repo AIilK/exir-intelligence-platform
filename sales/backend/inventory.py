@@ -159,32 +159,70 @@ class InventorySource:
             except Exception as e:  # noqa: BLE001 — خطای اتصال راهکاران نباید تب موجودی را از کار بیندازد
                 self.snap["rk_error"] = str(e)
 
-    def get(self, branch: str, force: bool = False) -> dict:
+    def get(self, branch: str | list[str], force: bool = False, stores: list[int] | None = None) -> dict:
+        """داده یک شعبه یا چند شعبه با هم (جمع موجودی، خرید و سفارش باز). stores: فقط این انبارها (شناسه tblStore)
+        در موجودی و ضایعات حساب می‌شوند؛ None یعنی همه انبارهای شعب انتخابی."""
+        names = tuple(sorted({branch} if isinstance(branch, str) else set(branch)))
+        key = (names, tuple(sorted(set(stores))) if stores else None)
         with self.lock:
             if self.snap is None or force or time.time() - self.snap["fetched"] >= CACHE_MINUTES * 60:
                 self._load()
-            if branch in self.per_branch:
-                return self.per_branch[branch]
+            if key in self.per_branch:
+                return self.per_branch[key]
             sn = self.snap
-            if branch not in sn["branches"]:
-                raise loader.DataError(f"شعبه «{branch}» در دیتابیس کارآمد پیدا نشد.")
-            bid = sn["branches"][branch]
-            st = sn["stock"][sn["stock"]["bid"] == bid]
+            for b in names:
+                if b not in sn["branches"]:
+                    raise loader.DataError(f"شعبه «{b}» در دیتابیس کارآمد پیدا نشد.")
+            bids = [int(sn["branches"][b]) for b in names]
+            bstores = sn["stores"][sn["stores"]["BranchRef"].isin(bids)]
+            sel = set(bstores["ID"].astype(int)) & set(stores) if stores else None
+            if stores and not sel:
+                raise loader.DataError("هیچ‌کدام از انبارهای انتخاب‌شده در شعب انتخابی نیست.")
             pr = sn["price"]
-            own = pr[pr["branch_id"] == bid].groupby("code")["price"].last()
-            stores = sn["stores"][sn["stores"]["BranchRef"] == bid]
-            c = {"fetched": sn["stock_at"], "branch_id": bid,
-                 "stores": [{"id": int(r.ID), "name": r.name, "wastage": bool(r.waste)} for r in stores.itertuples()],
-                 "stock": st[~st["waste"]].groupby("code")["qty"].sum(),
-                 "waste": st[st["waste"]].groupby("code")["qty"].sum(),
+            own = pr[pr["branch_id"].isin(bids)].groupby("code")["price"].last()
+            bname = {v: k for k, v in sn["branches"].items()}
+            c = {"fetched": sn["stock_at"], "branch_id": bids[0], "bids": bids, "store_sel": sel,
+                 "stores": [{"id": int(r.ID), "branch": bname.get(int(r.BranchRef)), "name": r.name, "wastage": bool(r.waste),
+                             "selected": sel is None or int(r.ID) in sel} for r in bstores.itertuples()],
                  "goods": sn["goods"],
                  "price": own.combine_first(self._any_price()).astype(float),
-                 "purch": sn["purch"][sn["purch"]["bid"] == bid]}
-            c["avg_price"] = self._avg_price(bid)
-            c["rk"] = self._rk_branch(branch, c["purch"])
+                 "purch": sn["purch"][sn["purch"]["bid"].isin(bids)]}
+            self._slice_stock(c, sn["stock"])
+            c["rk"] = self._rk_merge([self._rk_branch(b, sn["purch"][sn["purch"]["bid"] == sn["branches"][b]]) for b in names])
             c["rk_error"] = sn["rk_error"]
-            self.per_branch[branch] = c
+            self.per_branch[key] = c
             return c
+
+    def _slice_stock(self, c: dict, stock: pd.DataFrame):
+        """موجودی و ضایعات شعب و انبارهای انتخابی؛ ارزش هر شعبه با میانگین قیمت خرید خودش، پس برای چند شعبه
+        میانگین قیمت هر کالا وزنی (به موجودی مثبت هر شعبه) است تا موجودی × قیمت همان جمع ارزش شعب شود."""
+        st = stock[stock["bid"].isin(c["bids"])]
+        if c["store_sel"] is not None:
+            st = st[st["store"].isin(c["store_sel"])]
+        c["stock"] = st[~st["waste"]].groupby("code")["qty"].sum()
+        c["waste"] = st[st["waste"]].groupby("code")["qty"].sum()
+        if "_avg" not in c:
+            c["_avg"] = {b: self._avg_price(b) for b in c["bids"]}
+        if len(c["bids"]) == 1:
+            c["avg_price"] = c["_avg"][c["bids"][0]]
+            return
+        q = st.groupby(["bid", "code"])["qty"].sum().clip(lower=0)
+        avg = pd.concat(c["_avg"], names=["bid", "code"])
+        w = q.reindex(avg.index).fillna(0.0)
+        val, qty = (w * avg).groupby(level=1).sum(), w.groupby(level=1).sum()
+        # کالایی که در هیچ شعبه انتخابی موجودی مثبت ندارد: میانگین ساده قیمت شعب
+        c["avg_price"] = (val / qty.replace(0, np.nan)).fillna(avg.groupby(level=1).mean())
+
+    @staticmethod
+    def _rk_merge(parts: list) -> dict | None:
+        parts = [p for p in parts if p is not None]
+        if len(parts) <= 1:
+            return parts[0] if parts else None
+        add = lambda k: pd.concat([p[k] for p in parts]).groupby(level=0).sum()
+        return {**parts[0], "open": add("open"), "transit": add("transit"),
+                "open_since": pd.concat([p["open_since"] for p in parts]).groupby(level=0).min(),
+                "open_orders": sum(p["open_orders"] for p in parts), "sent": sum(p["sent"] for p in parts),
+                "got": sum(p["got"] for p in parts), "customers": sorted({x for p in parts for x in p["customers"]})}
 
     @staticmethod
     def _prep_stock(stock: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
@@ -211,9 +249,7 @@ class InventorySource:
             now = time.time()
             sn["stock"], sn["stock_at"] = stock, now
             for c in self.per_branch.values():
-                st = stock[stock["bid"] == c["branch_id"]]
-                c["stock"] = st[~st["waste"]].groupby("code")["qty"].sum()
-                c["waste"] = st[st["waste"]].groupby("code")["qty"].sum()
+                self._slice_stock(c, stock)
                 c["fetched"] = now
         return True
 
@@ -292,6 +328,21 @@ def hybrid_branches(data: dict) -> list[str]:
     return sorted(b for b in data["sales"]["branch"].unique() if "هیبرید" in str(b))
 
 
+# شعبه «زنجیره ای» کارآمد (انبار زنجیره‌ای هایپر می و فروش به فروشگاه‌های زنجیره‌ای) شعبه‌ای جدا از هیبرید تهران است
+# با انبار، خرید و فروش خودش؛ در کنترل موجودی کنار هیبریدها می‌آید (جمع هیبریدها در تب کارخانه بدون آن می‌ماند)
+CHAIN_MARK = "زنجیره"
+BRANCH_LABELS = {"زنجیره ای": "هیبرید زنجیره‌ای"}
+
+
+def inventory_branches(data: dict) -> list[str]:
+    chain = sorted(b for b in data["sales"]["branch"].unique() if CHAIN_MARK in str(b))
+    return hybrid_branches(data) + chain
+
+
+def branch_labels(branches: list[str]) -> dict[str, str]:
+    return {b: BRANCH_LABELS.get(b, "هیبرید زنجیره‌ای" if CHAIN_MARK in b else b) for b in branches}
+
+
 def stock_totals(src: dict) -> dict:
     """جمع موجودی انبار اصلی و ضایعات شعبه فقط از کارآمد؛ مستقل از محاسبه سفارش تا شعب با سابقه ناکافی هم داشته باشند.
     موجودی منفی هر کالا صفر حساب می‌شود؛ ارزش = موجودی × میانگین قیمت خرید کارآمد (همان «ارزش انبار» گزارش کارآمد)."""
@@ -338,10 +389,12 @@ def _base_months(mnet: pd.Series, first: str, cur: str, ps: dict, s: dict, seaso
     return normal[-int(s["base_months"]):], brk
 
 
-def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict:
+def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = None) -> dict:
+    """branch: یک شعبه یا فهرست چند شعبه که با هم (مثل یک شعبه) محاسبه می‌شوند."""
     s = settings(cfg)
     ps = PL.settings(cfg)
-    branch = branch or s["branch"]
+    sel = [branch] if isinstance(branch, str) else list(branch or [s["branch"]])
+    branch = "، ".join(sel)
     s = {**s, "branch": branch}
     meta = data["meta"]
     pi = data.get("plan_inputs") or {}
@@ -354,11 +407,11 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     warn: list[dict] = []
 
     sales = data["sales"]
-    sales = sales[(sales["branch"] == branch) & ~sales["is_sample"]]
+    sales = sales[sales["branch"].isin(sel) & ~sales["is_sample"]]
     if not len(sales):
         raise loader.DataError(f"برای «{branch}» فروشی در داشبورد نیست؛ فیلتر شعبه منبع داده را بررسی کنید.")
     req = data.get("requests")
-    req = req[(req["branch"] == branch)] if req is not None else None
+    req = req[req["branch"].isin(sel)] if req is not None else None
 
     # -- ماه‌های پایه: ماه‌های سالمِ بسته، بعد از ماه اول شعبه (ناقص)
     months = sorted(sales["month"].unique())
@@ -369,7 +422,7 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     if len(base_months) < 2:
         raise loader.DataError("برای این شعبه کمتر از دو ماه سالم سابقه هست؛ پیشنهاد ممکن نیست.")
     last_branch_sale = sales.loc[(~sales["is_return"]) & (sales["qty"] > 0), "date"].max()
-    inactive = days.diff(last_branch_sale, today) > int(s["inactive_days"]) and branch not in set(s.get("force_active") or [])
+    inactive = days.diff(last_branch_sale, today) > int(s["inactive_days"]) and not set(sel) & set(s.get("force_active") or [])
 
     # -- فروش خالص ماهانه هر کالا (فروش + برگشتی که تعدادش منفی است)
     mq = sales.groupby(["product_code", "month"], observed=True)["qty"].sum().unstack(fill_value=0.0)
@@ -705,7 +758,8 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | None = None) -> dict
     hist_months = [m for m in months if m >= PL.month_add(cur, -12)]
     H = mq.reindex(index=codes, fill_value=0.0)[hist_months]
     return {
-        "branch": branch, "today": today, "settings": s, "fetched": datetime.fromtimestamp(src["fetched"]).strftime("%Y-%m-%d %H:%M"),
+        "branch": branch, "selected": sel, "stores": src.get("stores", []), "store_filtered": src.get("store_sel") is not None,
+        "today": today, "settings": s, "fetched": datetime.fromtimestamp(src["fetched"]).strftime("%Y-%m-%d %H:%M"),
         "orders": {"arr0": arr0, "arr1": arr1, "lead": lead, "review": review, "per_month": int(s["orders_per_month"]),
                    "deadline": deadline, "deadline_items": deadline_items,
                    "days_to_deadline": days.diff(today, deadline) if deadline else None,

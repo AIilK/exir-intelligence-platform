@@ -134,18 +134,21 @@ export function AppProvider({ children }) {
     let lastRk = null
     let lastRks = null
     let lastRke = null
+    let lastRkr = null
     let lastInv = null
     const check = () => {
       if (document.hidden) return
-      fetchJson('/api/stamp').then(({ stamp, rk_stamp: rk, rks_stamp: rks, rke_stamp: rke, inv_stamp: inv }) => {
+      fetchJson('/api/stamp').then(({ stamp, rk_stamp: rk, rks_stamp: rks, rke_stamp: rke, rkr_stamp: rkr, inv_stamp: inv }) => {
         // موجودی شعب (کارآمد) هم در لایو جدا تازه می‌شود
         if ((last !== null && stamp !== last) || (lastInv !== null && inv !== lastInv)) setVersion((v) => v + 1)
-        if ((lastRk !== null && rk !== lastRk) || (lastRks !== null && rks !== lastRks) || (lastRke !== null && rke !== lastRke)) setRkVersion((v) => v + 1)
+        if ((lastRk !== null && rk !== lastRk) || (lastRks !== null && rks !== lastRks) || (lastRke !== null && rke !== lastRke)
+          || (lastRkr !== null && rkr !== lastRkr)) setRkVersion((v) => v + 1)
         last = stamp
         lastInv = inv
         lastRk = rk
         lastRks = rks
         lastRke = rke
+        lastRkr = rkr
       }).catch(() => { /* سرور در دسترس نیست؛ دفعه بعد */ })
     }
     check()

@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -25,6 +25,7 @@ import planning as PL
 import rahkaran as RK
 import rahkaran_export as RE
 import rahkaran_sales as RS
+import remittance as RM
 import sql_source
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +46,7 @@ INV_SRC = INV.InventorySource(ENV_FILE, lambda: read_config())
 FACTORY = RK.FactorySource(ENV_FILE, lambda: read_config())
 RK_SALES = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RS.load, sig_sql=RS.SIG_SQL)  # فروش B2B از راهکاران
 RK_EXPORT = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RE.load, sig_sql=RS.SIG_SQL)  # فروش صادراتی از راهکاران
+RK_REMIT = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RM.load)  # حواله‌های فروش زنجیره‌ای و اینترنتی
 
 
 # ---------------------------------------------------------------- config
@@ -144,7 +146,7 @@ def rk_live_worker():
         if wait <= 0 or not RK.configured(ENV_FILE):
             time.sleep(30)
             continue
-        for src in (FACTORY, RK_SALES, RK_EXPORT):
+        for src in (FACTORY, RK_SALES, RK_EXPORT, RK_REMIT):
             try:
                 src.live_step()
                 src.live_error = None
@@ -288,7 +290,7 @@ def stamp():
     wait = float(sql_cfg(read_config()).get("live_seconds") or 0)
     live = wait > 0 and not STATE.get("live_error") and time.time() - STORE.live_checked <= max(30.0, 3 * wait)
     return {"stamp": STATE["stamp"], "live": live, "rk_stamp": FACTORY.stamp, "rk_live": FACTORY.is_live(),
-            "rks_stamp": RK_SALES.stamp, "rks_live": RK_SALES.is_live(), "rke_stamp": RK_EXPORT.stamp, "inv_stamp": INV_SRC.stock_at()}
+            "rks_stamp": RK_SALES.stamp, "rks_live": RK_SALES.is_live(), "rke_stamp": RK_EXPORT.stamp, "rkr_stamp": RK_REMIT.stamp, "inv_stamp": INV_SRC.stock_at()}
 
 
 class SqlReq(BaseModel):
@@ -963,24 +965,34 @@ def inventory_branches():
     """فهرست شعب هیبرید برای فیلتر شعبه (بدون محاسبه؛ حتی اگر محاسبه یک شعبه خطا بدهد)."""
     d = STATE["data"]
     ctx()
-    return {"branches": INV.hybrid_branches(d), "default": INV.settings(read_config())["branch"]}
+    branches = INV.inventory_branches(d)
+    return {"branches": branches, "labels": INV.branch_labels(branches), "default": INV.settings(read_config())["branch"]}
+
+
+def _inv_selection(d, cfg, branch, store) -> tuple[list[str], list[int] | None]:
+    """شعب انتخابی (یک یا چند، با پارامتر branch تکراری) و انبارهای انتخابی (store تکراری؛ خالی = همه انبارها)."""
+    branches = INV.inventory_branches(d)
+    sel = [b for b in dict.fromkeys(branch or []) if b] or [INV.settings(cfg)["branch"]]
+    bad = [b for b in sel if b not in branches]
+    if bad:
+        raise HTTPException(400, f"شعبه «{'، '.join(bad)}» در داده فروش نیست.")
+    return sel, [int(x) for x in store] if store else None
 
 
 @app.get("/api/inventory")
-def inventory(branch: str | None = None, refresh: bool = False):
+def inventory(branch: list[str] | None = Query(None), store: list[int] | None = Query(None), refresh: bool = False):
     d = STATE["data"]
     ctx()
     cfg = read_config()
-    branches = INV.hybrid_branches(d)
-    branch = branch or INV.settings(cfg)["branch"]
-    if branch not in branches:
-        raise HTTPException(400, f"شعبه «{branch}» در داده فروش نیست.")
+    branches = INV.inventory_branches(d)
+    sel, stores = _inv_selection(d, cfg, branch, store)
     try:
-        src = INV_SRC.get(branch, force=refresh)
-        r = INV.compute(d, src, cfg, branch=branch)
+        src = INV_SRC.get(sel, force=refresh, stores=stores)
+        r = INV.compute(d, src, cfg, branch=sel)
     except loader.DataError as e:
         raise HTTPException(409, str(e))
-    return {**r, "rows": A.records(r["rows"]), "suppliers": A.records(r["suppliers"]), "branches": branches}
+    return {**r, "rows": A.records(r["rows"]), "suppliers": A.records(r["suppliers"]), "branches": branches,
+            "labels": INV.branch_labels(branches)}
 
 
 @app.get("/api/inventory/overview")
@@ -990,7 +1002,7 @@ def inventory_overview(refresh: bool = False):
     ctx()
     cfg = read_config()
     with INV_LOCK:
-        branches = INV.hybrid_branches(d)
+        branches = INV.inventory_branches(d)
         if refresh:
             INV_SRC.get(branches[0], force=True)
         fetched = INV_SRC.get(branches[0])["fetched"]
@@ -1029,14 +1041,15 @@ def inventory_overview(refresh: bool = False):
             except loader.DataError as e:
                 row["error"] = str(e)
             out.append(row)
-        res = {"branches": A.records(pd.DataFrame(out)), "today": d["meta"].get("today"),
+        res = {"branches": A.records(pd.DataFrame(out)), "labels": INV.branch_labels(branches), "today": d["meta"].get("today"),
                "fetched": time.strftime("%Y-%m-%d %H:%M", time.localtime(fetched))}
         INV_OVERVIEW.update(key=key, data=res, at=time.time())
         return res
 
 
 class InvSettings(BaseModel):
-    branch: str | None = None      # شعبه‌ای که بعد از ذخیره نمایش داده می‌شود (تنظیمات برای همه شعب یکی است)
+    branch: list[str] | str | None = None  # شعبه(های)ی که بعد از ذخیره نمایش داده می‌شود (تنظیمات برای همه شعب یکی است)
+    store: list[int] | None = None
     lead_days: int | None = None
     orders_per_month: int | None = None
     base_months: int | None = None
@@ -1064,7 +1077,7 @@ class InvSettings(BaseModel):
 def inventory_settings(body: InvSettings):
     cfg = read_config()
     s = dict(cfg.get("inventory") or {})
-    for k, v in body.model_dump(exclude_none=True, exclude={"branch"}).items():
+    for k, v in body.model_dump(exclude_none=True, exclude={"branch", "store"}).items():
         if k == "lead_days":
             v = min(max(int(v), 0), 60)
         elif k == "orders_per_month":
@@ -1108,7 +1121,7 @@ def inventory_settings(body: InvSettings):
         s[k] = v
     cfg["inventory"] = s
     write_config(cfg)
-    return inventory(branch=body.branch)
+    return inventory(branch=[body.branch] if isinstance(body.branch, str) else body.branch, store=body.store)
 
 
 # ---------------------------------------------------------------- انبار کارخانه از راهکاران (جدا از محاسبه شعب)
@@ -1118,7 +1131,7 @@ FINISHED = ["product", "chain", "sample", "stale", "other"]  # انبارهای 
 
 
 @app.get("/api/inventory/factory")
-def inventory_factory(refresh: bool = False, branch: str | None = None):
+def inventory_factory(refresh: bool = False, branch: list[str] | None = Query(None), store: list[int] | None = Query(None)):
     """موجودی انبارهای کارخانه (راهکاران) کنار موجودی و فروش جمع شعب هیبرید (کارآمد)."""
     d = STATE["data"]
     ctx()
@@ -1150,10 +1163,15 @@ def inventory_factory(refresh: bool = False, branch: str | None = None):
     last3 = sorted(m for m in sales["month"].unique() if m < cur)[-3:]
     hyb_month = sales[sales["month"].isin(last3)].groupby("product_code", observed=True)["qty"].sum() / max(len(last3), 1)
     # شعبه انتخاب‌شده در صفحه: موجودی و فروش ماهانه همان شعبه کنار جمع هیبریدها
-    bid = sn["branches"].get(branch) if branch in branches else None
+    # (یک یا چند شعبه و انبارهای انتخابی؛ شعبه زنجیره‌ای جزو جمع هیبریدها نیست ولی انتخاب‌شدنی است)
+    sel = [x for x in (branch or []) if x in INV.inventory_branches(d)]
+    bid = sel or None
     if bid is not None:
-        br_stock = ks[ks["bid"] == bid].groupby("code")["qty"].sum().clip(lower=0)
-        bs = sales[(sales["branch"] == branch) & sales["month"].isin(last3)]
+        try:
+            br_stock = INV_SRC.get(sel, stores=[int(x) for x in store] if store else None)["stock"].clip(lower=0)
+        except loader.DataError as e:
+            raise HTTPException(409, str(e))
+        bs = d["sales"][d["sales"]["branch"].isin(sel) & ~d["sales"]["is_sample"] & d["sales"]["month"].isin(last3)]
         br_month = bs.groupby("product_code", observed=True)["qty"].sum() / max(len(last3), 1)
     # همه انبارهای راهکاران، حتی بدون مانده؛ ترتیب ستون‌ها: نوع انبار، بعد کد
     order = {k: i for i, k in enumerate(KIND_LABEL)}
@@ -1216,8 +1234,49 @@ def inventory_factory(refresh: bool = False, branch: str | None = None):
             "stores": A.records(stores.sort_values("product_units", ascending=False)),
             "store_cols": A.records(slist[["store", "store_name", "kind"]]),
             "kinds": KIND_LABEL, "sellable_stores": f["settings"]["factory_stores"], "open_days": f["settings"]["open_days"],
-            "last3": last3, "today": d["meta"].get("today"), "branch": branch if bid is not None else None,
+            "last3": last3, "today": d["meta"].get("today"), "branch": "، ".join(sel) if bid is not None else None,
             "fetched": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(f["fetched"])), "live": FACTORY.is_live()}
+
+
+# ---------------------------------------------------------------- حواله‌های فروش زنجیره‌ای و اینترنتی (remittance.py)
+@app.get("/api/inventory/remittances")
+def inventory_remittances(refresh: bool = False, all_states: bool = False):
+    """حواله‌های فروش ثبت‌شده زنجیره‌ای و اینترنتی در راهکاران، با پیشنهاد تأیید هر کالا از موجودی و فروش همان شعبه در کارآمد.
+    all_states: تأییدشده و در حال استفاده هم (برای بررسی پیشنهادها روی حواله‌های قبلی)."""
+    d = STATE["data"]
+    ctx()
+    cfg = read_config()
+    try:
+        snap = RK_REMIT.get(force=refresh)
+    except loader.DataError as e:
+        raise HTTPException(409, str(e))
+    today = d["meta"].get("today") or d["sales"]["date"].max()
+    frames, channels = {}, []
+    for ch in RM.CHANNELS:
+        info = {**ch, "error": None, "simple": False}
+        try:
+            # موجودی = همه انبارهای خود شعبه در کارآمد، حتی ضایعات (مثل گزارش موجودی کارآمد برای همین شعبه):
+            # زنجیره‌ای: انبار زنجیره ای و هایپر می؛ اینترنتی: هیبرید همدان، ضایعات هیبرید همدان و سایت اینترنتی.
+            # انبارهای شعب دیگر (مثل دیجی کالا زیر هیبرید تهران) حساب نمی‌شوند.
+            src = INV_SRC.get(ch["branch"])
+            src = {**src, "stock": src["stock"].add(src["waste"], fill_value=0.0), "waste": src["waste"].iloc[:0]}
+            info["stores"] = [x["name"] for x in src["stores"]]
+        except loader.DataError as e:
+            info["error"] = str(e)
+            channels.append(info)
+            continue
+        try:
+            rows = INV.compute(d, src, cfg, branch=ch["branch"])["rows"]
+        except loader.DataError as e:  # سابقه کم: آمار ساده (میانگین ۳ ماه)
+            rows, info["simple"], info["error"] = None, True, str(e)
+        frames[ch["key"]] = RM.branch_frame(rows, src, d["sales"], ch["branch"], today)
+        channels.append(info)
+    r = RM.evaluate(snap, frames, [1, 2, 3] if all_states else [1])
+    lines = r["lines"]
+    return {"orders": r["orders"], "lines": A.records(lines.replace([np.inf, -np.inf], np.nan)) if len(lines) else [],
+            "channels": channels, "verdicts": RM.VERDICT_LABEL, "states": RM.STATE_LABEL, "settings": r["settings"],
+            "today": today,
+            "fetched": _ts(snap["fetched"]), "live": RK_REMIT.is_live()}
 
 
 # ---------------------------------------------------------------- فروش B2B (نمایندگان استانی) از راهکاران

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApp, useFetch, sendJson, fetchJson, fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, isNum, UNITS } from '../lib.jsx'
-import { Card, Loading, ErrorBox, Tabs, Kpi, DataTable } from '../components/ui.jsx'
+import { Card, Loading, ErrorBox, Tabs, Kpi, DataTable, MultiSelect } from '../components/ui.jsx'
 import { Chart, HBar, baseOption, useTheme } from '../components/Chart.jsx'
 import { brandColor } from '../brands.js'
 import { Spark } from '../components/TreeTable.jsx'
@@ -12,6 +12,7 @@ const TABS = [
   { value: 'summary', label: 'خلاصه مدیریتی' },
   { value: 'order', label: 'سفارش و هشدارها' },
   { value: 'items', label: 'کالاها' },
+  { value: 'remit', label: 'حواله‌های فروش' },
   { value: 'factory', label: 'انبار کارخانه' },
   { value: 'settings', label: 'تنظیمات' },
 ]
@@ -24,7 +25,7 @@ const ITEM_VIEWS = [
 // پیوندهای قدیمی (تب‌های ادغام‌شده) به تب جدید
 const OLD_TABS = { branches: ['summary'], all: ['items', 'all'], supplier: ['items', 'supplier'], idle: ['items', 'idle'] }
 // تب‌های سطح شرکت (همه شعب)؛ بقیه تب‌ها برای شعبه انتخاب‌شده‌اند
-const GLOBAL_TABS = new Set(['factory'])
+const GLOBAL_TABS = new Set(['factory', 'remit'])
 const BRANCH_KEY = 'sd.invBranch'
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']
 const monthName = (m) => (m ? `${MONTHS[Number(m.slice(5, 7)) - 1]} ${faDigits(m.slice(0, 4))}` : '—')
@@ -49,27 +50,49 @@ export default function Inventory() {
   const old = OLD_TABS[sp.get('tab')]
   const tab = old ? old[0] : TABS.some((t) => t.value === sp.get('tab')) ? sp.get('tab') : 'summary'
   const [view, setView] = useState(old?.[1] || 'all')
-  const [branch, setBranchState] = useState(() => {
-    try { return sp.get('branch') || localStorage.getItem(BRANCH_KEY) || '' } catch { return sp.get('branch') || '' }
+  // شعب انتخابی (یک یا چند شعبه که با هم محاسبه می‌شوند) و انبارهای انتخابی (خالی = همه انبارهای آن شعب)
+  const [sel, setSelState] = useState(() => {
+    if (sp.getAll('branch').length) return sp.getAll('branch')
+    try {
+      const v = localStorage.getItem(BRANCH_KEY) || ''
+      return v.startsWith('[') ? JSON.parse(v) : v ? [v] : []
+    } catch { return [] }
   })
-  const q = branch ? `?branch=${encodeURIComponent(branch)}` : ''
+  const [stores, setStores] = useState([])
+  const q = sel.length || stores.length
+    ? `?${[...sel.map((b) => `branch=${encodeURIComponent(b)}`), ...stores.map((x) => `store=${x}`)].join('&')}` : ''
   // داده شعبه همیشه خوانده می‌شود تا فیلتر شعبه در همه زیرتب‌ها (حتی نمای کلی و انبار کارخانه) در دسترس باشد
   const { data, error, setData } = useFetch(`/api/inventory${q}`)
   // فهرست شعب جدا خوانده می‌شود تا اگر محاسبه شعبه انتخابی خطا داد (مثلاً سابقه ناکافی)، فیلتر قفل نشود
   const { data: brList } = useFetch('/api/inventory/branches')
   const branches = brList?.branches || data?.branches || []
+  // نام نمایشی شعبه (مثلاً «زنجیره ای» کارآمد → «هیبرید زنجیره‌ای»)؛ مقدار همان نام کارآمد می‌ماند
+  const labels = brList?.labels || data?.labels || {}
+  const lbl = (b) => labels[b] || b
   // شعبه انتخابی کاربر؛ تا اولین انتخاب، شعبه پیش‌فرض سرور
-  const cur = branch || data?.branch || brList?.default || ''
-  const loadingBranch = !!data && !!branch && data.branch !== branch && !error
+  const cur = sel.length ? sel : data?.selected || (brList?.default ? [brList.default] : [])
+  const curLabel = cur.map(lbl).join('، ')
+  // داده رسیده مربوط به همین انتخاب است؟ (تا رسیدن پاسخ جدید، داده قبلی می‌ماند)
+  const dataStores = data?.store_filtered ? data.stores.filter((x) => x.selected).map((x) => x.id) : []
+  const sameSel = !!data && (!sel.length || data.selected?.join('|') === sel.join('|'))
+  const loadingBranch = !!data && !error && (!sameSel || dataStores.join('|') !== [...stores].sort((a, b) => a - b).join('|'))
+  // انبارهای شعب انتخابی (از پاسخ همین انتخاب)؛ ضایعات و مغایرت جدا علامت می‌خورند
+  const storeOpts = sameSel ? (data.stores || []).map((x) => ({
+    value: x.id, label: `${x.name}${x.wastage ? ' (ضایعات)' : ''}`, group: cur.length > 1 ? lbl(x.branch) : '',
+  })) : []
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   // فیلتر وضعیت جدول سفارش و نوع فهرست راکد/مازاد؛ کارت‌ها با کلیک آن‌ها را تنظیم می‌کنند
   const [status, setStatus] = useState('all')
   const [idle, setIdle] = useState('all')
-  const setBranch = (b) => {
-    setBranchState(b)
-    try { localStorage.setItem(BRANCH_KEY, b) } catch { /* ignore */ }
+  // انتخاب خالی شعبه = شعبه پیش‌فرض؛ با عوض شدن شعب، فیلتر انبار پاک می‌شود (انبارها مال شعب قبلی‌اند)
+  const setSel = (v) => {
+    const b = v.length ? v : (brList?.default ? [brList.default] : [])
+    setSelState(b)
+    setStores([])
+    try { localStorage.setItem(BRANCH_KEY, JSON.stringify(b)) } catch { /* ignore */ }
   }
+  const setBranch = (b) => setSel([b])
   const go = (t, extra) => {
     if (t === 'all') { setStatus(extra || 'all'); setView('all'); t = 'items' }
     if (t === 'idle') { setIdle(extra); setView('idle'); t = 'items' }
@@ -90,22 +113,21 @@ export default function Inventory() {
     <>
       <PageHead title="موجودی و سفارش"
         desc={tab === 'factory' ? 'موجودی انبارهای کارخانه از راهکاران، کنار جمع موجودی شعب هیبرید از کارآمد. فقط خوانده می‌شود.'
+          : tab === 'remit' ? 'حواله‌های فروش ثبت‌شده زنجیره‌ای و اینترنتی در راهکاران، با پیشنهاد تأیید هر کالا از موجودی و فروش همان شعبه در کارآمد. فقط خوانده می‌شود.'
           : tab === 'summary' ? 'وضعیت انبار و سفارش همه شعب هیبرید و، پایین‌تر، شعبه انتخاب‌شده. موجودی و ارزش انبار از کارآمد.'
-          : data ? `${data.branch} — هشدار کمبود، پیشنهاد سفارش (حداکثر دو سفارش در ماه) و کالاهای راکد. موجودی از کارآمد فقط خوانده می‌شود${data.rahkaran?.ok ? '؛ سفارش و بار در راه کارخانه از راهکاران' : ''}.`
+          : data ? `${(data.selected || []).map(lbl).join('، ')} — هشدار کمبود، پیشنهاد سفارش (حداکثر دو سفارش در ماه) و کالاهای راکد. موجودی از کارآمد فقط خوانده می‌شود${data.rahkaran?.ok ? '؛ سفارش و بار در راه کارخانه از راهکاران' : ''}.`
             : 'هشدار کمبود، پیشنهاد سفارش و کالاهای راکد'}>
         <Tabs tabs={TABS} value={tab} onChange={(v) => setSp({ tab: v })} />
       </PageHead>
       {/* فیلتر شعبه برای کل صفحه: در همه زیرتب‌ها دیده می‌شود و انتخاب آن همه را تغییر می‌دهد */}
-      <div className="plan-bar">
-        <label className="inline-field">
-          <span>شعبه</span>
-          {/* مقدار = انتخاب کاربر (نه شعبه داده قبلی)، تا تا رسیدن داده شعبه جدید به عقب برنگردد */}
-          <select value={cur} disabled={!branches.length} onChange={(e) => setBranch(e.target.value)}>
-            {!branches.length && <option value={cur}>{cur || 'در حال خواندن…'}</option>}
-            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </label>
-        {loadingBranch && <span className="pill st-none">در حال خواندن {cur}…</span>}
+      {tab !== 'remit' && <div className="plan-bar">
+        {/* مقدار = انتخاب کاربر (نه شعبه داده قبلی)، تا تا رسیدن داده شعبه جدید به عقب برنگردد */}
+        <MultiSelect label="شعبه" value={cur} onChange={setSel}
+          options={(branches.length ? branches : cur).map((b) => ({ value: b, label: lbl(b) }))} />
+        {!global && <MultiSelect label="انبار" value={stores} onChange={setStores} options={storeOpts} />}
+        {loadingBranch && <span className="pill st-none">در حال خواندن {curLabel}…</span>}
+        {!global && cur.length > 1 && <span className="muted small">{faDigits(cur.length)} شعبه با هم محاسبه می‌شوند (موجودی، فروش و سفارش جمع شعب).</span>}
+        {!global && stores.length > 0 && <span className="muted small">فیلتر انبار فقط موجودی را محدود می‌کند؛ فروش و پیش‌بینی همان کل شعبه است.</span>}
         {global && <span className="muted small">موجودی و فروش این شعبه کنار جمع همه هیبریدها در جدول کالاها آمده است.</span>}
         {tab === 'summary' && <span className="muted small">یا در جدول «وضعیت شعب» روی ردیف شعبه کلیک کنید.</span>}
         {!global && data && (
@@ -119,12 +141,13 @@ export default function Inventory() {
                 : data.rahkaran?.error && <span className="pill st-yellow" title={data.rahkaran.error}>راهکاران در دسترس نیست</span>}
             </>
         )}
-      </div>
+      </div>}
       {tab === 'summary' && <BranchesTab onOpen={openBranch} current={cur} />}
       {tab === 'factory' && <FactoryTab />}
+      {tab === 'remit' && <RemitTab />}
       {!global && (
         <>
-          {tab === 'summary' && <h3 ref={branchRef} className="section-title">شعبه انتخاب‌شده: {cur || '—'}</h3>}
+          {tab === 'summary' && <h3 ref={branchRef} className="section-title">{cur.length > 1 ? 'شعب انتخاب‌شده' : 'شعبه انتخاب‌شده'}: {curLabel || '—'}</h3>}
           {(error || err) && <ErrorBox error={error || err} />}
           {!data ? (!error && <Loading />) : (
             <>
@@ -163,6 +186,8 @@ function BranchesTab({ onOpen, current }) {
   const { data, error } = useFetch('/api/inventory/overview')
   if (error) return <ErrorBox error={error} />
   if (!data) return <div className="state">در حال محاسبه برای همه شعب… (بار اول ممکن است تا یک دقیقه طول بکشد)</div>
+  const lbl = (b) => data.labels?.[b] || b
+  const byLabel = Object.fromEntries(data.branches.map((r) => [lbl(r.branch), r.branch]))
   const all = data.branches
   const act = all.filter((r) => !r.error && !r.inactive)
   const sum = (k, rs = all) => rs.reduce((a, r) => a + (r[k] || 0), 0)
@@ -184,9 +209,9 @@ function BranchesTab({ onOpen, current }) {
       {(issues.length > 0 || noHist.length > 0) && (
         <div className="alerts">
           {noHist.length > 0 && <div className="alert warn"><span className="alert-icon">!</span>
-            <span>بدون سابقه کافی برای پیشنهاد سفارش (فقط موجودی نمایش داده می‌شود): {noHist.map((r) => r.branch).join('، ')}</span></div>}
+            <span>بدون سابقه کافی برای پیشنهاد سفارش (فقط موجودی نمایش داده می‌شود): {noHist.map((r) => lbl(r.branch)).join('، ')}</span></div>}
           {issues.length > 0 && <div className="alert warn"><span className="alert-icon">!</span>
-            <span>داده خرید ناقص (موجودی کارآمد ممکن است دقیق نباشد): {issues.map((r) => r.branch).join('، ')} — برای جزئیات نشانگر را روی وضعیت ببرید.</span></div>}
+            <span>داده خرید ناقص (موجودی کارآمد ممکن است دقیق نباشد): {issues.map((r) => lbl(r.branch)).join('، ')} — برای جزئیات نشانگر را روی وضعیت ببرید.</span></div>}
         </div>
       )}
       <Card title="وضعیت شعب"
@@ -194,7 +219,7 @@ function BranchesTab({ onOpen, current }) {
         <DataTable rows={all.map((r) => ({ ...r, key: r.branch }))} unit={unit} pageSize={25} dense search={false}
           exportName="inventory-branches" defaultSort={{ key: 'total_value', dir: 'desc' }} onRowClick={(r) => onOpen(r.branch)}
           columns={[
-            { key: 'branch', label: 'شعبه', csv: (r) => r.branch, render: (r) => <>{r.branch}{r.branch === current && <span className="tag">انتخاب‌شده</span>}</> },
+            { key: 'branch', label: 'شعبه', csv: (r) => lbl(r.branch), render: (r) => <>{lbl(r.branch)}{current.includes(r.branch) && <span className="tag">انتخاب‌شده</span>}</> },
             { key: 'state', label: 'وضعیت', csv: (r) => branchState(r)[1], render: (r) => { const [c, l, t] = branchState(r); return <span className={`pill ${c}`} title={t}>{l}</span> } },
             { key: 'main_units', label: 'انبار اصلی (تعداد)', type: 'int', hint: 'جمع موجودی انبارهای قابل فروش شعبه در کارآمد؛ موجودی منفی صفر حساب شده' },
             { key: 'main_value', label: 'انبار اصلی (ارزش)', type: 'money', hint: 'همان «ارزش انبار» گزارش کارآمد: موجودی × میانگین قیمت خرید این شعبه' },
@@ -207,7 +232,7 @@ function BranchesTab({ onOpen, current }) {
           ]} />
       </Card>
       <Card title="ترکیب ارزش موجودی هر شعبه" subtitle="انبار اصلی به سالم، مازاد (بیش از ۶ ماه پوشش) و راکد (بدون فروش ۹۰ روز)، به‌علاوه ضایعات؛ روی هر شعبه کلیک کنید">
-        <Chart height={Math.max(260, all.length * 26)} onClick={(p) => p?.name && onOpen(p.name)} option={(t) => {
+        <Chart height={Math.max(260, all.length * 26)} onClick={(p) => p?.name && onOpen(byLabel[p.name] || p.name)} option={(t) => {
           const rs = [...all].sort((a, b) => (a.total_value || 0) - (b.total_value || 0))
           const ok = (r) => Math.max((r.main_value || 0) - (r.dead_value || 0) - (r.excess_value || 0), 0)
           const s = (name, data, color) => ({ name, type: 'bar', stack: 's', data, itemStyle: { color }, cursor: 'pointer' })
@@ -216,7 +241,7 @@ function BranchesTab({ onOpen, current }) {
             tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v) => money(v) },
             legend: { top: 0, textStyle: { color: t.text } },
             xAxis: { type: 'value', axisLabel: { color: t.text, formatter: (v) => fmtCompact(v).value }, splitLine: { lineStyle: { color: t.grid } } },
-            yAxis: { type: 'category', data: rs.map((r) => r.branch), axisLabel: { color: t.text } },
+            yAxis: { type: 'category', data: rs.map((r) => lbl(r.branch)), axisLabel: { color: t.text } },
             series: [
               s('سالم', rs.map(ok), t.series[2]),
               s('مازاد', rs.map((r) => r.excess_value || 0), t.series[3]),
@@ -657,6 +682,7 @@ function ItemList({ data, rows: all, val, unitLabel, title, hide, exportName, on
               defaultSort={{ key: 'v', dir: 'desc' }} onRowClick={setSel}
               columns={[
                 { key: 'status', label: 'وضعیت', csv: (r) => labels[r.status] || r.status, render: (r) => <StatusPill s={r.status} labels={labels} low={r.c_low} /> },
+                { key: 'code', label: 'کد کالا' },
                 { key: 'product', label: 'کالا' },
                 ...(hide !== 'brand' ? [{ key: 'brand', label: 'برند' }] : []),
                 ...(hide !== 'category' ? [{ key: 'category', label: 'گروه کالا' }] : []),
@@ -710,6 +736,7 @@ function OrderTab({ data }) {
             defaultSort={{ key: 'cover_days', dir: 'asc' }} onRowClick={setSel}
             columns={[
               { key: 'status', label: 'وضعیت', csv: (r) => labels[r.status] || r.status, render: (r) => <StatusPill s={r.status} labels={labels} low={r.c_low} /> },
+              { key: 'code', label: 'کد کالا' },
               { key: 'product', label: 'کالا' },
               { key: 'brand', label: 'برند' },
               { key: 'category', label: 'گروه کالا' },
@@ -735,6 +762,7 @@ function OrderTab({ data }) {
         <DataTable rows={irregular} unit={unit} pageSize={15} dense exportName="inventory-irregular"
           defaultSort={{ key: 'open_req', dir: 'desc' }} onRowClick={setSel}
           columns={[
+            { key: 'code', label: 'کد کالا' },
             { key: 'product', label: 'کالا' },
             { key: 'brand', label: 'برند' },
             { key: 'category', label: 'گروه کالا' },
@@ -844,6 +872,7 @@ function AllTab({ data, status, setStatus }) {
         <DataTable rows={rows} unit={unit} pageSize={25} dense exportName="inventory-items" defaultSort={{ key: 'value', dir: 'desc' }} onRowClick={setSel}
           columns={[
             { key: 'status', label: 'وضعیت', csv: (r) => labels[r.status] || r.status, render: (r) => <StatusPill s={r.status} labels={labels} low={r.c_low} /> },
+            { key: 'code', label: 'کد کالا' },
             { key: 'product', label: 'کالا' },
             { key: 'brand', label: 'برند' },
             { key: 'category', label: 'گروه کالا' },
@@ -959,7 +988,7 @@ function SettingsTab({ data, setData }) {
     setMsg(null)
     try {
       setData(await sendJson('/api/inventory/settings', 'PUT', {
-        branch: data.branch, lead_days: Number(f.lead_days), orders_per_month: Number(f.orders_per_month),
+        branch: data.selected, store: data.store_filtered ? data.stores.filter((x) => x.selected).map((x) => x.id) : null, lead_days: Number(f.lead_days), orders_per_month: Number(f.orders_per_month),
         break_detect: f.break_detect, inactive_days: Number(f.inactive_days),
         min_order_cartons: Number(f.min_order_cartons), min_gap_pct: Number(f.min_gap_pct) / 100,
         a_safety: f.a_safety, z_a: Number(f.z_a), b_pct: Number(f.b_pct) / 100,
@@ -1054,5 +1083,93 @@ function SettingsTab({ data, setData }) {
         <p className="muted small">آزمون روی همه شعب هیبرید (اردیبهشت تا شهریور ۱۴۰۵، هر بار فقط با داده قبل از همان تاریخ): از هر ۱۰ کمبود واقعی کالاهای A حدود ۸ تا از قبل هشدار گرفتند و با سفارش پیشنهادی، تأمین فروش از ۸۴٪ به ۹۲٪ رسید؛ حجم سفارش تقریباً به اندازه نیاز بود.</p>
       </Card>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------- حواله‌های فروش زنجیره‌ای و اینترنتی (راهکاران)
+const VERDICT_CLASS = { approve: 'st-green', reduce: 'st-yellow', reject: 'st-red', review: 'st-none' }
+const REMIT_CHANNELS = [{ value: '', label: 'همه' }, { value: 'chain', label: 'زنجیره‌ای' }, { value: 'online', label: 'اینترنتی' }]
+const faDate = (d) => { try { return new Intl.DateTimeFormat('fa-IR-u-ca-persian', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(d)) } catch { return d } }
+const days1 = (v) => (isNum(v) ? `${fmtInt(v)} روز` : '—')
+
+function RemitTab() {
+  const { unit, rkVersion } = useApp()
+  const [all, setAll] = useState(false)
+  const [channel, setChannel] = useState('')
+  const [verdict, setVerdict] = useState('')
+  const { data, error, setData } = useFetch(`/api/inventory/remittances?all_states=${all}&v=${rkVersion}`)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const refresh = async () => {
+    setBusy(true); setErr(null)
+    try { setData(await fetchJson(`/api/inventory/remittances?all_states=${all}&refresh=true`)) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  const lines = useMemo(() => (data ? data.lines.filter((r) => !channel || r.channel === channel) : []), [data, channel])
+  const orders = useMemo(() => (data ? data.orders.filter((o) => (!channel || o.channel === channel) && (!verdict || o.counts[verdict] > 0)) : []), [data, channel, verdict])
+  const byOrder = useMemo(() => {
+    const m = {}
+    for (const r of lines) (m[r.oid] ||= []).push({ ...r, key: `${r.oid}-${r.code}` })
+    return m
+  }, [lines])
+  if (error) return <ErrorBox error={error} />
+  if (!data) return <div className="state">در حال خواندن حواله‌های فروش از راهکاران…</div>
+  const V = data.verdicts
+  const cnt = (k) => lines.filter((r) => r.verdict === k).length
+  const chLabel = Object.fromEntries(data.channels.map((c) => [c.key, c.label]))
+  const cols = [
+    { key: 'code', label: 'کد کالا', render: (r) => faDigits(r.code) },
+    { key: 'product', label: 'کالا', sticky: true },
+    { key: 'verdict', label: 'پیشنهاد', csv: (r) => V[r.verdict], render: (r) => (
+      <span className={`pill ${VERDICT_CLASS[r.verdict]}`} title={faDigits(r.why)}>{V[r.verdict]}</span>) },
+    { key: 'qty', label: 'مانده حواله', type: 'int', hint: 'مقدار حواله منهای خارج‌شده از انبار کارخانه' },
+    { key: 'suggested', label: 'مقدار پیشنهادی', type: 'int', hint: 'از نیم کارتن به بالا به کارتن کامل گرد می‌شود' },
+    { key: 'stock', label: 'موجودی شعبه', type: 'int', hint: 'موجودی همین کالا در شعبه زنجیره‌ای / اینترنتی کارآمد (بدون ضایعات)' },
+    { key: 'monthly', label: 'فروش ماهانه (پیش‌بینی)', type: 'int', hint: 'پیش‌بینی فروش این ماه شعبه در کنترل موجودی (پایه ماه‌های سالم × فصل)' },
+    { key: 'sold_90', label: 'فروش ۹۰ روز', type: 'int' },
+    { key: 'ytd', label: `فروش از ابتدای ${faDigits((data.today || '').slice(0, 4))}`, type: 'int', hint: 'فروش خالص (فروش منهای برگشتی) شعبه از ابتدای سال جاری تا امروز' },
+    { key: 'target', label: 'سطح هدف', type: 'int', hint: 'فروش تا رسیدن سفارش بعدی + زمان رسیدن بار + ذخیره اطمینان' },
+    { key: 'cover_now', label: 'پوشش فعلی', csv: (r) => r.cover_now, render: (r) => days1(r.cover_now), hint: 'موجودی شعبه منهای درخواست باز ÷ فروش روزانه' },
+    { key: 'cover_after', label: 'پوشش پس از تأیید', csv: (r) => r.cover_after, render: (r) => days1(r.cover_after), hint: 'با مقدار پیشنهادی' },
+    { key: 'why', label: 'دلیل', render: (r) => <span className="small">{faDigits(r.why)}</span> },
+  ]
+  return (
+    <>
+      {err && <ErrorBox error={err} />}
+      <div className="plan-bar">
+        <Tabs tabs={REMIT_CHANNELS} value={channel} onChange={setChannel} />
+        <label className="muted small"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> تأییدشده و در حال استفاده هم (بررسی حواله‌های قبلی)</label>
+        <span className="muted small">{data.live ? 'لایو · ' : ''}خوانده‌شده {faDigits((data.fetched || '').slice(11))}</span>
+        <div className="spacer" />
+        <button className="btn ghost" onClick={refresh} disabled={busy}>{busy ? 'در حال خواندن…' : 'خواندن دوباره'}</button>
+      </div>
+      {data.channels.filter((c) => c.error).map((c) => (
+        <div key={c.key} className="alert warn"><span>{c.simple ? `شعبه «${c.branch}»: کنترل موجودی کامل ممکن نبود (${c.error})؛ معیار، میانگین فروش ۳ ماه اخیر است.` : `شعبه «${c.branch}» در کارآمد: ${c.error}`}</span></div>
+      ))}
+      <div className="kpis">
+        <Kpi label={all ? 'حواله‌های باز' : 'حواله ثبت‌شده منتظر تأیید'} value={orders.length} type="int" sub={`${fmtInt(lines.length)} ردیف کالا`}
+          onClick={() => setVerdict('')} active={!verdict} />
+        {['approve', 'reduce', 'reject', 'review'].map((k) => (
+          <Kpi key={k} label={V[k]} value={cnt(k)} type="int" sub="ردیف کالا" onClick={() => setVerdict(verdict === k ? '' : k)} active={verdict === k} />
+        ))}
+      </div>
+      {!orders.length && (
+        <div className="state">{all ? 'حواله بازی برای زنجیره‌ای و اینترنتی نیست.'
+          : 'فعلاً حواله ثبت‌شده‌ای برای زنجیره‌ای و اینترنتی نیست. با ثبت حواله در راهکاران، همین‌جا (لایو) می‌آید.'}</div>
+      )}
+      {orders.map((o) => (
+        <Card key={o.oid} className="span2"
+          title={<>حواله {faDigits(o.number)} · {o.cust} <span className={`pill ${VERDICT_CLASS[o.verdict]}`}>{V[o.verdict]}</span></>}
+          subtitle={`${chLabel[o.channel] || ''} · ${faDate(o.d)} · ${o.state_label} · انبار ${o.store_name || '—'} · ${fmtInt(o.lines)} کالا، ${fmtInt(o.qty)} عدد`
+            + (o.suggested !== o.qty ? ` · پیشنهاد ${fmtInt(o.suggested)} عدد` : '') + (o.descr ? ` · ${o.descr}` : '')}>
+          <div className="remit-table">
+            <DataTable rows={(byOrder[o.oid] || []).filter((r) => !verdict || r.verdict === verdict)}
+              unit={unit} pageSize={50} dense search={false} exportName={`remittance-${o.number}`} columns={cols} />
+          </div>
+        </Card>
+      ))}
+      <p className="muted small">انبارهای حساب‌شده در موجودی (همه انبارهای همان شعبه در کارآمد): {data.channels.map((c) => `${c.label}: ${(c.stores || []).join('، ') || '—'}`).join(' · ')}</p>
+      <p className="muted small">معیار: موجودی و فروش شعبه «زنجیره ای» (برای زنجیره‌ای‌ها) و «اینترنتی» (برای فروش اینترنتی) در کارآمد. تأیید وقتی است که
+        موجودی شعبه + حواله از سطح هدف کنترل موجودی بیشتر از {fmtInt(data.settings.tolerance * 100)}٪ یا یک کارتن جلو نزند.</p>
+    </>
   )
 }
