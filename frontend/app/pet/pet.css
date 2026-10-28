@@ -1,0 +1,75 @@
+/* حیوان خانگی اپ: راه رفتن (حرکت افقی + بالا و پایین شدن)، نشستن (نفس کشیدن)، خواب (zzz)، حباب حرف و منو */
+.pet-layer{position:fixed;inset:auto 0 0 0;height:0;z-index:90;pointer-events:none;direction:rtl;font-family:Tahoma,"Segoe UI",Arial,sans-serif}
+.pet{position:absolute;bottom:8px;width:56px;margin-left:-28px;transition-property:left;transition-timing-function:linear;pointer-events:auto}
+.pet-body{position:relative;display:block;width:56px;height:56px;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.pet-emoji{display:block;font-size:44px;line-height:56px;text-align:center;filter:drop-shadow(0 4px 8px #0008);transform-origin:50% 90%;user-select:none}
+.pet-shadow{position:absolute;bottom:2px;left:50%;width:38px;height:7px;margin-left:-19px;border-radius:50%;background:#000;opacity:.35;filter:blur(2px)}
+.pet.walk .pet-body{animation:petBob .42s ease-in-out infinite}
+.pet.walk .pet-shadow{animation:petShadow .42s ease-in-out infinite}
+.pet.sit .pet-body{animation:petBreathe 3.2s ease-in-out infinite}
+.pet.sleep .pet-body{transform:scaleY(.82) translateY(5px);filter:saturate(.7) brightness(.85)}
+.pet:not(.walk) .pet-body:hover{animation:petHop .5s ease}
+@keyframes petBob{0%,100%{transform:translateY(0) rotate(-2deg)}50%{transform:translateY(-6px) rotate(2deg)}}
+@keyframes petShadow{50%{transform:scaleX(.75);opacity:.2}}
+@keyframes petBreathe{50%{transform:scale(1.04,.97)}}
+@keyframes petHop{40%{transform:translateY(-14px) rotate(-6deg)}70%{transform:translateY(0)}85%{transform:translateY(-4px)}}
+.pet-zzz{position:absolute;bottom:46px;left:34px;pointer-events:none}
+.pet-zzz i{position:absolute;font-style:normal;font-weight:bold;color:#c4b5fd;opacity:0;animation:petZ 3s ease-in infinite}
+.pet-zzz i:nth-child(2){animation-delay:1s;font-size:15px}
+.pet-zzz i:nth-child(3){animation-delay:2s;font-size:19px}
+@keyframes petZ{0%{opacity:0;transform:translate(0,0)}20%{opacity:1}100%{opacity:0;transform:translate(16px,-34px)}}
+
+/* حباب حرف زدن */
+.pet-bubble{position:absolute;bottom:66px;left:50%;transform:translateX(-50%);width:max-content;max-width:min(300px,80vw);background:#f8fafc;color:#0f172a;border-radius:16px;padding:10px 14px 10px 30px;
+  box-shadow:0 14px 34px #0009;font-size:13px;line-height:1.8;animation:petPop .4s cubic-bezier(.2,.9,.3,1.5) both}
+.pet-bubble::after{content:"";position:absolute;bottom:-7px;left:50%;margin-left:-8px;border:8px solid transparent;border-bottom:0;border-top-color:#f8fafc}
+.pet-bubble.reminder{background:#fef3c7}.pet-bubble.reminder::after{border-top-color:#fef3c7}
+.pet-bubble.alarm{background:#ffe4e6}.pet-bubble.alarm::after{border-top-color:#ffe4e6}
+.pet-bubble p{margin:0}
+.pet-x{position:absolute;top:6px;left:8px;background:none;border:0;color:#64748b;cursor:pointer;font-size:12px}
+.pet-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.pet-actions button{background:#0f172a;color:#fff;border:0;border-radius:9px;padding:4px 10px;font:inherit;font-size:12px;cursor:pointer}
+.pet-actions button:first-child{background:#15803d}
+@keyframes petPop{from{opacity:0;transform:translate(-50%,10px) scale(.8)}to{opacity:1;transform:translate(-50%,0)}}
+
+/* منو */
+.pet-menu{position:absolute;bottom:68px;left:50%;transform:translateX(-50%);width:min(320px,90vw);background:#0b1a27f5;color:#e6f2f2;border:1px solid #2a4a5c;border-radius:18px;
+  padding:12px;box-shadow:0 24px 60px #000b;backdrop-filter:blur(14px);animation:petPop .3s ease both;display:grid;gap:8px;font-size:13px}
+.pet-menu header{display:flex;align-items:center;gap:8px}
+.pet-menu header input{flex:1;background:transparent;border:0;border-bottom:1px dashed #3b5b6d;color:#fff;font:inherit;font-size:15px;font-weight:bold;padding:2px 0}
+.pet-menu header input:focus{outline:none;border-bottom-color:#5eead4}
+.pet-menu .pet-x{position:static;color:#8ea4af}
+.pet-menu h4{margin:2px 0 0;font-size:12px;color:#9fb6bf;font-weight:normal}
+.pet-list{list-style:none;margin:0;padding:0;display:grid;gap:5px;max-height:190px;overflow:auto}
+.pet-list li{display:flex;align-items:center;gap:8px;background:#102434;border-radius:10px;padding:6px 8px}
+.pet-list li.due{background:#3b2a07;box-shadow:inset -3px 0 #fbbf24}
+.pet-list li.empty{justify-content:center;color:#8ea4af}
+.pet-list li span{flex:1;line-height:1.6}
+.pet-list li small{display:block;color:#8ea4af;font-size:11px}
+.pet-check{width:24px;height:24px;border-radius:50%;border:1px solid #22c55e;background:transparent;color:#22c55e;cursor:pointer;flex:none}
+.pet-check:hover{background:#15803d;color:#fff}
+.pet-del{background:none;border:0;cursor:pointer;opacity:.6}
+.pet-del:hover{opacity:1}
+.pet-add{display:grid;grid-template-columns:1fr auto;gap:6px}
+.pet-add input,.pet-add select{background:#071420;border:1px solid #284555;border-radius:9px;padding:7px 9px;color:#fff;font:inherit;font-size:12.5px;min-width:0}
+.pet-add input[type=text],.pet-add input:not([type]){grid-column:1/-1}
+.pet-add input[type=datetime-local]{grid-column:1/-1;direction:ltr}
+.pet-add button{background:linear-gradient(135deg,#0f766e,#14b8a6);color:#fff;border:0;border-radius:9px;padding:7px 12px;font:inherit;font-size:12.5px;cursor:pointer}
+.pet-error{margin:0;color:#fecdd3;font-size:12px}
+.pet-row{display:flex;gap:6px}
+.pet-row button{flex:1;background:#1a3242;color:#dcecef;border:0;border-radius:9px;padding:7px;font:inherit;font-size:12.5px;cursor:pointer}
+.pet-row button:hover{background:#23465a}
+.pet-picker{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.pet-picker button{display:grid;justify-items:center;gap:2px;background:#102434;border:1px solid #23485a;border-radius:12px;padding:6px 2px;color:#cfe3e6;font:inherit;font-size:11px;cursor:pointer;transition:transform .15s}
+.pet-picker button:hover{transform:translateY(-2px);border-color:#5eead4}
+.pet-picker button span{font-size:26px;line-height:1.2}
+.pet-picker button.hide{opacity:.75}
+
+/* انتخاب حیوان در پنل «تم» */
+.look-pets{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.look-pets button{aspect-ratio:1;border-radius:12px;border:2px solid #2a4a5c;background:#0b1824;font-size:22px;cursor:pointer;padding:0;transition:transform .15s}
+.look-pets button:hover{transform:scale(1.1)}
+.look-pets button.on{border-color:var(--ac,#2dd4bf);box-shadow:0 0 12px var(--ac-glow,#2dd4bf55)}
+
+@media (prefers-reduced-motion:reduce){.pet,.pet-body,.pet-shadow,.pet-zzz i,.pet-bubble,.pet-menu{animation:none!important;transition:none!important}}
+@media (max-width:640px){.pet-emoji{font-size:36px}}

@@ -1,0 +1,60 @@
+/* پنل کشویی ریز چک‌های برگشتی / تعیین تکلیف نشده — همان حرکت پنل پرداخت تجاری. */
+.csd-overlay{position:fixed;inset:0;background:rgba(3,10,16,.55);opacity:0;pointer-events:none;transition:opacity .3s ease;z-index:80}
+.csd-overlay.open{opacity:1;pointer-events:auto}
+.csd-drawer{position:fixed;top:0;bottom:0;left:0;width:min(820px,94vw);background:#0c1a26;border-right:1px solid #243847;box-shadow:20px 0 60px rgba(0,0,0,.45);transform:translateX(-104%);transition:transform .38s cubic-bezier(.2,.8,.2,1);z-index:90;display:flex;flex-direction:column;gap:10px;overflow:auto;padding:16px 18px;color:#e6f2f2}
+.csd-drawer.open{transform:translateX(0)}
+.csd-drawer.returned{border-top:3px solid #b45309}
+.csd-drawer.undetermined{border-top:3px solid #64748b}
+.csd-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.csd-head small{color:#8ea4af;font-size:12px}
+.csd-head h3{margin:4px 0 0;font-size:19px}
+.csd-close{background:#1c3140;color:#cfe3e6;border:0;border-radius:10px;width:34px;height:34px;cursor:pointer;font-size:15px;transition:transform .2s ease;min-height:0}
+.csd-close:hover{transform:rotate(90deg)}
+.csd-loading,.csd-empty{color:#8ea4af;text-align:center;padding:18px}
+.csd-kpis{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px}
+.csd-kpis div{display:grid;gap:2px;background:#0f1d2a;border:1px solid #243847;border-radius:11px;padding:9px 12px;animation:csdIn .35s ease both}
+.csd-kpis div:nth-child(2){animation-delay:.05s}.csd-kpis div:nth-child(3){animation-delay:.1s}
+.csd-kpis small{display:flex;gap:6px;align-items:center;color:#8ea4af;font-size:12px}
+.csd-kpis small i{display:inline-block;width:10px;height:10px;border-radius:3px}
+.csd-kpis b{font-size:18px}
+.csd-kpis .main b{font-size:22px}
+.csd-kpis span{color:#8ea4af;font-size:11px}
+.csd-rule{margin:0;color:#8ea4af;font-size:12px;line-height:1.8}
+.csd-tabs{position:relative;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #243847}
+.csd-drawer .csd-tabs button{background:transparent;border:0;box-shadow:none;border-radius:0;min-height:0;color:#8ea4af;padding:10px;cursor:pointer;font:inherit;font-size:13px;transition:color .2s ease}
+.csd-drawer .csd-tabs button.active{color:#e6f2f2;background:transparent}
+.csd-tabs i{position:absolute;bottom:-1px;right:0;width:50%;height:3px;background:#2dd4bf;border-radius:3px;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.csd-tabs[data-tab="list"] i{transform:translateX(-100%)}
+.csd-body{display:grid;gap:14px;animation:csdIn .3s ease both}
+.csd-body h4{margin:0 0 8px;font-size:13px;color:#cbdadd}
+.csd-chips{display:flex;gap:6px;flex-wrap:wrap}
+.csd-chips span,.csd-chips button{background:#132636;border:1px solid #243847;color:#cbdadd;border-radius:999px;padding:5px 11px;font:inherit;font-size:12px;min-height:0}
+.csd-chips button{cursor:pointer;color:#8ea4af}
+.csd-chips button.active{background:#14433f;color:#7bffe9;border-color:#2dd4bf}
+.csd-chips span b{color:#e6f2f2}
+.csd-bar{display:grid;grid-template-columns:110px 1fr 120px;gap:10px;align-items:center;font-size:12px;width:100%;background:transparent;border:0;color:#e6f2f2;font:inherit;text-align:right;padding:3px 0;min-height:0}
+.csd-bar.link{grid-template-columns:minmax(0,1.3fr) 1.5fr 120px;cursor:pointer}
+.csd-bar.link:hover .csd-track i{filter:brightness(1.2)}
+.csd-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.csd-track{height:10px;background:#0b1824;border-radius:5px;overflow:hidden}
+.csd-track i{display:block;height:100%;background:#b45309;border-radius:0 4px 4px 0;animation:csdGrow .6s ease both;transform-origin:right}
+.csd-track i.alt{background:#0d9488}
+.csd-val{font-variant-numeric:tabular-nums;color:#cbdadd}
+.csd-val small{color:#8ea4af;margin-right:6px}
+.csd-page{justify-self:start;background:#14433f;color:#7bffe9;border:0;border-radius:9px;padding:8px 14px;cursor:pointer;font:inherit;font-size:13px;min-height:0}
+.csd-filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.csd-filters input{flex:1;min-width:200px;background:#0b1824;border:1px solid #2a4555;border-radius:9px;color:#e6f2f2;padding:8px 10px;font:inherit;font-size:12px}
+.csd-filters small{color:#8ea4af;font-size:12px}
+.csd-table-wrap{overflow:auto}
+.csd-table{width:100%;border-collapse:collapse;font-size:12px}
+.csd-table th{position:sticky;top:0;background:#132636;color:#8ea4af;font-weight:normal;text-align:right;padding:8px 7px;border-bottom:1px solid #243847;white-space:nowrap;cursor:pointer;user-select:none}
+.csd-table th:hover{color:#e6f2f2}
+.csd-table td{padding:8px 7px;border-bottom:1px solid #243847;vertical-align:top}
+.csd-table td small{display:block;color:#8ea4af;font-size:11px}
+.csd-table td.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+.csd-table tbody tr{animation:csdIn .3s ease both}
+.csd-table tbody tr:hover{background:#14303f}
+@keyframes csdIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes csdGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (max-width:700px){.csd-kpis{grid-template-columns:1fr}.csd-bar,.csd-bar.link{grid-template-columns:1fr 1fr 90px}}
+@media (prefers-reduced-motion:reduce){.csd-drawer,.csd-overlay,.csd-drawer *{animation:none!important;transition:none!important}}

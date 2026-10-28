@@ -1,0 +1,68 @@
+/* تم رنگی و والپیپر هر کاربر (theme.ts). آخر از همه بارگذاری می‌شود تا روی استایل‌های قدیمی بنشیند.
+   رنگ‌های معنایی (قرمز/کهربایی هشدار) عوض نمی‌شوند؛ فقط رنگ تأکید (accent) و پس‌زمینه. */
+:root{--ac:#2dd4bf;--ac2:#0f766e;--ac-soft:#2dd4bf22;--ac-glow:#2dd4bf55;--ac-text:#7bffe9}
+:root[data-theme="ocean"]{--ac:#38bdf8;--ac2:#1d4ed8;--ac-soft:#38bdf822;--ac-glow:#38bdf855;--ac-text:#bae6fd}
+:root[data-theme="violet"]{--ac:#a78bfa;--ac2:#6d28d9;--ac-soft:#a78bfa22;--ac-glow:#a78bfa55;--ac-text:#ddd6fe}
+:root[data-theme="rose"]{--ac:#fb7185;--ac2:#be185d;--ac-soft:#fb718522;--ac-glow:#fb718555;--ac-text:#fecdd3}
+:root[data-theme="sunset"]{--ac:#fbbf24;--ac2:#ea580c;--ac-soft:#fbbf2422;--ac-glow:#fbbf2455;--ac-text:#fde68a}
+:root[data-theme="emerald"]{--ac:#4ade80;--ac2:#15803d;--ac-soft:#4ade8022;--ac-glow:#4ade8055;--ac-text:#bbf7d0}
+:root[data-theme="rainbow"]{--ac:#f472b6;--ac2:#6366f1;--ac-soft:#f472b622;--ac-glow:#a78bfa55;--ac-text:#fbcfe8}
+
+/* متغیرهای رنگ تأکید استایل‌های قدیمی */
+:root[data-theme]{--cc-teal:var(--ac);--v137-teal:var(--ac);--teal:var(--ac)}
+
+html[data-theme] .fd-brand>i{background:linear-gradient(145deg,var(--ac),var(--ac2))!important;box-shadow:0 0 0 5px var(--ac-soft),0 0 28px var(--ac-glow)!important;color:#06121c!important}
+html[data-theme] .fd nav button.active{color:#fff!important;background:linear-gradient(90deg,var(--ac-soft),transparent)!important;border-color:var(--ac-glow)!important;box-shadow:inset -3px 0 var(--ac)!important}
+html[data-theme] .fd nav button.active i{color:var(--ac)!important}
+html[data-theme] .fd-content>header small,html[data-theme] .xo-head small{color:var(--ac)!important}
+html[data-theme] .fd-health>i{background:var(--ac)!important;box-shadow:0 0 10px var(--ac)!important}
+html[data-theme] .run,html[data-theme] .fd-content>header .run{background:linear-gradient(135deg,var(--ac2),var(--ac))!important;box-shadow:0 10px 24px var(--ac-soft)!important}
+html[data-theme] .xo-num,html[data-theme] .xo-jump a:hover{background:var(--ac-soft)!important;color:var(--ac-text)!important}
+html[data-theme] .xo-stat:hover,html[data-theme] .xo-tile:hover{border-color:var(--ac-glow)!important}
+html[data-theme] .xo-block-title h3{background:linear-gradient(90deg,var(--ac-text),#fff);-webkit-background-clip:text;background-clip:text;color:transparent}
+html[data-theme] .cb-fab{border-color:var(--ac)!important;background:linear-gradient(135deg,var(--ac2),#0b1b29)!important;box-shadow:0 10px 30px var(--ac-glow)!important}
+html[data-theme] .cb-msg.user .cb-bubble{background:linear-gradient(135deg,var(--ac2),var(--ac))!important}
+html[data-theme="rainbow"] .fd-brand>i,html[data-theme="rainbow"] .run{background:linear-gradient(120deg,#f472b6,#fbbf24,#4ade80,#38bdf8,#a78bfa,#f472b6)!important;background-size:300% 300%!important;animation:lookRainbow 8s linear infinite}
+html[data-theme="rainbow"] .fd nav button.active{box-shadow:inset -3px 0 #f472b6,0 0 18px #a78bfa33!important}
+@keyframes lookRainbow{to{background-position:300% 0}}
+*{scrollbar-color:var(--ac-glow) transparent}
+
+/* والپیپرها: پس‌زمینه کل اپ؛ وقتی والپیپر دارد، کارت‌ها نیمه‌شیشه‌ای می‌شوند تا والپیپر دیده شود. */
+html[data-wallpaper="aurora"] .fd.enterprise{background:linear-gradient(125deg,#042f2e,#0b3b5e 35%,#3b0764 70%,#042f2e)!important;background-size:300% 300%!important;animation:lookDrift 26s ease-in-out infinite alternate}
+html[data-wallpaper="nebula"] .fd.enterprise{background:radial-gradient(circle at 18% 22%,#7c3aed66,transparent 34%),radial-gradient(circle at 78% 30%,#db277755,transparent 32%),radial-gradient(circle at 55% 85%,#0ea5e955,transparent 36%),radial-gradient(#ffffff40 1px,transparent 1.2px) 0 0/90px 90px,radial-gradient(#ffffff26 1px,transparent 1.2px) 45px 45px/120px 120px,#0b0820!important}
+html[data-wallpaper="ocean"] .fd.enterprise{background:radial-gradient(ellipse at 50% -10%,#38bdf855,transparent 55%),linear-gradient(180deg,#0c4a6e,#082f49 45%,#020617)!important}
+html[data-wallpaper="sunset"] .fd.enterprise{background:radial-gradient(circle at 80% 8%,#fbbf2466,transparent 28%),linear-gradient(165deg,#7c2d12,#9d174d 42%,#1e1b4b 80%)!important}
+html[data-wallpaper="forest"] .fd.enterprise{background:radial-gradient(circle at 20% 0,#4ade8040,transparent 40%),linear-gradient(165deg,#14532d,#052e16 55%,#020d08)!important}
+html[data-wallpaper="grid"] .fd.enterprise{background:linear-gradient(#1e3a5f66 1px,transparent 1px) 0 0/34px 34px,linear-gradient(90deg,#1e3a5f66 1px,transparent 1px) 0 0/34px 34px,radial-gradient(circle at 70% 10%,var(--ac-soft),transparent 40%),#071422!important}
+html[data-wallpaper="dots"] .fd.enterprise{background:radial-gradient(var(--ac-glow) 1.3px,transparent 1.5px) 0 0/22px 22px,radial-gradient(circle at 20% 90%,var(--ac-soft),transparent 40%),#07131f!important}
+@keyframes lookDrift{from{background-position:0 0}to{background-position:100% 100%}}
+
+html:not([data-wallpaper="none"]) .fd.enterprise:before,html:not([data-wallpaper="none"]) .fd.enterprise:after{opacity:.2}
+html[data-wallpaper]:not([data-wallpaper="none"]) .fd.enterprise aside{background:linear-gradient(180deg,#07121fcc,#050c16dd)!important;backdrop-filter:blur(18px)}
+html[data-wallpaper]:not([data-wallpaper="none"]) .xo-block,
+html[data-wallpaper]:not([data-wallpaper="none"]) .cf-section,
+html[data-wallpaper]:not([data-wallpaper="none"]) .fd.enterprise .fd-panel,
+html[data-wallpaper]:not([data-wallpaper="none"]) .fd-content>header{background:#0b1724bf!important;backdrop-filter:blur(14px) saturate(1.2)}
+
+@media (prefers-reduced-motion:reduce){html[data-wallpaper] .fd.enterprise,html[data-theme="rainbow"] .run{animation:none!important}}
+
+/* سربرگ: پنل تم و فهرست الارم‌ها نباید زیر لبه سربرگ بریده شوند (سربرگ قدیمی overflow:hidden داشت). */
+html .fd-content>header{overflow:visible!important;z-index:20}
+html .fd-content>header:after{display:none!important}
+
+/* ------------------------------------------------------------------ دکمه و پنل انتخاب تم */
+.look-btn{display:inline-flex;align-items:center;gap:7px;background:#0f2130;border:1px solid #28485a;color:#dcecef;border-radius:12px;padding:9px 13px;font:inherit;font-size:13px;cursor:pointer;transition:transform .2s,border-color .2s}
+.look-btn:hover{transform:translateY(-1px);border-color:var(--ac)}
+.look-btn i{width:18px;height:18px;border-radius:50%;background:conic-gradient(#f472b6,#fbbf24,#4ade80,#38bdf8,#a78bfa,#f472b6);box-shadow:0 0 10px var(--ac-glow)}
+.look-pop{position:absolute;top:calc(100% + 10px);left:0;z-index:120;width:min(360px,calc(100vw - 32px));background:#0b1a27f2;border:1px solid #2a4a5c;border-radius:16px;padding:14px;box-shadow:0 24px 60px #000a;backdrop-filter:blur(16px);animation:lookPop .22s cubic-bezier(.2,.9,.3,1.3) both;color:#e6f2f2}
+.look-pop h4{margin:2px 0 8px;font-size:13px;color:#9fb6bf;font-weight:normal}
+.look-swatches{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:14px}
+.look-swatches button{aspect-ratio:1;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;transition:transform .2s}
+.look-swatches button:hover{transform:scale(1.12)}
+.look-swatches button.on{border-color:#fff;box-shadow:0 0 0 3px var(--ac-glow)}
+.look-walls{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.look-walls button{display:grid;gap:4px;background:none;border:0;color:#cfe0e4;font:inherit;font-size:11px;cursor:pointer;padding:0}
+.look-walls button span{display:block;height:46px;border-radius:10px;border:2px solid #2a4a5c;transition:transform .2s,border-color .2s}
+.look-walls button:hover span{transform:translateY(-2px)}
+.look-walls button.on span{border-color:var(--ac);box-shadow:0 0 14px var(--ac-glow)}
+@keyframes lookPop{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:none}}

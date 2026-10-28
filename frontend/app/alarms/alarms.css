@@ -1,0 +1,119 @@
+/* الارم‌ها: کارت با ورود پله‌ای، درخشش سطح اهمیت، زنگوله لرزان، اعلان کشویی و نوار بالای صفحه. */
+.al-card,.al-toast,.al-strip,.al-kpi{--lv:#38bdf8;--lv-soft:#38bdf81f}
+.critical{--lv:#fb7185;--lv-soft:#fb71851f}
+.high{--lv:#fb923c;--lv-soft:#fb923c1f}
+.medium{--lv:#fbbf24;--lv-soft:#fbbf241a}
+.info{--lv:#38bdf8;--lv-soft:#38bdf81a}
+
+.al-card{position:relative;overflow:hidden;display:grid;gap:7px;padding:11px 13px 10px;border-radius:14px;color:#e6f2f2;font-size:12.5px;
+  background:linear-gradient(150deg,var(--lv-soft),#0e1c29 55%);border:1px solid color-mix(in srgb,var(--lv) 35%,#1e3443);
+  animation:alIn .5s cubic-bezier(.2,.9,.3,1.25) both;transition:transform .25s,box-shadow .25s,border-color .25s}
+.al-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px #0007,0 0 0 1px color-mix(in srgb,var(--lv) 50%,transparent);border-color:var(--lv)}
+.al-card::before{content:"";position:absolute;inset-block:0;right:0;width:3px;background:linear-gradient(var(--lv),transparent)}
+.al-card.seen{opacity:.78}
+.al-glow{position:absolute;width:140px;height:140px;left:-50px;top:-60px;border-radius:50%;background:var(--lv);opacity:.12;filter:blur(30px);pointer-events:none;animation:alBreath 4s ease-in-out infinite}
+.al-card.critical .al-glow{opacity:.22;animation-duration:2.2s}
+.al-card header{display:flex;align-items:flex-start;gap:8px;position:relative}
+.al-card header b{font-size:13px;line-height:1.7}
+.al-badge{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:11px;border-radius:999px;padding:2px 9px;background:var(--lv-soft);color:var(--lv);border:1px solid color-mix(in srgb,var(--lv) 40%,transparent);white-space:nowrap}
+.al-badge i{font-style:normal}
+.al-card.critical .al-badge i{animation:alBlink 1.2s ease-in-out infinite}
+.al-card ul{margin:0;padding-inline-start:16px;color:#c6d7db;line-height:1.85;position:relative}
+.al-evidence{display:flex;flex-wrap:wrap;gap:6px;position:relative}
+.al-evidence span{background:#0a1520;border:1px solid #213847;border-radius:8px;padding:2px 8px;color:#9fb4bd;font-size:11.5px}
+.al-evidence b{color:#eaf6f6}
+.al-action{margin:0;color:var(--lv);font-size:12.5px;line-height:1.8;position:relative}
+.al-card footer{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;position:relative}
+.al-card footer small{color:#8ea4af;font-size:11px}
+.al-card footer span{display:flex;gap:6px}
+.al-card footer button,.al-toast button{background:#1a3242;border:0;color:#d7e8eb;border-radius:8px;padding:4px 10px;font:inherit;font-size:11.5px;cursor:pointer;transition:background .2s}
+.al-card footer button:hover,.al-toast button:hover{background:color-mix(in srgb,var(--lv) 35%,#1a3242)}
+.al-card footer button.ghost,.al-toast button.ghost{background:transparent;color:#8ea4af}
+@keyframes alIn{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes alBreath{50%{transform:scale(1.35);opacity:.2}}
+@keyframes alBlink{50%{opacity:.25}}
+
+/* زنگوله */
+.al-bell-box{position:relative}
+.al-bell{position:relative;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:#0f2130;border:1px solid #28485a;color:#dcecef;cursor:pointer;transition:transform .2s,border-color .2s}
+.al-bell:hover{border-color:var(--ac,#2dd4bf);transform:translateY(-1px)}
+.al-bell.ring svg{animation:alRing 2.6s ease-in-out infinite;transform-origin:50% 8%}
+.al-bell.urgent{border-color:#fb718588;box-shadow:0 0 0 0 #fb718566;animation:alHalo 2s ease-out infinite}
+.al-bell em{position:absolute;top:-6px;left:-6px;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:linear-gradient(135deg,#fb7185,#e11d48);color:#fff;font-style:normal;font-size:11px;display:grid;place-items:center;box-shadow:0 4px 12px #e11d4866;animation:alPop .45s cubic-bezier(.2,.9,.3,1.6) both}
+@keyframes alRing{0%,60%,100%{transform:rotate(0)}5%,15%,25%{transform:rotate(14deg)}10%,20%,30%{transform:rotate(-14deg)}35%{transform:rotate(0)}}
+@keyframes alHalo{0%{box-shadow:0 0 0 0 #fb718566}100%{box-shadow:0 0 0 14px #fb718500}}
+@keyframes alPop{from{transform:scale(0)}to{transform:scale(1)}}
+.al-drop{position:absolute;top:calc(100% + 10px);left:0;z-index:130;width:min(400px,calc(100vw - 32px));max-height:min(70vh,560px);display:grid;grid-template-rows:auto 1fr auto;
+  background:#0a1824f5;border:1px solid #2a4a5c;border-radius:18px;box-shadow:0 26px 70px #000b;backdrop-filter:blur(16px);animation:alDrop .28s cubic-bezier(.2,.9,.3,1.25) both;overflow:hidden;color:#e6f2f2}
+.al-drop>header{padding:12px 14px;border-bottom:1px solid #1f3646;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.al-drop>header small{color:#8ea4af;font-size:11.5px}
+.al-drop-list{overflow:auto;padding:10px;display:grid;gap:8px;align-content:start}
+@keyframes alDrop{from{opacity:0;transform:translateY(-10px) scale(.96)}to{opacity:1;transform:none}}
+.al-all{background:none;border:0;border-top:1px solid #1f3646;color:var(--ac,#2dd4bf);padding:10px;font:inherit;font-size:12.5px;cursor:pointer;width:100%}
+.al-empty{display:grid;justify-items:center;gap:6px;color:#8ea4af;padding:22px 12px;text-align:center;font-size:13px}
+.al-empty span{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#052e2b;color:#5eead4;font-size:18px;animation:alPop .5s ease both}
+.al-empty.small{padding:12px;font-size:12px}
+.al-empty.small span{width:28px;height:28px;font-size:14px}
+.al-empty.big{padding:50px 12px}
+
+/* اعلان کشویی */
+.al-toasts{position:fixed;top:18px;left:18px;z-index:200;display:grid;gap:10px;width:min(380px,calc(100vw - 32px));direction:rtl;pointer-events:none}
+.al-toast{pointer-events:auto;position:relative;overflow:hidden;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:12px 14px 14px;border-radius:16px;color:#eef8f8;font-family:Tahoma,Arial,sans-serif;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--lv) 22%,#0b1a27),#0b1a27f2);border:1px solid color-mix(in srgb,var(--lv) 55%,transparent);
+  box-shadow:0 18px 44px #000a,0 0 30px var(--lv-soft);backdrop-filter:blur(14px);animation:alToastIn .6s cubic-bezier(.2,.9,.3,1.35) both}
+.al-toast-icon{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:var(--lv);color:#0b1a27;font-weight:bold;font-size:17px;animation:alWiggle 1.4s ease .5s 2}
+.al-toast small{display:block;color:var(--lv);font-size:11px;margin-bottom:3px}
+.al-toast b{font-size:13px;line-height:1.7}
+.al-toast-actions{display:flex;gap:4px}
+.al-toast-bar{position:absolute;bottom:0;right:0;height:3px;width:100%;background:var(--lv);transform-origin:right;animation:alBar 8s linear forwards}
+@keyframes alToastIn{from{opacity:0;transform:translateX(-120%) rotate(-3deg)}to{opacity:1;transform:none}}
+@keyframes alWiggle{0%,100%{transform:rotate(0)}25%{transform:rotate(-12deg)}75%{transform:rotate(12deg)}}
+@keyframes alBar{to{transform:scaleX(0)}}
+
+/* نوار الارم بالای صفحه هر ماژول */
+.al-strip{margin-bottom:16px;border-radius:16px;border:1px solid color-mix(in srgb,var(--lv) 45%,#1e3443);background:linear-gradient(100deg,var(--lv-soft),#0d1b28 60%);overflow:hidden;animation:alIn .5s ease both;color:#e6f2f2}
+.al-strip-head{width:100%;display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:none;border:0;color:inherit;font:inherit;padding:12px 16px;cursor:pointer;text-align:right}
+.al-pulse{position:relative;width:12px;height:12px;border-radius:50%;background:var(--lv);flex:none}
+.al-pulse::after{content:"";position:absolute;inset:0;border-radius:50%;background:var(--lv);animation:alPing 1.8s cubic-bezier(0,0,.2,1) infinite}
+@keyframes alPing{75%,100%{transform:scale(2.6);opacity:0}}
+.al-strip-head b{font-size:14px}
+.al-strip-top{color:#c6d7db;font-size:13px;flex:1;min-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.al-strip-counts{display:flex;gap:6px}
+.al-strip-counts i{font-style:normal;font-size:11px;border-radius:999px;padding:2px 9px;background:var(--lv-soft);color:var(--lv)}
+.al-chev{color:#8ea4af;font-size:11px}
+.al-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;padding:0 14px 14px}
+.al-center .al-grid{padding:0}
+
+/* کنار بلوک‌های خلاصه مدیریتی */
+.al-side{display:grid;gap:8px;align-content:start}
+.al-side-head{display:flex;align-items:center;gap:8px;font-size:13px;color:#dcecef}
+.al-side-head small{margin-right:auto;background:#132636;border-radius:999px;padding:1px 9px;color:#9fb4bd}
+.al-dot{width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px #22c55e}
+.al-dot.warm{background:#fbbf24;box-shadow:0 0 10px #fbbf24}
+.al-dot.hot{background:#fb7185;box-shadow:0 0 10px #fb7185;animation:alBlink 1.4s ease-in-out infinite}
+
+/* مرکز الارم‌ها */
+.al-center{display:grid;gap:14px;color:#e6f2f2}
+.al-center-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.al-center-head h2{margin:0 0 6px;font-size:20px}
+.al-center-head p{margin:0;color:#8ea4af;font-size:13px;line-height:1.9;max-width:760px}
+.al-refresh{background:#0f2130;border:1px solid #28485a;color:#dcecef;border-radius:11px;padding:9px 14px;font:inherit;cursor:pointer}
+.al-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.al-kpi{display:grid;gap:4px;text-align:right;padding:14px 16px;border-radius:14px;cursor:pointer;color:#e6f2f2;font:inherit;background:linear-gradient(140deg,var(--lv-soft),#0e1c29);border:1px solid color-mix(in srgb,var(--lv) 30%,#1e3443);transition:transform .2s,box-shadow .2s;animation:alIn .45s ease both}
+.al-kpi:hover,.al-kpi.on{transform:translateY(-2px);box-shadow:0 0 0 2px var(--lv)}
+.al-kpi small{color:var(--lv);font-size:12px}
+.al-kpi b{font-size:26px}
+.al-filter{display:flex;flex-wrap:wrap;gap:8px}
+.al-filter button{background:#0f2130;border:1px solid #28485a;color:#b8cbd1;border-radius:999px;padding:6px 14px;font:inherit;font-size:12.5px;cursor:pointer}
+.al-filter button.on{background:linear-gradient(135deg,var(--ac2,#0f766e),var(--ac,#2dd4bf));color:#fff;border-color:transparent}
+@media (max-width:700px){.al-kpis{grid-template-columns:repeat(2,1fr)}.al-grid{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.al-card,.al-toast,.al-strip,.al-glow,.al-bell svg,.al-bell.urgent,.al-pulse::after,.al-toast-bar{animation:none!important}}
+
+/* وضعیت شخصی الارم */
+.al-card.done{opacity:.7}
+.al-card.done::before{background:linear-gradient(#22c55e,transparent)}
+.al-card footer button.ok{background:#14532d;color:#bbf7d0}
+.al-card footer button.ok:hover{background:#15803d}
+.al-my{font-style:normal;font-size:11px;color:#86efac;align-self:center}
+.al-bell em.quiet{background:#334155;box-shadow:none}
+.al-tabs button{font-weight:bold}
