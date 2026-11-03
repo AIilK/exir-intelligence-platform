@@ -541,9 +541,21 @@ def report_people(req: Request):
     # پرفروش‌ترین کالاهای هر ویزیتور (برای شیت ریز SKU)
     sku = (sale.groupby(["seller_key", "product_code", "product"], observed=True)[["qty", "net"]].sum().reset_index()
            .sort_values(["seller_key", "net"], ascending=[True, False]).groupby("seller_key").head(40))
+    # فهرست ویزیتورهای هر سرپرست در ۳ ماه منتهی به پایان بازه (آخرین سرپرست و شعبه هر ویزیتور)، تا ویزیتور بدون فروش
+    # در همین بازه هم در اکسل سرپرست بیاید
+    end = f.get("date_to") or STATE["data"]["meta"].get("today") or ""
+    y, m = (int(end[:4]), int(end[5:7])) if len(end) >= 7 else (0, 0)
+    y0, m0 = (y, m - 2) if m > 2 else (y - 1, m + 10)
+    since = f"{y0}/{m0:02d}/01"
+    allx = STATE["data"]["sales"]
+    recent = allx[(allx["date"] >= since) & (allx["date"] <= end)].sort_values("date")
+    roster = recent.groupby("seller_key", observed=True).agg(label=("seller", "last"), supervisor=("supervisor", "last"),
+                                                            branch=("branch", "last"), seller_code=("seller_code", "last"),
+                                                            last_date=("date", "max")).reset_index().rename(columns={"seller_key": "key"})
     return {"date_from": f.get("date_from"), "date_to": f.get("date_to"), "ach_month": ach_month, "kpis": A.kpis(tx, rq, c, f),
             "sellers": pick(sellers), "supervisors": pick(sups), "branches": pick(branches),
-            "seller_products": A.records(sku.rename(columns={"seller_key": "key"}))}
+            "seller_products": A.records(sku.rename(columns={"seller_key": "key"})),
+            "roster_since": since, "roster": A.records(roster)}
 
 
 @app.get("/api/inactive")

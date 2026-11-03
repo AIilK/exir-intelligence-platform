@@ -131,12 +131,14 @@ def warm_up() -> None:
         import jdatetime
 
         from app.services import pnl_live_service, process_health_service
+        from app.services.karamad_sales_network_service import KaramadSalesNetworkService
         from app.services.liquidity.issued_cheques import IssuedChequeService
         from app.services.liquidity.received_cheques import ReceivedChequeService
 
         t = jdatetime.date.today()
         steps = [lambda: ReceivedChequeService().report(horizon_days=30), lambda: IssuedChequeService().report(horizon_days=30),
-                 lambda: overview(t.year, t.month), lambda: process_health_service.load()]
+                 lambda: overview(t.year, t.month), lambda: process_health_service.load(),
+                 lambda: KaramadSalesNetworkService().visitor_finance()]  # جدول ویزیتورهای گزارش‌ساز اکسل
         steps += [lambda k=k: pnl_live_service.load(k) for k in ("b2b", "hybrid", "export")]
         for step in steps:
             try:

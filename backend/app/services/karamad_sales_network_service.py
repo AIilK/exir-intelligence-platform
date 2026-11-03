@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from typing import Any
@@ -196,7 +197,8 @@ def _visitor_debts(invoices, returned, positions: dict[int, dict[str, Any]]) -> 
     result: dict[int, dict[str, Any]] = {}
 
     def slot(visitor_id: int) -> dict[str, Any]:
-        return result.setdefault(visitor_id, {"receivable": 0.0, "credit": 0.0, "debtors": set(), "customers": set()})
+        return result.setdefault(visitor_id, {"receivable": 0.0, "credit": 0.0, "debtors": set(), "customers": set(),
+                                              "by_customer": defaultdict(float)})
 
     for dl, rows in by_invoice.items():
         for visitor_id, _, _ in rows:
@@ -210,6 +212,7 @@ def _visitor_debts(invoices, returned, positions: dict[int, dict[str, Any]]) -> 
             if s["visitor_id"] is not None:
                 slot(s["visitor_id"])["receivable"] += s["amount"]
                 slot(s["visitor_id"])["debtors"].add(dl)
+                slot(s["visitor_id"])["by_customer"][dl] += s["amount"]
 
     return {
         visitor_id: {
@@ -217,6 +220,8 @@ def _visitor_debts(invoices, returned, positions: dict[int, dict[str, Any]]) -> 
             "customer_credit_rial": _num(s["credit"]),
             "debtor_customer_count": len(s["debtors"]),
             "customer_count": len(s["customers"]),
+            "debtors_detail": sorted(({"dl_ref": dl, "amount_rial": _num(a)} for dl, a in s["by_customer"].items() if a > 0),
+                                     key=lambda x: -x["amount_rial"]),
         }
         for visitor_id, s in result.items()
     }
@@ -679,6 +684,32 @@ class KaramadSalesNetworkService:
                 """
             ), {"returned_from": returned_from_date()}).mappings()}
 
+            cheques: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            for r in connection.execute(text(
+                f"""
+                SELECT fx.[VisitorRef], d.[DLRef], dl.[Code] AS DLCode, dl.[Name] AS DLName, d.[Serial], d.[Price], d.[DueDate],
+                       st.[Name] AS StatusName
+                FROM dbo.[tblChequeD] d INNER JOIN dbo.[tblFactorF] fx ON fx.[ID] = d.[FactorRef]
+                INNER JOIN dbo.[tblVisitor] v ON v.[ID] = fx.[VisitorRef]
+                LEFT JOIN dbo.[tblDL] dl ON dl.[ID] = d.[DLRef]
+                LEFT JOIN dbo.[tblChequeDStatus] st ON st.[Code] = d.[StatusRef]
+                WHERE d.[StatusRef] IN ({statuses}) AND d.[DueDate] >= :returned_from
+                  AND v.[BranchRef] IN ({ids}) AND {not_guarantee_cheque("d")}
+                ORDER BY d.[DueDate] DESC
+                """
+            ), {"returned_from": returned_from_date()}).mappings():
+                cheques[int(r["VisitorRef"])].append({
+                    "customer_code": _text(r["DLCode"]), "customer_name": _text(r["DLName"]), "serial": _text(r["Serial"]),
+                    "amount_rial": _num(r["Price"]), "due_date_jalali": format_jalali_date(r["DueDate"]),
+                    "status": _text(r["StatusName"])})
+            # نام و کد مشتریان بدهکار
+            refs = sorted({d["dl_ref"] for x in debts.values() for d in x.get("debtors_detail", [])})
+            names: dict[int, tuple[str, str]] = {}
+            for i in range(0, len(refs), 2000):
+                chunk = ",".join(str(int(x)) for x in refs[i:i + 2000])
+                for r in connection.execute(text(f"SELECT [ID], [Code], [Name] FROM dbo.[tblDL] WHERE [ID] IN ({chunk})")).mappings():
+                    names[int(r["ID"])] = (_text(r["Code"]), _text(r["Name"]))
+
         rows = []
         for v in visitors:
             vid = int(v["ID"])
@@ -694,6 +725,9 @@ class KaramadSalesNetworkService:
                 "debtor_customer_count": debt["debtor_customer_count"],
                 "returned_cheque_count": int(ret.get("n") or 0),
                 "returned_cheque_rial": _num(ret.get("amount")),
+                "debtors": [{"customer_code": names.get(d["dl_ref"], ("", ""))[0], "customer_name": names.get(d["dl_ref"], ("", ""))[1],
+                             "amount_rial": d["amount_rial"]} for d in debt.get("debtors_detail", [])],
+                "returned_cheques": cheques.get(vid, []),
             })
         return {"status": "success", "visitors": rows,
                 "returned_from_jalali": format_jalali_date(returned_from_date())}

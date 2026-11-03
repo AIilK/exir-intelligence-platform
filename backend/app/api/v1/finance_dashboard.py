@@ -1048,12 +1048,13 @@ def excel_report_options(date_from: str | None = None, date_to: str | None = Non
 
 @router.get("/excel-reports/{kind}.xlsx", summary="گزارش‌ساز اکسل: کارپوشه چندبرگه ویزیتورها، سرپرست‌ها یا هیبریدها")
 def excel_report(kind: str, date_from: str | None = None, date_to: str | None = None,
-                 name: str | None = None, city: str | None = None, branch: str | None = None):
+                 city: str | None = None, supervisor: str | None = None, visitor: str | None = None, branch: str | None = None):
     from urllib.parse import quote
     from app.services import excel_reports_service
 
     try:
-        content, fname = excel_reports_service.build(kind, date_from, date_to, name or None, city or None, branch or None)
+        content, fname = excel_reports_service.build(kind, date_from, date_to, city or None, supervisor or None,
+                                                     visitor or None, branch or None)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="نوع گزارش نامعتبر است.") from exc
     except ValueError as exc:
