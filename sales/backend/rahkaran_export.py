@@ -144,11 +144,14 @@ def _to_usd(df: pd.DataFrame) -> None:
     ok = usd & df["rate"].gt(1)
     rates = df.loc[ok, "rate"].groupby(ym[ok]).mean()
     if rates.empty:
+        df["rial_rate"] = df["rate"].where(df["rate"] > 0, 1.0)
         return
     rates = rates.reindex(sorted(set(ym) | set(rates.index))).ffill().bfill()
     factor = (df["rate"].where(df["rate"] > 0, 1.0) / ym.map(rates)).where(~usd, 1.0)
     for k in ("gross", "net"):
         df[k] = df[k] * factor
+    # دلار ← ریال برای جمع با فروش ریالی (نمای مدیر): سند دلاری با نرخ خودش، بقیه با همان میانگین ماه که به دلار رفته‌اند
+    df["rial_rate"] = df["rate"].where(ok, ym.map(rates))
 
 
 # ---------------------------------------------------------------- محاسبه
@@ -313,3 +316,17 @@ def parse_filters(qp) -> dict:
             "months": [m for m in qp.getlist("month") if re.fullmatch(r"\d{2}", m)],
             "brand": qp.getlist("brand"), "cat": qp.getlist("cat"), "country": qp.getlist("country"),
             "customer": qp.getlist("customer"), "product": qp.getlist("product")}
+
+
+def month_rial(snap: dict, month: str) -> dict:
+    """فروش صادراتی یک ماه (YYYY/MM) به دلار و ریال، با تفکیک کشور و مشتری؛ برای جمع با فروش ریالی در نمای مدیر."""
+    d = snap["lines"]
+    d = d[d["date"].str[:7].eq(month)]
+    rial = d["net"] * d["rial_rate"]
+
+    def by(col: str, limit: int = 12) -> list[dict]:
+        g = pd.DataFrame({"key": d[col].fillna(RS.OTHER), "usd": d["net"], "rial": rial}).groupby("key")[["usd", "rial"]].sum()
+        g = g[g["rial"] != 0].sort_values("rial", ascending=False).head(limit)
+        return [{"key": str(k), "net_usd": float(r.usd), "net_rial": float(r.rial)} for k, r in g.iterrows()]
+    return {"month": month, "net_usd": float(d["net"].sum()), "net_rial": float(rial.sum()),
+            "countries": by("country"), "customers": by("short"), "today": snap["today"]}

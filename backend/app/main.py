@@ -31,6 +31,8 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=cheque_registration_index, daemon=True).start()
     from app.chatbot.search import warm_up as chatbot_warm_up
     chatbot_warm_up()  # نمایه جستجوی چت‌بات و پرتفوی مشتریان از همان اول آماده باشد
+    from app.services.manager_combined_service import warm_up as manager_warm_up
+    manager_warm_up()  # داده سنگین نمای مدیر (چک‌ها، P&L، روندها) از همان اول ساخته شود
     yield
     stop_customer_scheduler()
 

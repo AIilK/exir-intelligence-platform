@@ -986,3 +986,53 @@ def collection_priorities(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"محاسبه اولویت وصول با خطا مواجه شد: {exc}",
         ) from exc
+
+
+# ---------------------------------------------------------------- سود و زیان (P&L): لایو از SQL یا فایل‌های اکسل مالی
+@router.get("/pnl", summary="سود و زیان: دوره‌های گزارش لایو و فایل‌های اکسل پوشه مشترک")
+def pnl_overview():
+    from app.services import pnl_live_service, pnl_service
+
+    out: dict = {}
+    try:
+        out.update(pnl_service.overview())
+    except Exception as exc:  # پوشه مشترک در دسترس نیست؛ گزارش لایو همچنان کار می‌کند
+        out["sources_error"] = f"پوشه فایل‌های P&L در دسترس نیست: {exc}"
+    try:
+        out["periods"] = pnl_live_service.periods()
+    except Exception as exc:
+        out["periods"], out["periods_error"] = [], f"دوره‌های گزارش ساخته نشد: {exc}"
+    return out
+
+
+@router.get("/pnl/{key}", summary="سود و زیان یک کانال (hybrid / b2b / export)؛ source=live از SQL یا excel از فایل")
+def pnl_channel(key: str, source: str = Query(default="live", pattern="^(live|excel)$"),
+                period: str | None = Query(default=None, description="مثلاً 1405-Q2 یا 1405"),
+                rebuild: bool = Query(default=False, description="دوباره خواندن از منبع")):
+    from app.services import pnl_live_service, pnl_service
+
+    try:
+        if source == "live":
+            return pnl_live_service.load(key, period, refresh=rebuild)
+        return pnl_service.load(key, rebuild=rebuild)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"کانال یا دوره نامعتبر است: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت گزارش سود و زیان با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/process-health", summary="فرصت‌های بهبود روندها برای نمای مدیر (فقط ۹۰ روز اخیر و فقط موارد قطعی از SQL)")
+def process_health(refresh: bool = Query(default=False, description="دوباره ساختن گزارش")):
+    from app.services import process_health_service
+
+    try:
+        return process_health_service.load(refresh=refresh)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"بررسی روندها با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/manager-combined", summary="سهم راهکاران در شاخص‌های نمای مدیر (فروش ماه و مطالبات) برای جمع با کارآمد")
+def manager_combined(year: int, month: int = Query(ge=1, le=12)):
+    from app.services import manager_combined_service
+
+    return manager_combined_service.overview(year, month)

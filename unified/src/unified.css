@@ -42,11 +42,27 @@ button { font-family: inherit; }
 .u-nav { display: flex; flex-direction: column; gap: 1px; }
 .u-nav-head { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #6f8a96; padding: 2px 12px 4px; background: none; border: 0; text-align: right; }
 .u-nav-head > span { width: 7px; height: 7px; border-radius: 50%; }
-button.u-nav-head { cursor: pointer; min-height: 30px; }
-button.u-nav-head em { margin-right: auto; font-style: normal; }
+button.u-nav-head { cursor: pointer; min-height: 34px; border-radius: 9px; padding: 6px 12px; transition: background .2s, color .2s; }
+button.u-nav-head:hover { background: #0e2232; color: var(--u-text-2); }
+.u-nav.open > button.u-nav-head { color: var(--u-text); font-weight: 600; }
+.u-nav-head > span { transition: transform .3s, box-shadow .3s; }
+.u-nav.open > .u-nav-head > span { transform: scale(1.35); box-shadow: 0 0 0 4px #ffffff10; }
+.u-nav-count { margin-right: auto; font-weight: 500; font-size: 10.5px; color: #6f8a96; background: #0f2433; border-radius: 99px; padding: 1px 7px; }
+button.u-nav-head em { font-style: normal; transition: transform .3s cubic-bezier(.3, 1.4, .5, 1); }
+.u-nav.open > button.u-nav-head em { transform: rotate(180deg); }
+/* سرفصل‌های آکاردئونی: بدنه با grid-rows از ۰ تا ارتفاع واقعی باز می‌شود و ردیف‌ها پشت سر هم وارد می‌شوند */
+.u-nav-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .32s cubic-bezier(.2, .8, .2, 1); }
+.u-nav-body > div { overflow: hidden; display: flex; flex-direction: column; gap: 1px; }
+.u-nav.open > .u-nav-body { grid-template-rows: 1fr; }
+.u-nav-body a { opacity: 0; transform: translateX(10px); transition: opacity .2s, transform .2s, background .15s, color .15s; }
+.u-nav.open > .u-nav-body a { opacity: 1; transform: none; transition-delay: calc(var(--i) * 28ms + 60ms), calc(var(--i) * 28ms + 60ms), 0s, 0s; }
+.u-side > .u-nav { animation: u-nav-in .45s cubic-bezier(.2, .8, .2, 1) both; animation-delay: calc(var(--g) * 50ms); }
+@keyframes u-nav-in { from { opacity: 0; transform: translateX(14px); } }
 .u-nav a { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 9px; color: var(--u-text-2); font-size: 13.5px; min-height: 34px; box-sizing: border-box; }
 .u-nav a > i { width: 18px; text-align: center; font-style: normal; color: #7f97a2; }
 .u-nav a:hover { background: #10283a; color: var(--u-text); }
+.u-nav a > i { transition: transform .2s; }
+.u-nav a:hover > i { transform: scale(1.2); }
 .u-nav a.active { background: #133446; color: var(--u-text); font-weight: 600; }
 .u-nav a.active > i { color: var(--u-fin); }
 .u-sources { margin-top: auto; background: var(--u-surface); border: 1px solid #1d3646; border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
@@ -374,3 +390,8 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
 @media (prefers-reduced-motion: reduce) { html[data-wallpaper] .u-app, html[data-theme="rainbow"] .u-brand > i { animation: none; } }
 .u-page-alarms { background: transparent !important; min-height: 0 !important; }
 .u-mo { background: transparent !important; min-height: 0 !important; margin-bottom: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .u-nav-body, .u-nav-body a, .u-nav-head em, .u-nav-head > span, .u-nav a > i { transition: none !important; }
+  .u-side > .u-nav { animation: none; }
+}

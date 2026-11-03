@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -1430,6 +1432,14 @@ def rk_export(req: Request):
     return _rke_payload(snap, RE.report(snap, RE.parse_filters(req.query_params)))
 
 
+@app.get("/api/rk_export/month")
+def rk_export_month(month: str):
+    """فروش صادراتی یک ماه به دلار و ریال (نمای مدیر فروش صادرات را با فروش ریالی جمع می‌زند)"""
+    if not re.fullmatch(r"\d{4}/\d{2}", month):
+        raise HTTPException(400, "ماه باید به شکل ۱۴۰۵/۰۸ باشد.")
+    return RE.month_rial(_rk_export(), month)
+
+
 @app.get("/api/rk_export/customer")
 def rk_export_customer(code: str, req: Request):
     snap = _rk_export()
@@ -1775,5 +1785,6 @@ if __name__ == "__main__":
     cfg = read_config()
     if not CONFIG.exists():
         write_config(cfg)
-    print(f"Dashboard: http://{cfg['host']}:{cfg['port']}")
-    uvicorn.run(app, host=cfg["host"], port=int(cfg["port"]))
+    host = os.environ.get("SALES_HOST") or cfg["host"]  # RUN_UNIFIED: فقط 127.0.0.1 (از شبکه فقط پورت 5180 باز است)
+    print(f"Dashboard: http://{host}:{cfg['port']}")
+    uvicorn.run(app, host=host, port=int(cfg["port"]))

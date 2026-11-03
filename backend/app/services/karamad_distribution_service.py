@@ -151,10 +151,11 @@ class KaramadDistributionService:
                 WHERE f.[DateE] >= :start AND f.[DateE] < :end AND b.[Name] LIKE N'%هیبرید%'
                 """
             ), params).mappings().all()
+            # برگشتی فاکتورهای این ماه، حتی اگر در ماه‌های بعد ثبت شده باشد (تطبیق با فاکتور پایین‌تر انجام می‌شود)
             returns = connection.execute(text(
                 """
                 SELECT r.[FactorFRef], r.[FactorNo], r.[BranchRef], r.[FactorPriceP]
-                FROM dbo.[tblFactorB] r WHERE r.[DateE] >= :start AND r.[DateE] < :end
+                FROM dbo.[tblFactorB] r WHERE r.[DateE] >= :start
                 """
             ), params).mappings().all()
             # فروش کل ماه (تعریف گزارش فروش واحد مالی): همه شعب، قابل پرداخت بعد از تخفیف (با ارزش افزوده)،

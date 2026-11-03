@@ -1,0 +1,154 @@
+/* صورت سود و زیان: سربرگ زنده، شاخص‌های شمارنده، آبشاری، ساختار هزینه برندها، جدول هم‌شکل اکسل و جزئیات شیت‌ها */
+.pnl{--pnl-ac:var(--ac,#2dd4bf);display:grid;gap:14px;color:#e6f2f2;margin-bottom:24px}
+.pnl .neg{color:#fb7185}
+.pnl .muted{color:#8ea4af}
+
+.pnl-hero{position:relative;overflow:hidden;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;padding:20px 22px;border-radius:20px;
+  background:linear-gradient(120deg,#0b2233,#101f30 50%,#1d1438);border:1px solid #27445a;animation:pnlIn .5s ease both}
+.pnl-hero>div:first-of-type{position:relative;max-width:720px}
+.pnl-hero small{color:var(--pnl-ac);font-size:12px;direction:ltr;display:block;text-align:right}
+.pnl-hero h2{margin:4px 0 6px;font-size:22px}
+.pnl-hero p{margin:0;color:#b9ccd1;font-size:13px;line-height:1.9}
+.pnl-orb{position:absolute;border-radius:50%;filter:blur(42px);opacity:.3;pointer-events:none;animation:pnlFloat 12s ease-in-out infinite alternate}
+.pnl-orb.a{width:220px;height:220px;background:var(--pnl-ac);top:-100px;left:20%}
+.pnl-orb.b{width:160px;height:160px;background:#8b5cf6;bottom:-90px;left:-30px;animation-delay:-5s}
+@keyframes pnlFloat{to{transform:translate(40px,20px) scale(1.15)}}
+.pnl-hero-tools{position:relative;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pnl-seg{display:inline-flex;background:#0a1824;border:1px solid #284555;border-radius:12px;padding:3px}
+.pnl-seg button{background:none;border:0;color:#b8cbd1;font:inherit;font-size:12.5px;padding:6px 12px;border-radius:9px;cursor:pointer}
+.pnl-seg button.on{background:linear-gradient(135deg,var(--ac2,#0f766e),var(--pnl-ac));color:#fff}
+.pnl-refresh{background:#0f2130;border:1px solid #28485a;color:#dcecef;border-radius:11px;padding:7px 12px;font:inherit;font-size:12.5px;cursor:pointer}
+.pnl-refresh:hover{border-color:var(--pnl-ac)}
+
+.pnl-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.pnl-tabs button{display:grid;gap:2px;justify-items:start;background:#0f1d2a;border:1px solid #243847;color:#cfe3e6;border-radius:14px;padding:9px 16px;font:inherit;font-size:14px;font-weight:bold;cursor:pointer;transition:transform .2s,border-color .2s}
+.pnl-tabs button small{font-weight:normal;color:#8ea4af;font-size:10.5px}
+.pnl-tabs button:hover{transform:translateY(-2px)}
+.pnl-tabs button.on{border-color:var(--pnl-ac);background:linear-gradient(150deg,#123241,#0f1d2a);box-shadow:0 8px 24px #0006,inset 0 -3px var(--pnl-ac)}
+.pnl-spin{display:inline-block;width:12px;height:12px;border-radius:50%;border:2px solid #ffffff33;border-top-color:var(--pnl-ac);animation:pnlRot .8s linear infinite;vertical-align:middle;margin-inline:6px}
+@keyframes pnlRot{to{transform:rotate(360deg)}}
+.pnl-building{background:#0b2a2a;border:1px solid #1f4d4a;color:#b8e8e1;border-radius:12px;padding:9px 12px;font-size:13px}
+.pnl-building small{color:#8ec7bf}
+.pnl-skeleton{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.pnl-skeleton i{height:96px;border-radius:16px;background:linear-gradient(90deg,#132636,#1b3448,#132636);background-size:200% 100%;animation:pnlShim 1.2s linear infinite}
+@keyframes pnlShim{to{background-position:-200% 0}}
+
+.pnl-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.pnl-kpi{position:relative;overflow:hidden;display:grid;gap:3px;padding:14px 16px;border-radius:16px;background:linear-gradient(150deg,#132636,#0e1c29);border:1px solid #243847;border-top:3px solid var(--k,#2dd4bf);animation:pnlIn .5s cubic-bezier(.2,.9,.3,1.2) both;transition:transform .2s}
+.pnl-kpi:hover{transform:translateY(-3px)}
+.pnl-kpi.sales{--k:#60a5fa}.pnl-kpi.good{--k:#2dd4bf}.pnl-kpi.cost{--k:#fb7185}.pnl-kpi.profit{--k:#4ade80}
+.pnl-kpi small{color:#9fb4bd;font-size:12px}
+.pnl-kpi b{font-size:24px;font-variant-numeric:tabular-nums}
+.pnl-kpi span{color:#8ea4af;font-size:11.5px}
+.pnl-kpi em{font-style:normal;color:var(--k);font-weight:bold}
+.pnl-delta{font-style:normal;font-size:11px;color:#9fb4bd}
+.pnl-delta.up::before{content:"▲ ";color:#4ade80}
+.pnl-delta.down::before{content:"▼ ";color:#fb923c}
+
+.pnl-card{background:#0f1d2a;border:1px solid #243847;border-radius:16px;padding:14px 16px;animation:pnlIn .5s ease both;min-width:0}
+.pnl-card>header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.pnl-card h3{margin:0;font-size:15px}
+.pnl-card>header>small{color:#8ea4af;font-size:12px}
+.pnl-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;align-items:start}
+
+/* سهم کانال‌ها */
+.pnl-split{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.pnl-split-col{background:#0b1824;border:1px solid #1f3646;border-radius:14px;padding:12px;display:grid;gap:4px;animation:pnlIn .5s ease both}
+.pnl-split-col.c1{animation-delay:.08s}.pnl-split-col.c2{animation-delay:.16s}
+.pnl-split-col>b{font-size:14px}
+.pnl-split-bar{height:7px;border-radius:7px;background:#132636;overflow:hidden;margin-bottom:6px}
+.pnl-split-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#60a5fa,var(--pnl-ac));transform-origin:right;animation:pnlGrow 1s cubic-bezier(.2,.8,.2,1) both}
+.pnl-split-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:#b8cbd1;padding:2px 0}
+.pnl-split-row b{font-variant-numeric:tabular-nums;color:#e6f2f2;font-weight:normal}
+.pnl-split-row.strong{border-top:1px dashed #23485a;padding-top:4px}
+.pnl-split-row.strong b{font-weight:bold}
+.pnl-split-row.margin b{color:#4ade80;font-weight:bold}
+
+/* آبشاری */
+.pnl-wf-wrap{position:relative}
+.pnl-wf{width:100%;height:auto;display:block}
+.pnl-wf-base{stroke:#2a4556}
+.pnl-wf-link{stroke:#4b6575;stroke-dasharray:3 3}
+.pnl-wf-bar{transform-box:fill-box;transform-origin:bottom;animation:pnlRise .7s cubic-bezier(.2,.9,.3,1.2) both}
+.pnl-wf-bar.subtotal{fill:#3b82f6}.pnl-wf-bar.minus{fill:#fb7185;opacity:.85}.pnl-wf-bar.profit{fill:#22c55e}
+.pnl-wf-bar:hover{filter:brightness(1.25)}
+.pnl-wf-label{fill:#9fb4bd;font-size:10px;text-anchor:middle}
+.pnl-wf-val{fill:#e6f2f2;font-size:10px;text-anchor:middle;font-variant-numeric:tabular-nums}
+@keyframes pnlRise{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.pnl-tip{position:absolute;top:4px;left:8px;background:#0a1824ee;border:1px solid #2a4a5c;border-radius:10px;padding:6px 10px;font-size:12px}
+
+/* ساختار هزینه برندها */
+.pnl-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;color:#b8cbd1;margin-bottom:8px}
+.pnl-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-left:4px}
+.pnl-struct{display:grid;gap:7px}
+.pnl-struct-row{display:grid;grid-template-columns:76px minmax(0,1fr) 56px;align-items:center;gap:8px;font-size:12.5px;animation:pnlSlide .45s ease both}
+.pnl-struct-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pnl-struct-bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:#132636}
+.pnl-struct-bar i{display:block;height:100%;transform-origin:right;animation:pnlGrow .9s cubic-bezier(.2,.8,.2,1) both}
+.pnl-struct-row>b{text-align:left;color:#4ade80;font-variant-numeric:tabular-nums}
+@keyframes pnlGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes pnlSlide{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+
+/* جدول هم‌شکل اکسل */
+.pnl-chips{display:flex;gap:6px;flex-wrap:wrap;margin-right:auto}
+.pnl-chips span{font-size:11px;background:#132636;border:1px solid #23485a;border-radius:999px;padding:2px 9px;color:#b8cbd1}
+.pnl-chips button{font:inherit;font-size:11.5px;background:#1a3242;color:#dcecef;border:0;border-radius:999px;padding:3px 11px;cursor:pointer}
+.pnl-table-wrap{overflow:auto;max-height:78vh;border-radius:12px;border:1px solid #1f3646}
+.pnl-table{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;font-variant-numeric:tabular-nums}
+.pnl-table th,.pnl-table td{padding:7px 10px;border-bottom:1px solid #18303f;white-space:nowrap;text-align:left}
+.pnl-table thead th{position:sticky;top:0;z-index:2;background:#13293a;color:#cfe3e6;font-weight:bold;text-align:center;cursor:pointer}
+.pnl-table thead th.period{background:#183449;color:#bae6fd}
+.pnl-table thead th.period.current{background:#0f3a37;color:#99f6e4}
+.pnl-table .sticky{position:sticky;right:0;z-index:1;background:#0f1d2a;text-align:right;min-width:230px;max-width:320px;white-space:normal}
+.pnl-table thead .sticky{z-index:3;background:#13293a}
+.pnl-table tbody th.sticky{font-weight:normal;color:#dcecef}
+.pnl-table tbody th small{display:inline-block;color:#6f8a96;font-size:10.5px;margin-left:6px;direction:ltr}
+.pnl-table tbody tr:hover td,.pnl-table tbody tr:hover th.sticky{background:#132a3a}
+.pnl-table td.period{background:#0d2231}
+.pnl-table td.period.current{background:#0c2a2a;font-weight:bold}
+.pnl-table td.ratio{color:#8ec7bf;font-size:11.5px;background:#0d2231}
+.pnl-table td.focus,.pnl-table th.focus{background:#1d2f4a!important;color:#fff}
+.pnl-table tr.k-total td,.pnl-table tr.k-total th.sticky{font-weight:bold;border-top:2px solid #2d5466;background:#112737}
+.pnl-table tr.c-np td,.pnl-table tr.c-np th.sticky{background:#0e2e22;color:#bbf7d0}
+.pnl-table tr.c-gp td,.pnl-table tr.c-op td{color:#bae6fd}
+.pnl-table tr.k-ratio td,.pnl-table tr.k-ratio th.sticky{color:#a5b8c0;font-style:italic;font-size:11.5px}
+.pnl-table tr.k-share td,.pnl-table tr.k-share th.sticky{color:#7b97a3;font-size:11px}
+.pnl-table tr.g-discount_detail th.sticky{padding-right:26px;color:#c4b5fd}
+.pnl-table tr.g-discount_detail td{color:#c9bff5;background:#13172e}
+.pnl-table tr.g-opex th.sticky,.pnl-table tr.g-پورسانت th.sticky{padding-right:22px}
+.pnl-table tr.c-margin td{color:#4ade80;font-weight:bold;font-style:normal}
+
+/* جزئیات شیت‌ها */
+.pnl-subtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.pnl-subtabs button{display:grid;justify-items:start;background:#0b1824;border:1px solid #23485a;color:#cfe3e6;border-radius:12px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer}
+.pnl-subtabs button small{color:#7f97a2;font-size:10.5px}
+.pnl-subtabs button.on{border-color:var(--pnl-ac);background:#102a33}
+.pnl-pivot{margin-bottom:14px;animation:pnlIn .4s ease both}
+.pnl-pivot-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.pnl-pivot-head b{font-size:13.5px}
+.pnl-pivot-head small{color:#8ea4af;font-size:11.5px}
+.pnl-pivot-head input{margin-right:auto;background:#071420;border:1px solid #284555;border-radius:9px;padding:5px 10px;color:#fff;font:inherit;font-size:12.5px;min-width:180px}
+.pnl-pivot-wrap{overflow:auto;max-height:420px;border:1px solid #1f3646;border-radius:10px}
+.pnl-pivot table{width:100%;border-collapse:collapse;font-size:12px}
+.pnl-pivot th,.pnl-pivot td{padding:6px 9px;border-bottom:1px solid #18303f;text-align:right;white-space:nowrap}
+.pnl-pivot thead th{position:sticky;top:0;background:#13293a;color:#cfe3e6;z-index:1}
+.pnl-pivot th.sortable{cursor:pointer}
+.pnl-pivot .num{text-align:left;font-variant-numeric:tabular-nums}
+.pnl-pivot td.num{position:relative}
+.pnl-pivot td.num span{position:relative}
+.pnl-inbar{position:absolute;inset-block:5px;left:4px;border-radius:4px;background:var(--ac-soft,#2dd4bf22);transform-origin:left;animation:pnlGrow .7s ease both}
+.pnl-pivot tfoot th{position:sticky;bottom:0;background:#112737;font-weight:bold}
+.pnl-pivot tbody tr:hover td{background:#132a3a}
+
+@keyframes pnlIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@media (max-width:1000px){.pnl-grid{grid-template-columns:1fr}.pnl-split{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.pnl *,.pnl{animation:none!important;transition:none!important}}
+
+/* لایو از SQL: انتخاب منبع و دوره، نکته‌های منبع اعداد */
+.pnl-seg button.live.on{background:linear-gradient(135deg,#059669,#14b8a6);color:#fff}
+.pnl-period{border:1px solid #ffffff2a;background:#ffffff14;color:inherit;border-radius:10px;padding:7px 10px;font:inherit;font-size:12.5px}
+.pnl-period option{color:#0f172a}
+.pnl-notes{margin:0 0 12px;padding:9px 13px;border-radius:12px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;font-size:12.5px}
+.pnl-notes summary{cursor:pointer;font-weight:600}
+.pnl-notes ul{margin:8px 0 0;padding-inline-start:18px;line-height:1.9}
+.pnl-src{font-style:normal;opacity:.45;font-size:10px;margin-inline-start:5px}

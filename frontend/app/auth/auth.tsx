@@ -17,7 +17,7 @@ export type AppUser = {
 };
 /** تم، والپیپر و حیوان خانگی هر کاربر (روی سرور ذخیره می‌شود) */
 export type Preferences = { theme?: string; wallpaper?: string; pet?: string; pet_name?: string };
-export type Profile = { user: AppUser; modules: string[]; views: string[]; catalog: ModuleInfo[] };
+export type Profile = { user: AppUser; modules: string[]; views: string[]; catalog: ModuleInfo[]; alarms_hidden?: boolean };
 
 let installed = false;
 export function installAuthFetch() {

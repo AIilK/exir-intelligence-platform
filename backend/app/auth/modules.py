@@ -105,6 +105,12 @@ MODULES: dict[str, dict[str, Any]] = {
         "alarm_agents": ["liquidity", "cashflow", "scenario"],
         "chat_tools": ["liquidity_forecast"],
     },
+    "pnl": {
+        "title": "سود و زیان (P&L)",
+        "views": ["pnl"],
+        "alarm_agents": [],
+        "chat_tools": [],
+    },
     "inventoryPricing": {
         "title": "قیمت‌گذاری انبار",
         "views": ["inventoryPricing"],
@@ -168,6 +174,9 @@ API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/finance/agents/run-all", ("admin",)),
     ("/api/v1/finance/page-agents/run-all", ("admin",)),
     ("/api/v1/finance/payables", ("payables", "management")),
+    ("/api/v1/finance/pnl", ("pnl",)),
+    ("/api/v1/finance/process-health", ("management",)),
+    ("/api/v1/finance/manager-combined", ("management", "sales")),
     ("/api/v1/finance/purchase-", ("purchaseDocs",)),
     ("/api/v1/finance/inventory-pricing", ("inventoryPricing",)),
     ("/api/v1/finance/distribution", ("distribution", "management", "sales")),

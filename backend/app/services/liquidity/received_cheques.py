@@ -55,6 +55,12 @@ def returned_from_date() -> date:
     """برگشتی‌ها فقط از اول سال شمسی جاری (مثلاً ۱۴۰۵/۰۱/۰۱) به بعد نمایش و جمع زده می‌شوند (تصمیم مدیریت ۱۴۰۵/۰۷)."""
     import jdatetime
     return jdatetime.date(jdatetime.date.today().year, 1, 1).togregorian()
+def rahkaran_from_date() -> date:
+    """چک‌های دریافتنی راهکاران با سررسید پیش از ۱۴۰۵/۰۱/۰۱ کنار گذاشته می‌شوند (تصمیم مدیریت ۱۴۰۵/۰۸)."""
+    import jdatetime
+    return jdatetime.date(1405, 1, 1).togregorian()
+
+
 RAHKARAN_RETURNED_OPEN_STATES = (4, 17)  # fetched together: واخواست شده، حقوقی شده (not yet settled)
 # Finance rule (1405/07): in Rahkaran only «واخواست» is a returned cheque; any other open overdue state
 # — including «حقوقی شده» — is «وضعیت مشخص نشده» (status not determined).
@@ -140,6 +146,7 @@ DEFAULT_FETCHERS: dict[str, Fetcher] = {
 
 _cache: dict[tuple[str, date], tuple[float, Any]] = {}
 _cache_lock = threading.Lock()
+_refreshing: set[tuple[str, date]] = set()
 
 
 def clear_cache() -> None:
@@ -159,25 +166,45 @@ class ReceivedChequeService:
         self.cache_ttl_seconds = cache_ttl_seconds
 
     def _cached(self, name: str, loader: Callable[[], Any], refresh: bool) -> Any:
+        """کش ۵ دقیقه‌ای؛ بعد از انقضا همان داده قبلی فوراً برمی‌گردد و نسخه تازه در پس‌زمینه ساخته می‌شود
+        (پیش‌بینی چک‌های راهکاران حدود یک دقیقه طول می‌کشد و کاربر نباید منتظرش بماند)."""
         key = (name, self.today)
         now = time.monotonic()
         with _cache_lock:
             hit = _cache.get(key)
-            if hit and not refresh and now - hit[0] < self.cache_ttl_seconds:
+            if hit and not refresh:
+                if now - hit[0] < self.cache_ttl_seconds:
+                    return hit[1]
+                if key not in _refreshing:
+                    _refreshing.add(key)
+                    threading.Thread(target=self._refresh, args=(key, loader), daemon=True).start()
                 return hit[1]
         value = loader()
         with _cache_lock:
             _cache[key] = (now, value)
         return value
 
+    @staticmethod
+    def _refresh(key: tuple[str, date], loader: Callable[[], Any]) -> None:
+        try:
+            value = loader()
+            with _cache_lock:
+                _cache[key] = (time.monotonic(), value)
+        except Exception:  # noqa: BLE001 — داده قبلی می‌ماند
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
     # -- Rahkaran -------------------------------------------------------------
 
     def _rahkaran(self, refresh: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         predictions = self._cached("rahkaran", self.fetchers["rahkaran"], refresh)
+        from_date = rahkaran_from_date()
         cheques = []
         for p in predictions:
             due = _as_date(p.get("due_date"))
-            if due is None:
+            if due is None or due < from_date:
                 continue
             name = p.get("counterpart_name") or "مشتری نامشخص"
             amount = float(p.get("amount") or 0)
@@ -214,7 +241,8 @@ class ReceivedChequeService:
             "customer_code": _code(r.get("CustomerCode")), "serial_number": _code(r.get("SerialNumber")),
             "sayad_number": _code(r.get("SayadNumber")), "branch_name": (r.get("BankBranchName") or "").strip() or None,
             "visitor_name": None,
-        } for r in self._cached("rahkaran_returned", self.fetchers["rahkaran_returned"], refresh)]
+        } for r in self._cached("rahkaran_returned", self.fetchers["rahkaran_returned"], refresh)
+            if (_as_date(r["DueDate"]) or from_date) >= from_date]
         return cheques, returned
 
     # -- Karamad --------------------------------------------------------------
@@ -459,6 +487,7 @@ class ReceivedChequeService:
                            for h, items in sorted(by_holding.items(), key=lambda kv: -sum(c["amount_rial"] for c in kv[1]))],
             "by_channel": [{"channel": ch, "label": CHANNEL_LABELS[ch], **self._sum(items)} for ch, items in by_channel.items()],
             "overdue": {**self._sum(overdue), "age_buckets": buckets, "in_totals": False,
+                        "by_system": [{"system": sy, **self._sum([c for c in overdue if c["system"] == sy])} for sy in ("rahkaran", "karamad")],
                         # «وضعیت مشخص نشده» = همین چک‌های سررسیدگذشته باز + چک‌های راهکاران با وضعیت غیر از واخواست (مثل حقوقی)
                         "other_state_rial": _round(sum(r["amount_rial"] for r in legal)), "other_state_count": len(legal),
                         "rule": "چک سررسیدگذشته‌ای که نه وصول شده و نه برگشتی است تعیین تکلیف نشده است (راهکاران: هر وضعیتی غیر از واخواست؛ کارآمد: هر وضعیتی غیر از برگشتی نزد مشتری/صندوق، از جمله «برگشت نزذ صندوق») و در قطعی و اتکای بازه نیست."},

@@ -28,6 +28,7 @@ import InventoryPricingPage from "./inventory-pricing/inventory-pricing-page";
 import SortTable from "./sort-table";
 import { RegCell, chequeNo } from "./cheque-reg";
 import PurchaseDocsPage from "./purchase-docs/purchase-docs-page";
+import PnlPage from "./pnl/pnl-page";
 import ChatWidget from "./chatbot/chat-widget";
 import { flashChatTarget, useChatLink } from "./chatbot/chat-link";
 import PayablesPage from "./payables/payables-page";
@@ -55,6 +56,7 @@ type View =
   | "liquidity"
   | "inventoryPricing"
   | "purchaseDocs"
+  | "pnl"
   | "payables"
   | "cashBank"
   | "companyPayments"
@@ -1669,6 +1671,7 @@ const menu: [View, string, string][] = [
   ["liquidity", "₪", "نقدینگی"],
   ["inventoryPricing", "▦", "قیمت‌گذاری انبار"],
   ["purchaseDocs", "▤", "اسناد خرید"],
+  ["pnl", "∑", "سود و زیان (P&L)"],
   ["collections", "✓", "مرکز عملیات وصول"],
   ["distribution", "⛟", "توزیع بار"],
   ["performance", "◉", "دقت پیش‌بینی"],
@@ -2645,6 +2648,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
         {view === "liquidity" && <LiquidityPage />}
         {view === "inventoryPricing" && <InventoryPricingPage />}
         {view === "purchaseDocs" && <PurchaseDocsPage />}
+        {view === "pnl" && <PnlPage />}
         {/* چت‌بات: کدش در app/chatbot. در داشبورد یکپارچه (view کنترل‌شده) خود پوسته یک چت‌بات برای همه صفحه‌ها دارد. */}
         {/* حیوان خانگی (در داشبورد یکپارچه خود پوسته آن را دارد) */}
         {!onViewChange && <Pet onGo={(v) => setView(v as View)} />}
@@ -6686,6 +6690,7 @@ function description(v: View) {
       customers: "خرید، ویزیتور، مطالبات، چک‌ها و احتمال برگشت هر مشتری",
       cheques: "انتخاب جریان دریافتی یا پرداختی و ورود از خلاصه به جزئیات",
       payables: "حساب‌های پرداختنی تجاری (۵۱۱۰۰۲) و غیرتجاری (۵۱۲۰۰۱) راهکاران؛ با کلیک روی هر طرف حساب ریز گردشش باز می‌شود",
+      pnl: "سود و زیان سه کانال (هیبرید، B2B، صادرات): لایو از SQL راهکاران و کارآمد، با مقایسه فایل‌های اکسل مالی",
       purchaseDocs: "زنده از راهکاران: اسناد خرید ثبت‌حسابداری‌نشده (عملیات گروهی اسناد) و مرور تدارکات با تطبیق رسید موقت و دائم",
       inventoryPricing: "اسناد انبار راهکاران که کالایشان ثبت شده ولی قیمت‌گذاری نشده‌اند — به تفکیک انبار کارخانه",
       cashBank:

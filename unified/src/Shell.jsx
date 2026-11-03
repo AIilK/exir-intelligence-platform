@@ -44,10 +44,12 @@ const GROUPS = [
       { to: '/finance/cashflow', label: 'پیش‌بینی نقدینگی', icon: '⌁' },
       { to: '/finance/inventoryPricing', label: 'قیمت‌گذاری انبار', icon: '▦' },
       { to: '/finance/purchaseDocs', label: 'اسناد خرید', icon: '▤' },
+      { to: '/finance/pnl', label: 'سود و زیان (P&L)', icon: '∑' },
       { to: '/finance/monthlyExcel', label: 'Cash Flow روزانه', icon: '▥' },
       { to: '/finance/collections', label: 'مرکز عملیات وصول', icon: '✓' },
       { to: '/finance/distribution', label: 'توزیع بار', icon: '⛟' },
       { to: '/finance/simulator', label: 'سناریوساز نقدینگی', icon: '◫' },
+      { to: '/reconciliation', label: 'مغایرت‌گیری بانک', icon: '⚖' },
     ],
   },
   {
@@ -59,7 +61,7 @@ const GROUPS = [
     ],
   },
   {
-    id: 'system', label: 'سیستم و الارم‌ها', dot: 'var(--u-muted)', collapsible: true, items: [
+    id: 'system', label: 'سیستم و الارم‌ها', dot: 'var(--u-muted)', items: [
       { to: '/finance/alerts', label: 'مرکز الارم‌ها', icon: '🔔' },
       { to: '/finance/users', label: 'مدیریت کاربران', icon: '👥' },
       { to: '/finance/history', label: 'تاریخچه و مقایسه', icon: '↺' },
@@ -88,6 +90,7 @@ const ROUTE_MODULES = [
   ['/rahkaran/export', ['salesExport']],
   ['/rahkaran', ['salesB2B']],
   ['/files/rahkaran', ['salesB2B', 'customers']],
+  ['/reconciliation', ['reconciliation']],
   ['/detail', SALES_ALL],
 ]
 
@@ -110,7 +113,7 @@ function UserBox() {
   return (
     <div className="fin-scope u-userbox" data-theme={look.theme || 'teal'} data-wallpaper={look.wallpaper || 'none'}>
       <div className="fd-head-tools">
-        <AlarmBell onGo={go} />
+        {!profile.alarms_hidden && <AlarmBell onGo={go} />}
         <ThemePicker />
       </div>
       <span className="user-chip">
@@ -118,7 +121,7 @@ function UserBox() {
         <span>{profile.user.full_name}<small>{profile.user.is_admin ? 'مدیر سیستم' : profile.user.username}</small></span>
         <button type="button" onClick={() => void logout()}>خروج</button>
       </span>
-      <AlarmToasts onGo={go} />
+      {!profile.alarms_hidden && <AlarmToasts onGo={go} />}
     </div>
   )
 }
@@ -176,13 +179,27 @@ function SourceStatus() {
   )
 }
 
+/** سرفصلی که صفحه فعلی زیر آن است (دقیق‌ترین تطابق مسیر) */
+function groupOf(pathname) {
+  let best = null
+  for (const g of GROUPS) {
+    for (const it of g.items) {
+      const hit = it.to === pathname || (it.to !== '/' && pathname.startsWith(`${it.to}/`))
+      if (hit && (!best || it.to.length > best.len)) best = { id: g.id, len: it.to.length }
+    }
+  }
+  return best?.id
+}
+
 export default function Shell() {
   const auth = useAuth()
   const { pathname } = useLocation()
   const busy = useBusy()
   const [menuOpen, setMenuOpen] = useState(false)
-  const [sysOpen, setSysOpen] = useState(() => pathname.startsWith('/finance/') && GROUPS.find((g) => g.collapsible).items.some((i) => i.to === pathname))
+  // منوی آکاردئونی: با کلیک روی هر سرفصل ماژول‌های ریزش باز می‌شود و بقیه جمع می‌شوند
+  const [openGroup, setOpenGroup] = useState(() => groupOf(pathname))
   useEffect(() => { window.scrollTo(0, 0); setMenuOpen(false) }, [pathname])
+  useEffect(() => { const g = groupOf(pathname); if (g) setOpenGroup(g) }, [pathname])
   return (
     <div className="u-app">
       <aside className={`u-side ${menuOpen ? 'open' : ''}`}>
@@ -190,20 +207,23 @@ export default function Shell() {
           <i>ا</i>
           <div><b>اکسیر کادوس</b><small>Management Command Center</small></div>
         </div>
-        {GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canOpen(it.to, auth)) })).filter((g) => g.items.length).map((g) => {
-          const open = !g.collapsible || sysOpen
+        {GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canOpen(it.to, auth) && !(it.to === '/finance/alerts' && auth.profile.alarms_hidden)) })).filter((g) => g.items.length).map((g, gi) => {
+          const open = !g.label || openGroup === g.id
+          const links = g.items.map((it, i) => (
+            <NavLink key={it.to} to={it.to} end={it.end} style={{ '--i': i }} tabIndex={open ? undefined : -1}>
+              <i aria-hidden>{it.icon}</i>{it.label}
+            </NavLink>
+          ))
           return (
-            <nav key={g.id} aria-label={g.label || 'اصلی'} className="u-nav">
-              {g.label && (g.collapsible
-                ? <button className="u-nav-head" onClick={() => setSysOpen(!sysOpen)} aria-expanded={sysOpen}>
-                    <span style={{ background: g.dot }} />{g.label}<em>{sysOpen ? '▴' : '▾'}</em>
-                  </button>
-                : <div className="u-nav-head"><span style={{ background: g.dot }} />{g.label}</div>)}
-              {open && g.items.map((it) => (
-                <NavLink key={it.to} to={it.to} end={it.end}>
-                  <i aria-hidden>{it.icon}</i>{it.label}
-                </NavLink>
-              ))}
+            <nav key={g.id} aria-label={g.label || 'اصلی'} className={`u-nav ${open ? 'open' : ''}`} style={{ '--g': gi }}>
+              {g.label ? <>
+                <button className="u-nav-head" onClick={() => setOpenGroup(open ? null : g.id)} aria-expanded={open}>
+                  <span style={{ background: g.dot }} />{g.label}
+                  <b className="u-nav-count">{faDigits(g.items.length)}</b>
+                  <em aria-hidden>▾</em>
+                </button>
+                <div className="u-nav-body"><div>{links}</div></div>
+              </> : links}
             </nav>
           )
         })}

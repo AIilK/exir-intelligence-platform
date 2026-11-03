@@ -5,7 +5,7 @@ import { useAuth } from '@finance/auth/auth.tsx'
 // Views of the finance command center (dashboard-client.tsx `View` type).
 const VIEWS = new Set([
   'overview', 'management', 'sales', 'users', 'customers', 'cheques', 'receivedCheques', 'issuedCheques', 'cashflow', 'liquidity',
-  'inventoryPricing', 'purchaseDocs', 'payables',
+  'inventoryPricing', 'purchaseDocs', 'payables', 'pnl',
   'cashBank', 'companyPayments', 'b2bRemittances', 'monthlyExcel', 'collections', 'distribution',
   'representatives', 'simulator', 'alerts', 'history', 'performance', 'settings', 'agents',
 ])

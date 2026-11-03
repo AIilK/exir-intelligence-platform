@@ -422,6 +422,8 @@ class IssuedChequeService:
                 "rule": f"چک‌های باز با حداکثر {OVERDUE_COUNTED_DAYS} روز تأخیر روی خروجی امروز جمع می‌شوند.",
             },
             "needs_status_review": review,
+            "horizon_by_system": [{"system": sy, "amount_rial": _round(sum(c["amount_rial"] for c in in_horizon if c.get("system") == sy)),
+                                   "count": sum(1 for c in in_horizon if c.get("system") == sy)} for sy in ("rahkaran", "karamad")],
             "by_channel": [{"channel": k, "label": CHANNEL_LABELS[k], "amount_rial": _round(v)}
                            for k, v in sorted(by_channel.items(), key=lambda kv: -kv[1])],
             "calendar": days,

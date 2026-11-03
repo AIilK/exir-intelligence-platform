@@ -54,7 +54,9 @@ class Preferences(BaseModel):
 
 
 def _profile(user: dict[str, Any]) -> dict[str, Any]:
-    return {"user": user, "modules": user_modules(user), "views": allowed_views(user), "catalog": catalog()}
+    from app.auth.alarms import alarms_hidden
+    return {"user": user, "modules": user_modules(user), "views": allowed_views(user), "catalog": catalog(),
+            "alarms_hidden": alarms_hidden(user)}
 
 
 def _set_cookie(response: Response, token: str) -> None:

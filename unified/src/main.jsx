@@ -18,6 +18,7 @@ import VisitorFile from './pages/VisitorFile.jsx'
 import RahkaranList from './pages/RahkaranList.jsx'
 import RahkaranFile from './pages/RahkaranFile.jsx'
 import FinanceView from './FinanceView.jsx'
+import Reconciliation from './pages/Reconciliation.jsx'
 import SalesFrame from './SalesFrame.jsx'
 import SalesOverview from '@sales/pages/Overview.jsx'
 import Hybrid from '@sales/pages/Hybrid.jsx'
@@ -51,6 +52,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="files/rahkaran" element={<RahkaranList />} />
             <Route path="files/rahkaran/:code" element={<RahkaranFile />} />
             <Route path="finance/:view" element={<FinanceView />} />
+            <Route path="reconciliation" element={<Reconciliation />} />
             <Route element={<SalesFrame />}>
               <Route path="sales" element={<SalesOverview />} />
               <Route path="hybrid" element={<Hybrid />} />

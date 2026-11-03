@@ -12,6 +12,12 @@ from app.auth.modules import MODULES, alarm_agents, alarm_module
 
 router = APIRouter(prefix="/alarms", tags=["alarms"])
 LEVELS = ("critical", "high", "medium", "info")
+# کاربرانی که الارم برایشان نمایش داده نمی‌شود (تصمیم مدیریت ۱۴۰۵/۰۸)
+ALARMS_HIDDEN_USERS = {"mralizade", "mrsalizade"}
+
+
+def alarms_hidden(user: dict[str, Any]) -> bool:
+    return str(user.get("username") or "").strip().lower() in ALARMS_HIDDEN_USERS
 
 
 class AlarmUpdate(BaseModel):
@@ -40,6 +46,8 @@ def alarms(module: str | None = Query(default=None), limit: int = Query(default=
            user: dict[str, Any] = Depends(guard.current_user)):
     from app.services.agent_memory_store import AgentMemoryStore
 
+    if alarms_hidden(user):
+        return {"alarms": [], "counts": {lv: 0 for lv in LEVELS}, "total": 0, "hidden": True}
     owned = _agent_module(user)
     if module:
         owned = {a: m for a, m in owned.items() if m == module or a in MODULES.get(module, {}).get("alarm_agents", [])}

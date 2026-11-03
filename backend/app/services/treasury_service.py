@@ -905,13 +905,16 @@ def get_open_received_cheques(
           AND ISNULL(note.[Description], N'') NOT LIKE N'%ضمانت%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%تضمین%'
           AND ISNULL(note.[Description], N'') NOT LIKE N'%حسن انجام%'
+          -- چک‌های راهکاران با سررسید پیش از ۱۴۰۵ کنار گذاشته می‌شوند
+          AND (note.[DueDate] IS NULL OR note.[DueDate] >= :rahkaran_from)
           {filters[normalized_period]}
         ORDER BY CASE WHEN note.[DueDate] IS NULL THEN 1 ELSE 0 END,
                  note.[DueDate] ASC, note.[ReceivableNoteID] DESC
         """
     )
+    from app.services.liquidity.received_cheques import rahkaran_from_date
     with _engine(engine).connect() as connection:
-        rows = connection.execute(query).mappings().all()
+        rows = connection.execute(query, {"rahkaran_from": rahkaran_from_date()}).mappings().all()
     rahkaran_cheques = [_master_cheque_payload(row, "received") for row in rows]
     karamad_cheques = _karamad_received_period(
         [row for row in _karamad_cheques("received_cheques") if received_cheque_is_approved_open_holding(row)],

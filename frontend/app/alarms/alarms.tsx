@@ -33,7 +33,8 @@ const when = (iso?: string) => {
 };
 
 // ------------------------------------------------------------------ store مشترک (یک بار دریافت برای همه اجزا)
-type Snapshot = { alarms: Alarm[]; loaded: boolean; fresh: Alarm[] };
+// hidden: الارم برای این کاربر خاموش است (backend/app/auth/alarms.py ALARMS_HIDDEN_USERS)؛ هیچ جزء الارمی نمایش داده نمی‌شود
+type Snapshot = { alarms: Alarm[]; loaded: boolean; fresh: Alarm[]; hidden?: boolean };
 let snapshot: Snapshot = { alarms: [], loaded: false, fresh: [] };
 const listeners = new Set<(s: Snapshot) => void>();
 let timer: number | null = null;
@@ -58,7 +59,7 @@ export async function refreshAlarms() {
     const seen = readSeen();
     const firstLoad = !snapshot.loaded;
     const fresh = alarms.filter((a) => !seen.has(a.key) && a.my_status === "open");
-    publish({ alarms, loaded: true, fresh: firstLoad ? fresh.slice(0, 4) : fresh.filter((a) => !snapshot.alarms.some((x) => x.key === a.key)).slice(0, 4) });
+    publish({ alarms, loaded: true, hidden: !!j.hidden, fresh: firstLoad ? fresh.slice(0, 4) : fresh.filter((a) => !snapshot.alarms.some((x) => x.key === a.key)).slice(0, 4) });
   } catch {
     publish({ loaded: true });
   }
@@ -127,7 +128,12 @@ function AlarmCard({ a, onGo, index = 0, compact = false }: { a: Alarm; onGo?: (
 }
 
 // ------------------------------------------------------------------ زنگوله سربرگ
-export function AlarmBell({ onGo }: { onGo: (view: string) => void }) {
+/** برای کاربری که الارمش خاموش است چیزی نمایش نمی‌دهد */
+export function AlarmBell(props: { onGo: (view: string) => void }) {
+  const { hidden } = useAlarms();
+  return hidden ? null : <AlarmBellInner {...props} />;
+}
+function AlarmBellInner({ onGo }: { onGo: (view: string) => void }) {
   const { alarms: all, loaded } = useAlarms();
   const alarms = all.filter(pending);
   const [open, setOpen] = useState(false);
@@ -158,7 +164,12 @@ export function AlarmBell({ onGo }: { onGo: (view: string) => void }) {
 }
 
 // ------------------------------------------------------------------ اعلان لحظه‌ای الارم تازه
-export function AlarmToasts({ onGo }: { onGo: (view: string) => void }) {
+/** برای کاربری که الارمش خاموش است چیزی نمایش نمی‌دهد */
+export function AlarmToasts(props: { onGo: (view: string) => void }) {
+  const { hidden } = useAlarms();
+  return hidden ? null : <AlarmToastsInner {...props} />;
+}
+function AlarmToastsInner({ onGo }: { onGo: (view: string) => void }) {
   const { fresh } = useAlarms();
   const [items, setItems] = useState<Alarm[]>([]);
   const [mounted, setMounted] = useState(false);
@@ -188,7 +199,12 @@ export function AlarmToasts({ onGo }: { onGo: (view: string) => void }) {
 }
 
 // ------------------------------------------------------------------ نوار الارم بالای صفحه هر ماژول
-export function AlarmStrip({ modules, onGo, title }: { modules: string[]; onGo?: (view: string) => void; title?: string }) {
+/** برای کاربری که الارمش خاموش است چیزی نمایش نمی‌دهد */
+export function AlarmStrip(props: { modules: string[]; onGo?: (view: string) => void; title?: string }) {
+  const { hidden } = useAlarms();
+  return hidden ? null : <AlarmStripInner {...props} />;
+}
+function AlarmStripInner({ modules, onGo, title }: { modules: string[]; onGo?: (view: string) => void; title?: string }) {
   const { alarms, loaded } = useAlarms();
   const rows = useMemo(() => alarms.filter((a) => pending(a) && modules.includes(a.module)), [alarms, modules]);
   const [open, setOpen] = useState(false);
@@ -210,7 +226,12 @@ export function AlarmStrip({ modules, onGo, title }: { modules: string[]; onGo?:
 }
 
 // ------------------------------------------------------------------ الارم‌های کنار هر بلوک (خلاصه مدیریتی/فروش)
-export function ModuleAlarms({ modules, agents, title, onGo }: { modules?: string[]; agents?: string[]; title: string; onGo?: (view: string) => void }) {
+/** برای کاربری که الارمش خاموش است چیزی نمایش نمی‌دهد */
+export function ModuleAlarms(props: { modules?: string[]; agents?: string[]; title: string; onGo?: (view: string) => void }) {
+  const { hidden } = useAlarms();
+  return hidden ? null : <ModuleAlarmsInner {...props} />;
+}
+function ModuleAlarmsInner({ modules, agents, title, onGo }: { modules?: string[]; agents?: string[]; title: string; onGo?: (view: string) => void }) {
   const { alarms, loaded } = useAlarms();
   const rows = alarms.filter((a) => pending(a) && (modules ? modules.includes(a.module) : true) && (agents ? agents.includes(a.agent_key) : true));
   return <div className="al-side">
@@ -224,7 +245,12 @@ export function ModuleAlarms({ modules, agents, title, onGo }: { modules?: strin
 }
 
 // ------------------------------------------------------------------ مرکز الارم‌ها
-export function AlarmCenter({ onGo, moduleTitles }: { onGo: (view: string) => void; moduleTitles: Record<string, string> }) {
+/** برای کاربری که الارمش خاموش است چیزی نمایش نمی‌دهد */
+export function AlarmCenter(props: { onGo: (view: string) => void; moduleTitles: Record<string, string> }) {
+  const { hidden } = useAlarms();
+  return hidden ? null : <AlarmCenterInner {...props} />;
+}
+function AlarmCenterInner({ onGo, moduleTitles }: { onGo: (view: string) => void; moduleTitles: Record<string, string> }) {
   const { alarms, loaded } = useAlarms();
   const [level, setLevel] = useState<Level | "">("");
   const [module, setModule] = useState("");
