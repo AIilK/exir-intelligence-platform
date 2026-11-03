@@ -1,0 +1,13 @@
+const fs=require('fs'), assert=require('assert/strict'), base=process.cwd();const ts=require(base+'/node_modules/typescript');const React=require(base+'/node_modules/react');const {renderToStaticMarkup}=require(base+'/node_modules/react-dom/server');
+const code=fs.readFileSync('app/dashboard-client.tsx','utf8')+'\nexport {ChequeDetails};';const M=require('module');const m=new M(base+'/app/check.cjs',module);m.paths=M._nodeModulePaths(base+'/app');
+let states=[],cursor=0;const hooked={...React,useState:(init)=>{const i=cursor++;if(!(i in states))states[i]=init;return [states[i],v=>states[i]=v]},useMemo:fn=>fn()};
+const req=m.require.bind(m);m.require=(name)=>name==='react'?hooked:name.endsWith('.css')?{}:req(name);
+m._compile(ts.transpileModule(code,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText,base+'/app/check.cjs');
+const rows=[{cheque_id:'a',source_system:'karamad',amount:100,days_to_due:-1,due_date_jalali:'1405/06/15',branch_name:'A',usage_scope:'cheques_only',state_label:'واگذار شده',serial_number:'123',assignment_date_jalali:'1405/06/01'}, {cheque_id:'b',source_system:'karamad',amount:200,days_to_due:-2,branch_name:'B',usage_scope:'cheques_only',state_label:'برگشتی نزد مشتری',serial_number:'456'}, {cheque_id:'c',source_system:'karamad',amount:300,days_to_due:-21,branch_name:'A',usage_scope:'cheques_only',state_label:'وضعیت نامشخص',serial_number:'789'}];
+let branch='';const props=()=>({kind:'received',source:'karamad',rows,branch,setBranch:v=>branch=v,back:()=>{}});const render=()=>{cursor=0;return m.exports.ChequeDetails(props())};const walk=n=>!n||typeof n!=='object'?[]:Array.isArray(n)?n.flatMap(walk):[n,...walk(n.props?.children)];
+let tree=render();let html=renderToStaticMarkup(tree);assert(html.includes('تاریخ واگذاری'));assert(html.includes('برگشتی نزد مشتری'));assert(html.includes('۶۰'));assert(html.includes('123'));
+const statusSelect=walk(tree).find(n=>n.type==='select'&&walk(n).some(c=>c.type==='option'&&c.props.children==='همه وضعیت‌ها'));assert(statusSelect);
+statusSelect.props.onChange({target:{value:'واگذار شده'}});tree=render();html=renderToStaticMarkup(tree);let dataRows=walk(tree).filter(n=>n.type==='tr'&&n.key!==null);assert.equal(dataRows.length,1);assert.equal(dataRows[0].key,'a');assert(html.includes('۱۰'));
+branch='B';tree=render();assert.equal(walk(tree).filter(n=>n.type==='tr'&&n.key!==null).length,0);
+statusSelect.props.onChange({target:{value:''}});tree=render();dataRows=walk(tree).filter(n=>n.type==='tr'&&n.key!==null);assert.equal(dataRows.length,1);assert.equal(dataRows[0].key,'b');
+console.log('PASS current cheque columns, actual status labels, status filter totals and branch/status intersection.');

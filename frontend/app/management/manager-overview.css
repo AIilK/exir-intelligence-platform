@@ -1,0 +1,92 @@
+/* نمای مدیر: سربرگ زنده با گوی‌های شناور، حلقه‌های نبض، شاخص‌های شمارنده با درخشش، دو ستون مالی/فروش و رتبه هیبریدها. */
+.mo{--mo-fin:#2dd4bf;--mo-sales:#60a5fa;--mo-ac:var(--ac,#2dd4bf)}
+.mo .up{color:#4ade80}
+.mo .down{color:#fb923c}
+
+/* ---------------- سربرگ */
+.mo-hero{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;padding:22px 24px;border-radius:22px;
+  background:linear-gradient(120deg,#0b2233,#0f1d2a 45%,#1b1438);border:1px solid #27445a;box-shadow:0 20px 50px #0006;animation:moIn .6s cubic-bezier(.2,.9,.3,1.1) both}
+.mo-hero::before{content:"";position:absolute;inset:-2px;border-radius:inherit;padding:1.5px;background:conic-gradient(from var(--mo-a,0deg),transparent 0 60%,var(--mo-ac) 75%,#a78bfa 85%,transparent 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:moSpin 6s linear infinite;pointer-events:none}
+@property --mo-a{syntax:"<angle>";initial-value:0deg;inherits:false}
+@keyframes moSpin{to{--mo-a:360deg}}
+.mo-orb{position:absolute;border-radius:50%;filter:blur(40px);opacity:.35;pointer-events:none;animation:moFloat 12s ease-in-out infinite alternate}
+.mo-orb.a{width:220px;height:220px;background:var(--mo-ac);top:-90px;right:12%}
+.mo-orb.b{width:180px;height:180px;background:#6366f1;bottom:-100px;left:30%;animation-delay:-4s}
+.mo-orb.c{width:120px;height:120px;background:#ec4899;top:10px;left:6%;opacity:.22;animation-delay:-8s}
+@keyframes moFloat{to{transform:translate(40px,24px) scale(1.15)}}
+.mo-hero-text{position:relative;flex:1 1 380px;min-width:0}
+.mo-hero-text small{color:var(--mo-ac);font-size:12px}
+.mo-hero-text h2{margin:4px 0 8px;font-size:24px}
+.mo-hero-text p{margin:0;color:#c6d7db;font-size:13.5px;line-height:2.1}
+.mo-hero-text p b{color:#fff}
+.mo-wave{display:inline-block;transform-origin:70% 70%;animation:moWave 2.4s ease-in-out 1s 2}
+@keyframes moWave{0%,60%,100%{transform:rotate(0)}10%,30%{transform:rotate(16deg)}20%,40%{transform:rotate(-10deg)}}
+.mo-rings{position:relative;display:flex;gap:10px;flex-wrap:wrap}
+.mo-ring{position:relative;width:118px;display:grid;justify-items:center;gap:1px;background:#0a1824aa;border:1px solid #23485a;border-radius:18px;padding:10px 6px;color:#e6f2f2;
+  font:inherit;cursor:pointer;transition:transform .25s,border-color .25s;backdrop-filter:blur(6px)}
+.mo-ring:disabled{cursor:default}
+.mo-ring:not(:disabled):hover{transform:translateY(-3px);border-color:var(--mo-ac)}
+.mo-ring svg{width:76px;height:76px;transform:rotate(-90deg)}
+.mo-ring-track{fill:none;stroke:#1d3445;stroke-width:9}
+.mo-ring-fill{fill:none;stroke-width:9;stroke-linecap:round;transition:stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1);filter:drop-shadow(0 0 6px currentColor)}
+.mo-ring b{position:absolute;top:36px;font-size:17px}
+.mo-ring span{font-size:12.5px;margin-top:2px}
+.mo-ring small{color:#8ea4af;font-size:10.5px}
+
+/* ---------------- شاخص‌های شمارنده */
+.mo-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.mo-tile{position:relative;overflow:hidden;display:grid;gap:4px;text-align:right;padding:14px 16px;border-radius:16px;color:#e6f2f2;font:inherit;cursor:pointer;
+  background:linear-gradient(150deg,#132636,#0e1c29);border:1px solid #243847;animation:moIn .55s cubic-bezier(.2,.9,.3,1.2) both;transition:transform .25s,box-shadow .25s,border-color .25s}
+.mo-tile:hover{transform:translateY(-4px);box-shadow:0 16px 34px #0007;border-color:var(--mo-ac)}
+.mo-tile.good{border-top:3px solid #4ade80}.mo-tile.watch{border-top:3px solid #fbbf24}.mo-tile.follow{border-top:3px solid #fb7185}.mo-tile.neutral{border-top:3px solid var(--mo-ac)}
+.mo-tile-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mo-tile-top small{color:#9fb4bd;font-size:12px}
+.mo-tile-top em{font-style:normal;font-size:10.5px;border-radius:999px;padding:1px 8px}
+.mo-tile-top em.fin{background:#0f3a37;color:#5eead4}
+.mo-tile-top em.sales{background:#13294a;color:#93c5fd}
+.mo-tile b{font-size:24px;font-variant-numeric:tabular-nums;min-height:34px}
+.mo-unit{color:#8ea4af;font-size:11px;margin-top:-4px}
+.mo-hint{color:#b9ccd1;font-size:11.5px;line-height:1.7}
+.mo-err{font-size:12px;color:#fca5a5;font-weight:normal}
+.mo-tile-glow{position:absolute;inset:0;background:radial-gradient(circle at var(--mx,80%) -20%,var(--ac-soft,#2dd4bf22),transparent 55%);pointer-events:none;opacity:.8}
+.mo-shimmer{display:block;height:22px;width:70%;border-radius:8px;background:linear-gradient(90deg,#16293a,#21405a,#16293a);background-size:200% 100%;animation:moShimmer 1.2s linear infinite}
+@keyframes moShimmer{to{background-position:-200% 0}}
+
+/* ---------------- دو ستون */
+.mo-lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:14px;align-items:start}
+.mo-lane{position:relative}
+.mo-lane.fin{border-top:3px solid var(--mo-fin)}
+.mo-lane.sales{border-top:3px solid var(--mo-sales)}
+.mo-lane .xo-block-title{justify-content:space-between}
+.mo-lane .xo-stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.mo-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-left:8px;animation:moPulse 2s ease-in-out infinite}
+.mo-dot.fin{background:var(--mo-fin);box-shadow:0 0 10px var(--mo-fin)}
+.mo-dot.sales{background:var(--mo-sales);box-shadow:0 0 10px var(--mo-sales)}
+@keyframes moPulse{50%{transform:scale(1.35);opacity:.7}}
+.mo-link{background:#132636;border:1px solid #2a4a5c;color:#cfe3e6;border-radius:10px;padding:5px 12px;font:inherit;font-size:12px;cursor:pointer;transition:border-color .2s,transform .2s}
+.mo-link:hover{border-color:var(--mo-ac);transform:translateX(-3px)}
+.mo-lane .mc-grid{grid-template-columns:1fr}
+
+/* ---------------- تصمیم‌ها و رتبه */
+.mo-bottom{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:14px;align-items:start}
+.mo-rank-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.mo-rank-list li{display:flex;gap:10px;align-items:center;background:#132636;border:1px solid #213847;border-radius:12px;padding:8px 10px;animation:moSlide .5s ease both;transition:transform .2s,border-color .2s}
+.mo-rank-list li:hover{transform:translateX(-4px);border-color:var(--mo-sales)}
+.mo-medal{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#0b1824;font-size:14px}
+.mo-medal.m0,.mo-medal.m1,.mo-medal.m2{font-size:20px;background:none;animation:moBounce 2.6s ease-in-out infinite}
+.mo-medal.m1{animation-delay:.3s}.mo-medal.m2{animation-delay:.6s}
+@keyframes moBounce{0%,80%,100%{transform:translateY(0)}88%{transform:translateY(-5px)}}
+.mo-rank-body{flex:1;min-width:0;display:grid;gap:3px}
+.mo-rank-head{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.mo-rank-head span{color:#cfe3e6;font-variant-numeric:tabular-nums}
+.mo-rank-bar{display:block;height:6px;border-radius:6px;background:#0b1824;overflow:hidden}
+.mo-rank-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--mo-sales),var(--mo-ac));transform-origin:right;animation:moGrow 1.1s cubic-bezier(.2,.8,.2,1) both}
+.mo-rank-list small{color:#8ea4af;font-size:11.5px}
+
+@keyframes moIn{from{opacity:0;transform:translateY(16px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes moSlide{from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
+@keyframes moGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (max-width:1000px){.mo-bottom{grid-template-columns:1fr}}
+@media (max-width:640px){.mo-hero{padding:16px}.mo-hero-text h2{font-size:20px}.mo-ring{width:100px}}
+@media (prefers-reduced-motion:reduce){.mo *,.mo-hero::before{animation:none!important;transition:none!important}}

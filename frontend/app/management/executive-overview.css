@@ -1,0 +1,111 @@
+/* خلاصه مدیریتی — نمای کلان (چک، پرداخت تجاری، نقدینگی) + توضیح Agentها. تم تیره داشبورد. */
+.xo{--xo-text:#e6f2f2;--xo-muted:#8ea4af;--xo-line:#243847;--xo-surface:#0f1d2a;--xo-raised:#132636;--xo-neg:#fb7185;color:var(--xo-text);display:grid;gap:14px;margin-bottom:18px}
+.xo-head h2{margin:4px 0;font-size:20px}
+.xo-head small{color:var(--xo-muted)}
+.xo-head p{margin:0;color:var(--xo-muted);font-size:13px;line-height:1.8}
+.xo-block{background:var(--xo-surface);border:1px solid var(--xo-line);border-radius:14px;padding:14px 16px;animation:xoIn .35s ease both}
+.xo-block-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.xo-block-title h3{margin:0;font-size:16px}
+.xo-block-title small{color:var(--xo-muted);font-size:12px}
+.xo-num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#14433f;color:#7bffe9;font-size:13px}
+.xo-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);gap:14px;align-items:start}
+.xo-main{display:grid;gap:12px;min-width:0}
+.xo-side{display:grid;gap:10px}
+.xo-loading{color:var(--xo-muted);padding:18px;text-align:center}
+.xo-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.xo-tiles.four{grid-template-columns:repeat(4,1fr)}
+.xo-tile{display:grid;gap:3px;text-align:right;background:var(--xo-raised);border:1px solid var(--xo-line);border-radius:12px;padding:11px 13px;color:var(--xo-text);font:inherit;cursor:pointer;transition:transform .2s ease,border-color .2s ease;min-height:0}
+.xo-tile:hover{transform:translateY(-2px);border-color:#2f5466}
+.xo-tile.static{cursor:default}
+.xo-tile.static:hover{transform:none;border-color:var(--xo-line)}
+.xo-tile small{color:var(--xo-muted);font-size:12px;display:flex;align-items:center;gap:6px}
+.xo-tile small i,.xo-legend i,.xo-tooltip i{display:inline-block;width:10px;height:10px;border-radius:3px}
+.xo-tile b{font-size:20px;font-variant-numeric:tabular-nums}
+.xo-tile b.neg{color:var(--xo-neg)}
+.xo-tile span{color:var(--xo-muted);font-size:11px}
+.xo-tile em{color:#b9ccd1;font-size:11px;font-style:normal;line-height:1.7}
+.xo-chart{margin:0;background:var(--xo-raised);border:1px solid var(--xo-line);border-radius:12px;padding:10px 12px}
+.xo-chart figcaption{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;margin-bottom:6px}
+.xo-legend{display:flex;gap:12px;color:var(--xo-muted);font-size:12px;align-items:center}
+.xo-legend span{display:inline-flex;gap:5px;align-items:center}
+.xo-chart-wrap{position:relative}
+.xo-chart svg{display:block;width:100%;height:auto}
+.xo-grid-line{stroke:#22394a;stroke-width:1}
+.xo-base-line{stroke:#3a5566;stroke-width:1}
+.xo-zero-line{stroke:#5b7584;stroke-width:1;stroke-dasharray:4 4}
+.xo-axis{fill:var(--xo-muted);font-size:11px;font-family:inherit}
+.xo-axis.center{text-anchor:middle}
+.xo-axis.warn{fill:#fda4af}
+.xo-direct{fill:var(--xo-text);font-size:11px;font-family:inherit}
+.xo-hover-band{fill:#ffffff0d}
+.xo-crosshair{stroke:#ffffff55;stroke-width:1}
+.xo-dot{stroke:var(--xo-raised);stroke-width:2}
+.xo-tooltip{position:absolute;top:6px;transform:translateX(-50%);background:#0b1824;border:1px solid #2f5466;border-radius:9px;padding:8px 10px;font-size:12px;display:grid;gap:3px;pointer-events:none;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:2}
+.xo-tooltip span{display:flex;gap:6px;align-items:center}
+.xo-tooltip .muted{color:var(--xo-muted)}
+.xo-hbars{display:grid;gap:6px}
+.xo-hbar{display:grid;grid-template-columns:minmax(0,1.2fr) 2fr 90px;gap:10px;align-items:center;background:transparent;border:0;color:var(--xo-text);font:inherit;font-size:12px;text-align:right;cursor:pointer;padding:3px 0;min-height:0}
+.xo-hbar:hover .xo-hbar-track i{filter:brightness(1.15)}
+.xo-hbar-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xo-hbar-label small{color:var(--xo-muted);margin-right:6px}
+.xo-hbar-track{height:10px;background:#0b1824;border-radius:5px;overflow:hidden}
+.xo-hbar-track i{display:block;height:100%;border-radius:0 4px 4px 0;animation:xoGrow .7s ease both;transform-origin:right}
+.xo-hbar-value{font-variant-numeric:tabular-nums;color:#cbdadd}
+.xo-note{color:var(--xo-muted);font-size:11px;line-height:1.8;margin:0}
+/* Agent insight */
+.ai-insight{background:linear-gradient(160deg,rgba(45,212,191,.08),rgba(19,38,54,.9));border:1px solid #23485a;border-radius:12px;padding:10px 12px;display:grid;gap:6px;font-size:12px;color:#e6f2f2}
+.ai-insight.status-critical{border-color:rgba(251,113,133,.5)}
+.ai-insight.status-attention{border-color:rgba(251,191,36,.45)}
+.ai-insight-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ai-insight-badge{background:#14433f;color:#7bffe9;border-radius:999px;padding:2px 9px;font-size:11px}
+.ai-insight-head small{color:#8ea4af;font-size:11px;margin-left:auto}
+.ai-insight-head button,.ai-insight-more{background:#1c3140;color:#cfe3e6;border:0;border-radius:7px;padding:3px 9px;cursor:pointer;font:inherit;font-size:11px;min-height:0}
+.ai-insight-headline{font-size:13px;line-height:1.8}
+.ai-insight-summary{margin:0;color:#cbdadd;line-height:1.9}
+.ai-insight-alert{margin:0;line-height:1.8;color:#e6f2f2}
+.ai-insight-alert span{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:10px;background:#334155}
+.ai-insight-alert.critical span{background:rgba(251,113,133,.25);color:#fecdd3}
+.ai-insight-alert.high span{background:rgba(251,191,36,.22);color:#fde68a}
+.ai-insight-alert em{color:#8ea4af;font-style:normal}
+.ai-insight-next{margin:0;color:#7bffe9}
+.ai-insight-error{margin:0;color:#fca5a5}
+@keyframes xoIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes xoGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (max-width:1100px){.xo-grid{grid-template-columns:1fr}.xo-tiles.four{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:700px){.xo-tiles{grid-template-columns:1fr}.xo-hbar{grid-template-columns:1fr 1fr 70px}}
+@media (prefers-reduced-motion:reduce){.xo *,.xo{animation:none!important;transition:none!important}}
+/* v2 — کارت‌های ساده: عنوان کوتاه، عدد بزرگ، یک خط راهنما، پیوند مقصد. رنگ وضعیت ملایم (بدون قرمز تند). */
+.xo-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.xo-head h2{margin:0;font-size:20px}
+.xo-head p{margin:0;color:var(--xo-muted);font-size:13px}
+.xo-jump{display:flex;gap:6px;margin-right:auto}
+.xo-jump a{color:#cfe3e6;background:#132636;border:1px solid var(--xo-line);border-radius:999px;padding:4px 12px;font-size:12px;text-decoration:none;transition:border-color .2s ease}
+.xo-jump a:hover{border-color:#2dd4bf}
+.xo-block{scroll-margin-top:16px}
+.xo-block-title{margin-bottom:10px}
+.xo-row-label{color:var(--xo-muted);font-size:12px;margin:2px 0 -4px}
+.xo-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.xo-stats.four{grid-template-columns:repeat(4,1fr)}
+.xo-stat{position:relative;display:grid;gap:2px;text-align:right;background:var(--xo-raised);border:1px solid var(--xo-line);border-top:3px solid #2a4555;border-radius:12px;padding:10px 13px 11px;color:var(--xo-text);font:inherit;cursor:pointer;min-height:0;transition:transform .2s ease,border-color .2s ease}
+.xo-stat:hover{transform:translateY(-2px);border-color:#2f5466}
+.xo-stat.static{cursor:default}.xo-stat.static:hover{transform:none}
+.xo-stat small{display:flex;align-items:center;gap:6px;color:#b9ccd1;font-size:13px}
+.xo-stat small i{display:inline-block;width:10px;height:10px;border-radius:3px}
+.xo-stat b{font-size:22px;line-height:1.3;font-variant-numeric:tabular-nums}
+.xo-stat span{color:var(--xo-muted);font-size:11px;margin-top:-2px}
+.xo-stat em{color:var(--xo-muted);font-size:11px;font-style:normal;line-height:1.7}
+.xo-stat u{text-decoration:none;color:#5eead4;font-size:12px;margin-top:4px}
+.xo-stat.good{border-top-color:#0d9488}
+.xo-stat.watch{border-top-color:#b45309}
+.xo-stat.follow{border-top-color:#a16207;background:linear-gradient(180deg,rgba(217,119,6,.08),var(--xo-raised) 60%)}
+.xo-stat.follow u,.xo-stat.watch u{color:#fbbf24}
+.xo-wait{color:var(--xo-muted)}
+.ai-insight.tone-watch{border-color:rgba(217,119,6,.45)}
+.ai-insight.tone-calm{border-color:#23485a}
+.ai-insight-head button{min-width:28px}
+.ai-insight-alert.critical span{background:rgba(217,119,6,.22);color:#fde68a}
+.ai-insight-alert.high span{background:rgba(148,163,184,.2);color:#e2e8f0}
+.ai-insight-next{color:#5eead4}
+.ai-insight-more{justify-self:start}
+@media (max-width:1100px){.xo-stats.four{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:700px){.xo-stats{grid-template-columns:1fr}}

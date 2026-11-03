@@ -1,0 +1,62 @@
+/* «قیمت‌گذاری انبار» — scoped to .ip-page; colours follow the dark command-center theme like .lq-page. */
+.ip-page{--ip-text:#e6f2f2;--ip-muted:#8ea4af;--ip-line:#243847;--ip-surface:#0f1d2a;--ip-accent:#2dd4bf;--ip-bad:#f87171;--ip-warn:#fbbf24;--ip-ok:#34d399;color:var(--ip-text)}
+.ip-loading{padding:40px;text-align:center;color:#8ea4af}
+.ip-alarm{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start;padding:16px 18px;border-radius:14px;border:1px solid rgba(248,113,113,.45);background:linear-gradient(135deg,rgba(248,113,113,.14),rgba(15,29,42,.9));margin-bottom:14px}
+.ip-alarm small{color:var(--ip-muted)}
+.ip-alarm h2{margin:6px 0;font-size:20px}
+.ip-alarm p{margin:0;color:#cbdadd;line-height:1.9;font-size:13px;max-width:760px}
+.ip-alarm p b{color:var(--ip-bad)}
+.ip-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.ip-seg{display:flex;background:var(--ip-surface);border:1px solid var(--ip-line);border-radius:11px;padding:3px}
+.ip-seg button{border:0;background:transparent;color:var(--ip-muted);padding:7px 12px;border-radius:8px;cursor:pointer;font:inherit;font-size:12px}
+.ip-seg button.active{background:#14433f;color:#7bffe9}
+.ip-download,.ip-link{background:#1c3140;color:#cfe3e6;border:0;border-radius:9px;padding:8px 13px;cursor:pointer;font:inherit;font-size:12px;text-decoration:none}
+.ip-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.ip-kpis article{background:var(--ip-surface);border:1px solid var(--ip-line);border-radius:12px;padding:12px 14px;display:grid;gap:4px}
+.ip-kpis small{color:var(--ip-muted);font-size:12px}
+.ip-kpis b{font-size:22px}
+.ip-kpis span{color:var(--ip-muted);font-size:12px}
+.ip-kpis article.bad b{color:var(--ip-bad)}
+.ip-months{background:var(--ip-surface);border:1px solid var(--ip-line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.ip-months h3,.ip-plant h3,.ip-docs h3{margin:0 0 10px;font-size:14px}
+.ip-month-bars{display:flex;gap:10px;align-items:flex-end;height:130px}
+.ip-month-bars div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px;min-width:0}
+.ip-month-bars i{width:60%;max-width:46px;background:var(--ip-ok);border-radius:5px 5px 0 0;min-height:2px}
+.ip-month-bars i.low{background:var(--ip-bad)}
+.ip-month-bars b{font-size:12px}
+.ip-month-bars small{font-size:11px;color:var(--ip-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.ip-plant{margin-bottom:14px}
+.ip-store-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.ip-store{display:grid;gap:4px;text-align:right;background:var(--ip-surface);border:1px solid var(--ip-line);border-right:4px solid var(--ip-line);border-radius:12px;padding:11px 13px;color:var(--ip-text);cursor:pointer;font:inherit}
+.ip-store span{font-size:13px;font-weight:700}
+.ip-store span small{color:var(--ip-muted);font-weight:normal}
+.ip-store strong{font-size:24px;color:var(--ip-bad)}
+.ip-store small,.ip-store em{color:var(--ip-muted);font-size:11px;font-style:normal}
+.ip-store.critical{border-right-color:var(--ip-bad)}
+.ip-store.warn{border-right-color:var(--ip-warn)}
+.ip-store.clean strong{color:var(--ip-ok)}
+.ip-store.selected{border-color:var(--ip-accent);box-shadow:0 0 0 1px var(--ip-accent)}
+.ip-docs{background:var(--ip-surface);border:1px solid var(--ip-line);border-radius:12px;padding:12px 14px}
+.ip-docs-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.ip-filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.ip-filters select,.ip-filters input{background:#0b1824;border:1px solid #2a4555;border-radius:8px;color:var(--ip-text);padding:7px 9px;font:inherit;font-size:12px}
+.ip-filters input{min-width:260px;flex:1}
+.ip-filters small{color:var(--ip-muted)}
+.ip-table-wrap{overflow:auto;max-height:620px}
+.ip-table{width:100%;border-collapse:collapse;font-size:12px}
+.ip-table th{position:sticky;top:0;background:#132636;color:var(--ip-muted);font-weight:normal;text-align:right;padding:8px 6px;border-bottom:1px solid var(--ip-line);white-space:nowrap}
+.ip-table td{padding:7px 6px;border-bottom:1px solid var(--ip-line);vertical-align:top}
+.ip-table td small{display:block;color:var(--ip-muted);font-size:11px}
+.ip-table td.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+.ip-table td.desc{min-width:220px;color:#cbdadd}
+.ip-table tr.critical td:first-child{box-shadow:inset -3px 0 var(--ip-bad)}
+.ip-table tr.warn td:first-child{box-shadow:inset -3px 0 var(--ip-warn)}
+.ip-more,.ip-note{color:var(--ip-muted);font-size:12px;margin-top:10px}
+@media (max-width:900px){.ip-kpis{grid-template-columns:repeat(2,1fr)}.ip-filters input{min-width:0}}
+.ip-kpis{grid-template-columns:repeat(5,1fr)}
+.ip-kpis article.good b{color:var(--ip-ok)}
+.ip-store em.ip-priced{color:var(--ip-ok)}
+.ip-pricing{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;white-space:nowrap}
+.ip-pricing.yes{background:rgba(52,211,153,.15);color:var(--ip-ok)}
+.ip-pricing.no{background:rgba(248,113,113,.15);color:var(--ip-bad)}
+@media (max-width:900px){.ip-kpis{grid-template-columns:repeat(2,1fr)}}
