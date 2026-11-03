@@ -111,6 +111,12 @@ MODULES: dict[str, dict[str, Any]] = {
         "alarm_agents": [],
         "chat_tools": [],
     },
+    "excelReports": {
+        "title": "گزارش‌ساز اکسل",
+        "views": [],
+        "alarm_agents": [],
+        "chat_tools": [],
+    },
     "inventoryPricing": {
         "title": "قیمت‌گذاری انبار",
         "views": ["inventoryPricing"],
@@ -175,6 +181,7 @@ API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/finance/page-agents/run-all", ("admin",)),
     ("/api/v1/finance/payables", ("payables", "management")),
     ("/api/v1/finance/pnl", ("pnl",)),
+    ("/api/v1/finance/excel-reports", ("excelReports",)),
     ("/api/v1/finance/process-health", ("management",)),
     ("/api/v1/finance/manager-combined", ("management", "sales")),
     ("/api/v1/finance/purchase-", ("purchaseDocs",)),

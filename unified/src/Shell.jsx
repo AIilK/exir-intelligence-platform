@@ -61,6 +61,11 @@ const GROUPS = [
     ],
   },
   {
+    id: 'reports', label: 'گزارش‌ها', dot: 'var(--u-warn)', items: [
+      { to: '/reports', label: 'گزارش‌ساز اکسل', icon: '▦' },
+    ],
+  },
+  {
     id: 'system', label: 'سیستم و الارم‌ها', dot: 'var(--u-muted)', items: [
       { to: '/finance/alerts', label: 'مرکز الارم‌ها', icon: '🔔' },
       { to: '/finance/users', label: 'مدیریت کاربران', icon: '👥' },
@@ -91,6 +96,7 @@ const ROUTE_MODULES = [
   ['/rahkaran', ['salesB2B']],
   ['/files/rahkaran', ['salesB2B', 'customers']],
   ['/reconciliation', ['reconciliation']],
+  ['/reports', ['excelReports']],
   ['/detail', SALES_ALL],
 ]
 

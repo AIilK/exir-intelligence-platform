@@ -1036,3 +1036,29 @@ def manager_combined(year: int, month: int = Query(ge=1, le=12)):
     from app.services import manager_combined_service
 
     return manager_combined_service.overview(year, month)
+
+
+# ---------------------------------------------------------------- گزارش‌ساز اکسل (ویزیتور / سرپرست / هیبرید)
+@router.get("/excel-reports/options", summary="گزارش‌ساز اکسل: نام‌ها، شهرها و شعبه‌ها برای فیلتر")
+def excel_report_options(date_from: str | None = None, date_to: str | None = None):
+    from app.services import excel_reports_service
+
+    return excel_reports_service.options(date_from, date_to)
+
+
+@router.get("/excel-reports/{kind}.xlsx", summary="گزارش‌ساز اکسل: کارپوشه چندبرگه ویزیتورها، سرپرست‌ها یا هیبریدها")
+def excel_report(kind: str, date_from: str | None = None, date_to: str | None = None,
+                 name: str | None = None, city: str | None = None, branch: str | None = None):
+    from urllib.parse import quote
+    from app.services import excel_reports_service
+
+    try:
+        content, fname = excel_reports_service.build(kind, date_from, date_to, name or None, city or None, branch or None)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="نوع گزارش نامعتبر است.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ساخت اکسل با خطا مواجه شد: {exc}") from exc
+    return Response(content=content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename=report-{kind}.xlsx; filename*=UTF-8''" + quote(fname)})

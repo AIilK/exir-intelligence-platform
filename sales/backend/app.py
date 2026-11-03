@@ -507,6 +507,45 @@ def team(req: Request):
             "supervisors": A.records(sup[[x for x in BASE_COLS if x in sup]])}
 
 
+@app.get("/api/report/people")
+def report_people(req: Request):
+    """ماژول «گزارش اکسل» (بک‌اند مالی): عملکرد ویزیتور، سرپرست و شعبه در بازه با همه فیلترهای داشبورد.
+    تخفیف حجمی/نقدی/مدیریتی به نسبت ناخالص فروش؛ تحقق هر شعبه همان «تحقق و پورسانت»؛ ویزیت ثبت‌شده = اسناد درخواست."""
+    tx, rq, c, f = frames(req)
+    sale = tx[~tx["is_return"]]
+    cols = BASE_COLS + ["qty", "req_docs", "city", "branch", "supervisor", "seller_code"]
+
+    def disc(key: str) -> pd.DataFrame:
+        # تخفیف مدیریتی را خود group_metrics (mgmt_disc_rate) دارد
+        d = sale.groupby(key)[["gross", "vol_disc", "cash_disc"]].sum()
+        out = pd.DataFrame(index=d.index)
+        for k in ("vol_disc", "cash_disc"):
+            out[f"{k}_rate"] = d[k] / d["gross"].replace(0, np.nan)
+        return out.reset_index().rename(columns={key: "key"})
+
+    def table(dim: str, extra: list[str]) -> pd.DataFrame:
+        key = A.DIMS[dim][0]
+        g = A.group_metrics(tx, rq, dim, c, f, extra)
+        return g.merge(disc(key), on="key", how="left")
+
+    sellers = table("seller", ["branch", "supervisor", "seller_code", "city"])
+    sups = table("supervisor", ["branch", "city"])
+    branches = table("branch", ["city"])
+    ach_month, ach = _hybrid_achievement(f)
+    for g, col in ((branches, "key"), (sups, "branch"), (sellers, "branch")):
+        g["branch_ach"] = g[col].map(lambda b: (ach.get(K.bkey(b)) or {}).get("ach") if isinstance(b, str) else None)
+        g["branch_target_rial"] = g[col].map(lambda b: (ach.get(K.bkey(b)) or {}).get("target_rial") if isinstance(b, str) else None)
+    branches["ach_rank"] = branches["branch_ach"].rank(ascending=False, method="min")
+    rates = ["vol_disc_rate", "cash_disc_rate", "mgmt_disc_rate", "branch_ach", "branch_target_rial", "ach_rank"]
+    pick = lambda g: A.records(g[[x for x in dict.fromkeys(cols + rates) if x in g]])  # noqa: E731
+    # پرفروش‌ترین کالاهای هر ویزیتور (برای شیت ریز SKU)
+    sku = (sale.groupby(["seller_key", "product_code", "product"], observed=True)[["qty", "net"]].sum().reset_index()
+           .sort_values(["seller_key", "net"], ascending=[True, False]).groupby("seller_key").head(40))
+    return {"date_from": f.get("date_from"), "date_to": f.get("date_to"), "ach_month": ach_month, "kpis": A.kpis(tx, rq, c, f),
+            "sellers": pick(sellers), "supervisors": pick(sups), "branches": pick(branches),
+            "seller_products": A.records(sku.rename(columns={"seller_key": "key"}))}
+
+
 @app.get("/api/inactive")
 def inactive(req: Request):
     """فروشندگان غیرفعال: از ۱۴۰۴ درخواست داشته‌اند ولی از ماه since (پیش‌فرض اردیبهشت ۱۴۰۵) هیچ درخواستی ندارند.

@@ -395,3 +395,28 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
   .u-nav-body, .u-nav-body a, .u-nav-head em, .u-nav-head > span, .u-nav a > i { transition: none !important; }
   .u-side > .u-nav { animation: none; }
 }
+
+/* ---------------- گزارش‌ساز اکسل (pages/ExcelReports.jsx) */
+.xr-range { display: flex; gap: 10px; flex-wrap: wrap; }
+.xr-range label, .xr-filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--u-muted); }
+.xr-range input, .xr-filters input { background: var(--u-surface-2); border: 1px solid var(--u-border-2); border-radius: 10px; color: var(--u-text); padding: 9px 12px; min-height: 40px; box-sizing: border-box; font: inherit; font-size: 13.5px; min-width: 0; }
+.xr-range input { width: 130px; text-align: center; }
+.xr-range input:focus, .xr-filters input:focus { outline: 2px solid var(--u-fin); outline-offset: 1px; }
+.xr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.xr-card { animation: xr-in .5s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes xr-in { from { opacity: 0; transform: translateY(12px); } }
+.xr-card-head { display: flex; gap: 12px; align-items: center; }
+.xr-card-head > i { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-style: normal; font-size: 22px; background: linear-gradient(135deg, #2dd4bf33, #60a5fa33); color: var(--u-text); }
+.xr-card-head h2 { margin: 0; font-size: 16px; }
+.xr-card-head small { color: var(--u-muted); font-size: 12px; }
+.xr-sheets { margin: 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 5px; color: var(--u-text-2); font-size: 12.5px; line-height: 1.7; }
+.xr-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.xr-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: auto; }
+.xr-actions .u-btn { gap: 8px; }
+.xr-actions .u-btn:disabled { opacity: .7; cursor: progress; }
+.xr-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #04221f55; border-top-color: #04221f; animation: xr-spin .8s linear infinite; }
+@keyframes xr-spin { to { transform: rotate(360deg); } }
+.xr-ok { color: var(--u-good-t); font-size: 12.5px; }
+.xr-err { color: var(--u-bad-t); font-size: 12.5px; }
+.xr-note { color: var(--u-muted); font-size: 12px; line-height: 1.9; margin: 0; }
+@media (prefers-reduced-motion: reduce) { .xr-card, .xr-spin { animation: none; } }
