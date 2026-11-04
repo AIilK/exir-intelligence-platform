@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>گزارش‌های تجمیعی</title>
+<style>
+  :root {
+    --bg: #f4f6f9; --panel: #fff; --text: #1d2733; --muted: #6b7785; --line: #e2e6ec;
+    --accent: #1f4e78; --accent-soft: #e8f0f8; --row-alt: #fafbfd; --hover: #fff7e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13171c; --panel: #1b2027; --text: #e4e8ee; --muted: #93a0ae; --line: #2c333d;
+      --accent: #5b9bd5; --accent-soft: #22303f; --row-alt: #1e242c; --hover: #2d2a1f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: Vazirmatn, "Segoe UI", Tahoma, sans-serif; font-size: 14px;
+    background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  button, .btn {
+    font: inherit; border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    border-radius: 8px; padding: 7px 14px; cursor: pointer; white-space: nowrap;
+  }
+  button.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  nav.tabs { display: flex; gap: 6px; padding: 10px 20px 0; overflow-x: auto; }
+  .tab {
+    border: 1px solid var(--line); border-bottom: none; background: var(--panel); color: var(--text);
+    border-radius: 10px 10px 0 0; padding: 8px 14px; cursor: pointer; text-align: right;
+  }
+  .tab small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .tab.active { background: var(--accent-soft); border-color: var(--accent); }
+  .tab.err small, .tab small.warn { color: #c0392b; }
+  .badge { display: inline-block; font-size: 10px; padding: 0 6px; border-radius: 8px; margin-inline-start: 6px; vertical-align: middle; }
+  .badge.db { background: #1e8e3e; color: #fff; }
+  .badge.excel { background: #e0a100; color: #000; }
+  main {
+    flex: 1; min-height: 0; margin: 0 20px 16px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 0 0 10px 10px; display: flex; flex-direction: column;
+  }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .toolbar input {
+    font: inherit; flex: 1; min-width: 200px; padding: 7px 10px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  .count { color: var(--muted); font-size: 13px; }
+  .grid { flex: 1; overflow: auto; }
+  table { border-collapse: collapse; width: max-content; min-width: 100%; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); white-space: nowrap; max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
+  th {
+    position: sticky; top: 0; z-index: 1; background: var(--accent); color: #fff; font-weight: 600;
+    cursor: pointer; user-select: none;
+  }
+  th .arrow { opacity: .8; margin-right: 4px; }
+  tr.filters th {
+    top: var(--head-h, 33px); background: var(--accent-soft); cursor: default; padding: 4px;
+    border-bottom: 2px solid var(--accent);
+  }
+  tr.filters input, tr.filters select {
+    font: inherit; font-size: 12px; width: 100%; min-width: 90px; padding: 4px 6px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text);
+  }
+  tr.filters .on { border-color: #e0a100; background: var(--hover); }
+  #clearFilters { display: none; }
+  tbody tr:nth-child(even) td { background: var(--row-alt); }
+  tbody tr:hover td { background: var(--hover); }
+  td.num { direction: ltr; text-align: right; font-variant-numeric: tabular-nums; }
+  td.rn { color: var(--muted); font-size: 12px; }
+  .pager { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .pager select { font: inherit; padding: 4px; border-radius: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--line); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  @media (max-width: 640px) {
+    header, nav.tabs { padding-left: 16px; padding-right: 16px; }
+    main { margin: 0 16px 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>گزارش‌های تجمیعی انبار</h1>
+  <span class="meta" id="meta"></span>
+  <span class="spacer"></span>
+  <button class="ghost" id="refresh">⟳ به‌روزرسانی از دیتابیس</button>
+  <button id="exportAll">⬇ دانلود اکسل تجمیعی (همهٔ شیت‌ها)</button>
+</header>
+<nav class="tabs" id="tabs"></nav>
+<main>
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="جستجو در همهٔ ستون‌ها… (چند کلمه = همه باید باشند)">
+    <span class="count" id="count"></span>
+    <button class="ghost" id="clearFilters">✕ پاک کردن فیلترها</button>
+    <button class="ghost" id="exportOne">⬇ اکسل همین شیت (با فیلتر)</button>
+  </div>
+  <div class="grid" id="grid"><div class="empty">در حال بارگذاری…</div></div>
+  <div class="pager">
+    <button class="ghost" id="prev">قبلی</button>
+    <span id="pageInfo"></span>
+    <button class="ghost" id="next">بعدی</button>
+    <span class="spacer" style="flex:1"></span>
+    <label>تعداد در صفحه
+      <select id="size"><option>50</option><option selected>100</option><option>250</option><option>500</option></select>
+    </label>
+  </div>
+</main>
+<script>
+const fa = n => Number(n).toLocaleString('fa-IR');
+const state = { sheets: [], key: null, page: 1, size: 100, q: '', sort: null, desc: false, filters: {}, columns: [], total: 0, headFor: null };
+const $ = id => document.getElementById(id);
+
+async function loadSheets() {
+  const r = await fetch('/api/sheets');
+  const d = await r.json();
+  state.sheets = d.sheets;
+  $('meta').innerHTML = `امروز ${d.today} — منبع: ${d.source === 'db' ? esc(d.dir) : `<bdi dir="ltr">${esc(d.dir)}</bdi>`}`;
+  $('refresh').style.display = d.source === 'db' ? '' : 'none';
+  renderTabs();
+  if (!state.key) {
+    let saved = null;
+    try { saved = localStorage.getItem('sheet'); } catch (e) {}
+    const first = d.sheets.find(s => s.key === saved && !s.error) || d.sheets.find(s => !s.error);
+    if (first) selectSheet(first.key);
+  }
+}
+
+function renderTabs() {
+  $('tabs').innerHTML = '';
+  for (const s of state.sheets) {
+    const b = document.createElement('button');
+    b.className = 'tab' + (s.key === state.key ? ' active' : '') + (s.error ? ' err' : '');
+    const badge = s.source === 'db' ? '<span class="badge db">زنده</span>' : s.source === 'excel' ? '<span class="badge excel">اکسل</span>' : '';
+    const info = s.error ? esc(s.error) : `${fa(s.rows)} ردیف · به‌روز: ${s.updated}`;
+    b.innerHTML = `${esc(s.title)}${badge}<small>${info}</small>` + (s.warning ? `<small class="warn" title="${esc(s.warning)}">دیتابیس در دسترس نیست؛ دادهٔ اکسل/قبلی</small>` : '');
+    b.onclick = () => !s.error && selectSheet(s.key);
+    $('tabs').appendChild(b);
+  }
+}
+
+function selectSheet(key) {
+  Object.assign(state, { key, page: 1, sort: null, desc: false, q: '', filters: {}, headFor: null });
+  $('q').value = '';
+  try { localStorage.setItem('sheet', key); } catch (e) {}
+  renderTabs();
+  loadRows();
+}
+
+function activeFilters() {
+  const f = {};
+  for (const [k, v] of Object.entries(state.filters)) if (String(v).trim()) f[k] = v;
+  return f;
+}
+
+function params(extra = {}) {
+  const p = new URLSearchParams();
+  if (state.q) p.set('q', state.q);
+  if (state.sort !== null) { p.set('sort', state.sort); p.set('desc', state.desc); }
+  const f = activeFilters();
+  if (Object.keys(f).length) p.set('f', JSON.stringify(f));
+  for (const [k, v] of Object.entries(extra)) p.set(k, v);
+  return p.toString();
+}
+
+let reqId = 0;
+async function loadRows() {
+  const my = ++reqId;
+  const r = await fetch(`/api/sheets/${state.key}?` + params({ page: state.page, size: state.size }));
+  if (my !== reqId) return;
+  if (!r.ok) { $('grid').innerHTML = `<div class="empty">خطا در خواندن داده</div>`; state.headFor = null; return; }
+  const d = await r.json();
+  state.columns = d.columns; state.total = d.total;
+  renderTable(d);
+}
+
+// سرستون‌ها و ردیف فیلتر فقط یک بار برای هر شیت ساخته می‌شوند تا هنگام تایپ، فوکوس از دست نرود
+function buildHead(d) {
+  let h = '<table><thead><tr class="names"><th>#</th>';
+  d.columns.forEach((c, i) => { h += `<th data-i="${i}" title="مرتب‌سازی">${esc(c)}<span class="arrow"></span></th>`; });
+  h += '</tr><tr class="filters"><th></th>';
+  d.columns.forEach((c, i) => {
+    const opts = d.numeric[i] ? null : d.options[i];
+    if (opts) {
+      h += `<th><select data-f="${i}"><option value="">همه</option>` +
+        opts.map(o => `<option value="==${esc(o)}">${esc(o)}</option>`).join('') + '</select></th>';
+    } else {
+      const ph = d.numeric[i] ? 'مثلاً >100 یا 10..50' : 'شامل…';
+      h += `<th><input data-f="${i}" type="search" placeholder="${ph}"></th>`;
+    }
+  });
+  h += '</tr></thead><tbody></tbody></table><div class="empty" id="noRows" hidden>ردیفی پیدا نشد</div>';
+  $('grid').innerHTML = h;
+  const head = $('grid').querySelector('tr.names');
+  $('grid').style.setProperty('--head-h', head.getBoundingClientRect().height + 'px');
+  $('grid').querySelectorAll('tr.names th[data-i]').forEach(th => th.onclick = () => {
+    const i = +th.dataset.i;
+    if (state.sort === i) { if (state.desc) { state.sort = null; state.desc = false; } else state.desc = true; }
+    else { state.sort = i; state.desc = false; }
+    state.page = 1; loadRows();
+  });
+  let ft;
+  $('grid').querySelectorAll('[data-f]').forEach(el => {
+    el.value = state.filters[el.dataset.f] || '';
+    el.classList.toggle('on', !!el.value.trim());
+    const apply = () => {
+      state.filters[el.dataset.f] = el.value;
+      el.classList.toggle('on', !!el.value.trim());
+      state.page = 1; loadRows();
+    };
+    if (el.tagName === 'SELECT') el.onchange = apply;
+    else el.oninput = () => { clearTimeout(ft); ft = setTimeout(apply, 350); };
+  });
+  state.headFor = state.key;
+}
+
+function renderTable(d) {
+  const start = (d.page - 1) * d.size;
+  $('count').textContent = d.total === d.all ? `${fa(d.all)} ردیف` : `${fa(d.total)} از ${fa(d.all)} ردیف`;
+  const pages = Math.max(1, Math.ceil(d.total / d.size));
+  $('pageInfo').textContent = `صفحهٔ ${fa(d.page)} از ${fa(pages)}`;
+  $('prev').disabled = d.page <= 1;
+  $('next').disabled = d.page >= pages;
+  $('clearFilters').style.display = Object.keys(activeFilters()).length ? 'inline-block' : 'none';
+  if (state.headFor !== state.key) buildHead(d);
+  $('grid').querySelectorAll('tr.names th[data-i]').forEach(th => {
+    th.querySelector('.arrow').textContent = +th.dataset.i === state.sort ? (state.desc ? '▼' : '▲') : '';
+  });
+  let h = '';
+  d.rows.forEach((row, ri) => {
+    h += `<tr><td class="rn">${fa(start + ri + 1)}</td>`;
+    for (const v of row) {
+      const isNum = typeof v === 'number';
+      const txt = v === null ? '' : isNum ? v.toLocaleString('en-US', { maximumFractionDigits: 6 }) : String(v);
+      h += `<td${isNum ? ' class="num"' : ''} title="${esc(txt)}">${esc(txt)}</td>`;
+    }
+    h += '</tr>';
+  });
+  $('grid').querySelector('tbody').innerHTML = h;
+  $('noRows').hidden = d.rows.length > 0;
+  $('grid').scrollTop = 0;
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+let t;
+$('q').addEventListener('input', e => {
+  clearTimeout(t);
+  t = setTimeout(() => { state.q = e.target.value.trim(); state.page = 1; loadRows(); }, 300);
+});
+$('clearFilters').onclick = () => {
+  state.filters = {}; state.page = 1;
+  $('grid').querySelectorAll('[data-f]').forEach(el => { el.value = ''; el.classList.remove('on'); });
+  loadRows();
+};
+$('prev').onclick = () => { state.page--; loadRows(); };
+$('next').onclick = () => { state.page++; loadRows(); };
+$('size').onchange = e => { state.size = +e.target.value; state.page = 1; loadRows(); };
+$('refresh').onclick = async () => {
+  const b = $('refresh'), label = b.textContent;
+  b.disabled = true; b.textContent = 'در حال دریافت…';
+  try {
+    const d = await (await fetch('/api/refresh', { method: 'POST' })).json();
+    state.sheets = d.sheets; state.headFor = null; renderTabs(); await loadRows();
+  } finally { b.disabled = false; b.textContent = label; }
+};
+$('exportAll').onclick = () => {
+  const b = $('exportAll'), label = b.textContent;
+  b.disabled = true; b.textContent = 'در حال آماده‌سازی فایل…';
+  location.href = '/api/export';
+  setTimeout(() => { b.disabled = false; b.textContent = label; }, 8000);
+};
+$('exportOne').onclick = () => { if (state.key) location.href = `/api/export/${state.key}?` + params(); };
+
+loadSheets();
+</script>
+</body>
+</html>
