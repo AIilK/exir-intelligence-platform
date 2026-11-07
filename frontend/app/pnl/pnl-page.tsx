@@ -135,7 +135,11 @@ function combine(channels: Channel[]): { report: Report; byChannel: Record<strin
   const margin: Row = { label: "حاشیه سود خالص", code: null, kind: "ratio", canon: "margin", group: null,
     values: Object.fromEntries(brands.map((b) => [b, net.values[b] ? Number(np.values[b] || 0) / Number(net.values[b]) : null])),
     periods: { p0: { value: net.periods.p0.value ? Number(np.periods.p0.value) / Number(net.periods.p0.value) : null, ratio: null } } };
-  rows.forEach((r) => { if (r.kind !== "ratio" && r.canon !== "qty" && net.periods.p0.value) r.periods.p0.ratio = Number(r.periods.p0.value || 0) / Number(net.periods.p0.value); });
+  const gross = rows.find((r) => r.canon === "gross")!;
+  rows.forEach((r) => {
+    const den = Number((r.canon === "discount" ? gross : net).periods.p0.value);
+    if (r.kind !== "ratio" && r.canon !== "qty" && den) r.periods.p0.ratio = Number(r.periods.p0.value || 0) / den;
+  });
   return { report: { brands, periods: [{ key: "p0", label: "جمع سه کانال", has_ratio: true }], rows: [...rows, margin], settings: {}, unit: "میلیون ریال" }, byChannel };
 }
 

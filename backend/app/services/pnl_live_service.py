@@ -187,10 +187,10 @@ class Report:
         self.rows: list[dict[str, Any]] = []
 
     def add(self, label: str, values: dict[str, float], kind: str = "line", canon: str | None = None,
-            group: str | None = None, source: str | None = None) -> dict[str, float]:
+            group: str | None = None, source: str | None = None, ratio_base: str | None = None) -> dict[str, float]:
         vals = {b: round(values.get(b, 0.0), 2) for b in self.brands}
         self.rows.append({"label": label, "code": None, "kind": kind, "canon": canon, "group": group, "source": source,
-                          "values": vals, "periods": {"p0": {"value": round(sum(vals.values()), 2), "ratio": None}}})
+                          "ratio_base": ratio_base, "values": vals, "periods": {"p0": {"value": round(sum(vals.values()), 2), "ratio": None}}})
         return vals
 
     def ratio(self, label: str, num: dict[str, float], den: dict[str, float], canon: str | None = None):
@@ -200,12 +200,18 @@ class Report:
                           "values": vals, "periods": {"p0": {"value": tn / td if td else None, "ratio": None}}})
 
     def finish(self, net_key: str = "net") -> list[dict[str, Any]]:
-        net = next((r for r in self.rows if r["canon"] == net_key), None)
-        den = net["periods"]["p0"]["value"] if net else None
         for r in self.rows:
+            den = _ratio_base_value(self.rows, r, net_key)
             if r["kind"] not in ("ratio", "share") and r["canon"] != "qty" and den:
                 r["periods"]["p0"]["ratio"] = (r["periods"]["p0"]["value"] or 0) / den
         return self.rows
+
+
+def _ratio_base_value(rows: list[dict[str, Any]], row: dict[str, Any], default: str = "net") -> float | None:
+    """مخرج «On sales» هر ردیف: پیش‌فرض فروش خالص؛ تخفیف و سربار تولید نسبت به فروش ناخالص."""
+    canon = row.get("ratio_base") or default
+    base = next((r for r in rows if r.get("canon") == canon), None)
+    return base["periods"]["p0"]["value"] if base else None
 
 
 def _sub(a: dict[str, float], *bs: dict[str, float]) -> dict[str, float]:
@@ -229,8 +235,9 @@ def _std_rows(rep: Report, std: dict[str, dict[str, float]] | None):
     rep.add("بهای تمام شده استاندارد (جذبی)", total, kind="total", canon="cogs_std",
             source="استاندارد ۸ / IAS 2: مواد مستقیم + دستمزد مستقیم + سربار تولید جذب‌شده")
     rep.add("مواد مستقیم (روش ساخت × میانگین موزون خرید)", dm, group="cogs_std", source="میانگین موزون فاکتورهای خرید ۱۲ ماه منتهی به پایان دوره")
-    rep.add("دستمزد مستقیم تولید", lab, group="cogs_std", source="کل 7110 و 7190 مراکز تولیدی، جذب به نسبت مواد مستقیم تولید دوره")
-    rep.add("سربار تولید", oh, group="cogs_std", source="کل 7120 و 7130 مراکز تولیدی، جذب به نسبت مواد مستقیم تولید دوره")
+    rep.add("دستمزد مستقیم تولید", lab, group="cogs_std", source="دستمزد مراکز تولیدی طبق طبقه‌بندی راهکاران (7110)، جذب به نسبت مواد مستقیم تولید دوره")
+    rep.add("سربار تولید", oh, group="cogs_std",
+            source="طبقه‌بندی راهکاران: سربار مراکز تولیدی + کل مراکز خدماتی و دفاتر، بدون انتقال به کار در جریان ساخت و کارمزد بانکی؛ جذب به نسبت مواد مستقیم تولید دوره")
     return total
 
 
@@ -311,9 +318,8 @@ GROUP BY d.Code, p.Code
 def _rahkaran_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     from sqlalchemy import bindparam
     stmt = text(sql)
-    for name in ("codes", "centers"):
-        if f":{name}" in sql:
-            stmt = stmt.bindparams(bindparam(name, expanding=True))
+    if ":codes" in sql:
+        stmt = stmt.bindparams(bindparam("codes", expanding=True))
     with _rahkaran().connect() as c:
         return [dict(r) for r in c.execute(stmt, params).mappings().all()]
 
@@ -420,10 +426,16 @@ def bom_costs(end: str) -> dict[str, float]:
 # ------------------------------------------------------------------ بهای تمام شده استاندارد (هزینه‌یابی جذبی، استاندارد ۸ / IAS 2)
 # بهای واحد = مواد مستقیم + دستمزد مستقیم + سربار تولید جذب‌شده
 #   مواد مستقیم   = روش ساخت × میانگین موزون قیمت خرید ۱۲ ماه منتهی به پایان دوره (نه آخرین خرید)
-#   دستمزد و سربار = هزینه‌های واقعی مراکز تولیدی در همان دوره (کل 7110/7190 دستمزد، 7120/7130 سربار)
-#                    که به نسبت مواد مستقیمِ تولید همان دوره (رسید «دریافت از تولید») روی هر محصول جذب می‌شود.
+#   دستمزد و سربار = هزینه‌های واقعی همان دوره با طبقه‌بندی خود راهکاران (CAC3.ConversionSL):
+#                    دستمزد = معین‌های نوع دستمزد در مراکز تولیدی؛
+#                    سربار  = معین‌های نوع سربار در مراکز تولیدی + همه هزینه مراکز خدماتی و دفاتر (که راهکاران روی تولید سرشکن می‌کند)؛
+#                    به نسبت مواد مستقیمِ تولید همان دوره (رسید «دریافت از تولید») روی هر محصول جذب می‌شود.
+#   کنار گذاشته می‌شود: سند «انتقال به کار در جریان ساخت» (بستن هزینه به موجودی، نه هزینه جدید)،
+#                    کارمزد بانکی 712022 (ردیف جدا در P&L دارد) و سندهای EXCLUDED_CONVERSION_VOUCHERS.
 #   کالای خریداری‌شده برای فروش (بدون روش ساخت) فقط بهای خرید دارد.
 PRODUCTION_CENTERS = ("500001", "500002", "500003")   # مرکز تولیدی اکسیرکادوس / کادوس / فراز بهداشت
+CONVERSION_LABOUR_TYPE = 2                            # CAC3.ConversionSL.Type: 1 = سربار، 2 = دستمزد
+EXCLUDED_CONVERSION_VOUCHERS = (315794,)              # سند ۲۷۷۹۴ (۳۸۸٬۷۵۰ م.ر «سفر و اقامت»، ۲۵ بهمن ۱۴۰۴)؛ در انتظار تأیید مالی
 WAVG_PRICE_SQL = """
 SELECT p.Code AS part,
        SUM(ii.Price * CASE WHEN ISNULL(i.OperationalCurrencyExchangeRate, 0) > 0 THEN i.OperationalCurrencyExchangeRate ELSE 1 END)
@@ -443,15 +455,37 @@ JOIN LGS3.Part p ON p.PartID = i.PartRef
 WHERE v.InventoryVoucherSpecificationRef = 4 AND i.Date >= :a AND i.Date < DATEADD(day, 1, :b)   -- 4 = دریافت از تولید
 GROUP BY p.Code
 """
-CONVERSION_SQL = """
-SELECT LEFT(sl.Code, 4) AS gl, SUM(ISNULL(vi.Debit, 0) - ISNULL(vi.Credit, 0)) AS amount
+CONVERSION_SQL = f"""
+SELECT sl.Code AS sl, LEFT(sl.Code, 4) AS gl, LTRIM(RTRIM(vi.DLLevel4)) AS dl, m.kind,
+       SUM(ISNULL(vi.Debit, 0) - ISNULL(vi.Credit, 0)) AS amount
 FROM FIN3.VoucherItem vi
 JOIN FIN3.Voucher v ON v.VoucherID = vi.VoucherRef
 JOIN FIN3.SL sl ON sl.SLID = vi.SLRef
-WHERE LEFT(sl.Code, 4) IN ('7110', '7120', '7130', '7190') AND LTRIM(RTRIM(vi.DLLevel4)) IN :centers
+JOIN (SELECT s2.Code AS code, MAX(c.Type) AS kind FROM CAC3.ConversionSL c
+      JOIN FIN3.SL s2 ON s2.SLID = c.SLRef
+      WHERE c.FiscalYearRef = (SELECT MAX(FiscalYearRef) FROM CAC3.ConversionSL)
+      GROUP BY s2.Code) m ON m.code = sl.Code
+JOIN (SELECT DISTINCT LTRIM(RTRIM(Number)) AS dl FROM GNR3.CostCenter) cc ON cc.dl = LTRIM(RTRIM(vi.DLLevel4))
+WHERE LEFT(sl.Code, 1) = '7' AND sl.Code <> '712022'
   AND v.Date >= :a AND v.Date < DATEADD(day, 1, :b) AND v.VoucherTypeRef NOT IN (5, 6, 7, 11)
-GROUP BY LEFT(sl.Code, 4)
+  AND ISNULL(v.Description, '') NOT LIKE N'%انتقال به کار در جریان%'
+  AND v.VoucherID NOT IN ({", ".join(map(str, EXCLUDED_CONVERSION_VOUCHERS))})
+GROUP BY sl.Code, LEFT(sl.Code, 4), LTRIM(RTRIM(vi.DLLevel4)), m.kind
 """
+
+
+def _conversion_pools(rows: list[dict[str, Any]]) -> tuple[float, float, dict[str, float]]:
+    """(دستمزد، سربار، جمع به تفکیک کل): دستمزدِ مراکز تولیدی دستمزد است و هر هزینه دیگر سربار."""
+    labour = overhead = 0.0
+    by_gl: dict[str, float] = defaultdict(float)
+    for r in rows:
+        amount = float(r["amount"] or 0)
+        by_gl[r["gl"]] += amount
+        if r["dl"] in PRODUCTION_CENTERS and int(r["kind"]) == CONVERSION_LABOUR_TYPE:
+            labour += amount
+        else:
+            overhead += amount
+    return labour, overhead, dict(by_gl)
 
 
 def standard_cost(p: dict[str, Any]) -> dict[str, Any]:
@@ -464,9 +498,7 @@ def standard_cost(p: dict[str, Any]) -> dict[str, Any]:
     prices = {**last, **_prices(WAVG_PRICE_SQL, p["to"])}   # میانگین موزون؛ اگر خرید ۱۲ ماهه نبود آخرین خرید
     dm, made = _rollup(prices)
     produced = {str(r["part"]).strip(): float(r["qty"] or 0) for r in _rahkaran_rows(PRODUCTION_SQL, {"a": p["from"], "b": p["to"]})}
-    conv = {r["gl"]: float(r["amount"] or 0) for r in _rahkaran_rows(CONVERSION_SQL, {"centers": list(PRODUCTION_CENTERS), "a": p["from"], "b": p["to"]})}
-    labour = conv.get("7110", 0.0) + conv.get("7190", 0.0)
-    overhead = conv.get("7120", 0.0) + conv.get("7130", 0.0)
+    labour, overhead, conv = _conversion_pools(_rahkaran_rows(CONVERSION_SQL, {"a": p["from"], "b": p["to"]}))
     dm_production = sum(q * dm.get(part, 0.0) for part, q in produced.items() if q > 0)
     out = {"dm": dm, "made": made,
            "labour_rate": labour / dm_production if dm_production else 0.0,
@@ -570,11 +602,11 @@ def build_ledger(key: str, p: dict[str, Any]) -> dict[str, Any]:
     rep.add("Net Sales(QqtY)", qty, canon="qty", source="SLS3 فاکتور فروش − برگشت")
     rep.add("Gross Sales (Mrials)", gross, canon="gross", source=f"معین {cfg['gross']}")
     rep.add("Return", ret, canon="return", source=f"معین {cfg['return']}" if cfg["return"] else None)
-    rep.add("Discounts", disc, canon="discount", source=f"معین {cfg['discount']}")
+    rep.add("Discounts", disc, canon="discount", ratio_base="gross", source=f"معین {cfg['discount']}؛ درصد نسبت به فروش ناخالص")
     net = rep.add("Total Net Sales", _sub(gross, ret, disc), kind="total", canon="net")
     for title, vals in sorted(disc_types.items(), key=lambda kv: -sum(kv[1].values())):
-        rep.add(title, vals, group="discount_detail", source=f"تفصیلی سطح ۵ معین {cfg['discount']}")
-    rep.ratio("%", {b: disc.get(b, 0) for b in brands}, {b: gross.get(b, 0) - ret.get(b, 0) for b in brands})
+        rep.add(title, vals, group="discount_detail", ratio_base="gross", source=f"تفصیلی سطح ۵ معین {cfg['discount']}")
+    rep.ratio("%", {b: disc.get(b, 0) for b in brands}, {b: gross.get(b, 0) for b in brands})
 
     opex_lines, after_op, expenses = [], [], []
     if key == "b2b":
@@ -706,12 +738,12 @@ def build_hybrid(p: dict[str, Any]) -> dict[str, Any]:
     rep.add("Gross Sales (Mrials)", gross, canon="gross", source="جمع قبل تخفیف فاکتورهای فروش")
     rep.add("Return", ret, canon="return", source="برگشت از فروش (به تاریخ برگشت)")
     rep.ratio("Discount %", disc, gross)
-    rep.add("Discount", disc, canon="discount")
+    rep.add("Discount", disc, canon="discount", ratio_base="gross")
     net = rep.add("Total Net Sales", _sub(gross, ret, disc), kind="total", canon="net")
     rep.add("Value added", vat, canon="vat")
-    rep.add("تخفیف حجمی", vol, group="discount_detail")
-    rep.add("تخفیف نقدی", cash, group="discount_detail")
-    rep.add("جمع تخفیفات", disc, kind="total")
+    rep.add("تخفیف حجمی", vol, group="discount_detail", ratio_base="gross")
+    rep.add("تخفیف نقدی", cash, group="discount_detail", ratio_base="gross")
+    rep.add("جمع تخفیفات", disc, kind="total", ratio_base="gross")
     with _karamad().connect() as c:
         exp_rows = [dict(r) for r in c.execute(text(HYBRID_EXPENSE_SQL), {"a": p["from"], "b": p["to"]}).mappings().all()]
     totals: dict[str, float] = defaultdict(float)
@@ -758,12 +790,16 @@ def _excel_compare(key: str, rows: list[dict[str, Any]]) -> dict[str, Any] | Non
 
 
 def _comparison_periods(p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """ستون‌های مقایسه مثل اکسل: فصل قبل، همان فصل سال قبل و کل سال قبل (برای کل سال: فقط سال قبل)."""
+    """ستون‌های مقایسه: همه فصل‌های قبلیِ همان سال (جدیدترین اول؛ برای Q1 فصل آخر سال قبل)،
+    همان فصل سال قبل و کل سال قبل (برای کل سال: فقط سال قبل)."""
     m = re.match(r"(\d{4})(?:-Q(\d))?$", p["key"])
     if not m:
         return []
     year, q = int(m.group(1)), int(m.group(2) or 0)
-    wanted = ([f"{year}-Q{q - 1}" if q > 1 else f"{year - 1}-Q4", f"{year - 1}-Q{q}"] if q else []) + [f"{year - 1}"]
+    wanted = [f"{year}-Q{i}" for i in range(q - 1, 0, -1)] or ([f"{year - 1}-Q4"] if q else [])
+    if q:
+        wanted.append(f"{year - 1}-Q{q}")
+    wanted.append(f"{year - 1}")
     out = []
     for k in wanted:
         try:
@@ -774,8 +810,7 @@ def _comparison_periods(p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 
 
 def _attach_period(rows: list[dict[str, Any]], key: str, other: list[dict[str, Any]]):
-    """جمع هر ردیف دوره دیگر را با کلید canon/عنوان کنار ردیف دوره جاری می‌گذارد (+ «On sales» = نسبت به فروش خالص)."""
-    net = next((r["periods"]["p0"]["value"] for r in other if r.get("canon") == "net"), None)
+    """جمع هر ردیف دوره دیگر را با کلید canon/عنوان کنار ردیف دوره جاری می‌گذارد (+ «On sales» با همان مخرج ردیف)."""
     by_key = {(r.get("canon") or r["label"]): r for r in other}
     seen = set()
     for r in rows:
@@ -783,7 +818,8 @@ def _attach_period(rows: list[dict[str, Any]], key: str, other: list[dict[str, A
         o = by_key.get(k)
         seen.add(k)
         v = o["periods"]["p0"]["value"] if o else None
-        r["periods"][key] = {"value": v, "ratio": (v / net) if (v is not None and net and r["kind"] not in ("ratio", "share")
+        den = _ratio_base_value(other, r)
+        r["periods"][key] = {"value": v, "ratio": (v / den) if (v is not None and den and r["kind"] not in ("ratio", "share")
                                                                   and r.get("canon") != "qty") else None}
     # نوع تخفیفی که فقط در دوره مقایسه بوده (مثل «فروش ویژه زمستان ۱۴۰۴» اکسل): ردیف صفر برای دوره جاری
     last_detail = max((i for i, r in enumerate(rows) if r.get("group") == "discount_detail"), default=None)
@@ -793,8 +829,9 @@ def _attach_period(rows: list[dict[str, Any]], key: str, other: list[dict[str, A
         k = o.get("canon") or o["label"]
         if o.get("group") == "discount_detail" and k not in seen:
             v = o["periods"]["p0"]["value"]
+            den = _ratio_base_value(other, o)
             new = {**o, "values": {b: 0.0 for b in rows[0]["values"]}, "periods": {"p0": {"value": 0.0, "ratio": 0.0},
-                   key: {"value": v, "ratio": (v / net) if net and v is not None else None}}}
+                   key: {"value": v, "ratio": (v / den) if den and v is not None else None}}}
             last_detail += 1
             rows.insert(last_detail, new)
             seen.add(k)
@@ -806,8 +843,8 @@ def _build(key: str, p: dict[str, Any]) -> dict[str, Any]:
     rows = res["report"].finish()
     sc = standard_cost(p)["summary"]
     res["details"].append(_table_detail("standard_cost", "بهای تمام شده استاندارد — مبنای محاسبه", ["شرح", "مبلغ (م.ر) / مقدار"], [
-        ["دستمزد مستقیم تولید (7110 + 7190 مراکز تولیدی)", round(sc["labour"] / 1e6)],
-        ["سربار تولید (7120 + 7130 مراکز تولیدی)", round(sc["overhead"] / 1e6)],
+        ["دستمزد مستقیم تولید (دستمزد مراکز تولیدی طبق راهکاران)", round(sc["labour"] / 1e6)],
+        ["سربار تولید (طبق راهکاران، با مراکز خدماتی و دفاتر)", round(sc["overhead"] / 1e6)],
         ["مواد مستقیمِ تولید دوره (رسید دریافت از تولید × بهای مواد)", round(sc["dm_production"] / 1e6)],
         ["نرخ جذب دستمزد (٪ از مواد مستقیم)", round(100 * sc["labour"] / sc["dm_production"], 1) if sc["dm_production"] else 0],
         ["نرخ جذب سربار (٪ از مواد مستقیم)", round(100 * sc["overhead"] / sc["dm_production"], 1) if sc["dm_production"] else 0],
