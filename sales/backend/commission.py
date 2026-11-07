@@ -86,8 +86,14 @@ TYPES = {"commission": "پورسانتی", "employed": "استخدامی"}
 # جدا ندارد آخرین دستورالعمل پیش از خودش را می‌گیرد (ماه‌های پیش از اولین دستورالعمل، همان اولین را).
 # «فاکتور ویژه»: فاکتورهایی که به‌جای نرخ سطح، نرخ ثابت پایه (wholesale_rate) می‌گیرند؛ special = نوع آن‌ها در آن ماه:
 #   wholesale = فاکتور عمده (مبلغ ناخالص بیش از ۷۰۰ میلیون تومان)، mgmt = فاکتور دارای تخفیف مدیریتی.
+# special_min: فاکتورهای ویژه هر نوع فقط وقتی جدا حساب می‌شوند که سهم آن نوع در فروش ناخالص همان فرد به حد برسد
+#   (عمده: مبلغ عمده‌فروشی ÷ فروش ناخالص ≥ ۲۱٪؛ مدیریتی: تخفیف مدیریتی ÷ فروش ناخالص > ۱٪)؛ وگرنه همان فاکتورها
+#   با نرخ عادی حساب می‌شوند (اعلام کاربر).
+SPECIAL_MIN = {"wholesale": 0.21, "mgmt": 0.01}
 # wholesale_rate = None: آن ماه فاکتور ویژه ندارد (فاکتور عمده و تخفیف مدیریتی فقط نمایش داده می‌شوند).
 TIERS_A_1405_07 = [[7000, .03], [15000, .05], [25000, .06], [40000, .07], [None, .09]]
+TIERS_B_1405_07 = [[5000, .03], [10000, .05], [30000, .07], [None, .09]]
+SUP_B_1405_07 = {"t1": 40000, "t2": 50000}
 RULES = {
     # «مهر - پورسانتی» و «مهر - استخدامی»؛ البرز و مازندران گروه B (اعلام کاربر)؛ ذخیره استخدامی ۱۰٪ (اعلام کاربر)
     "1405/07": {
@@ -95,14 +101,16 @@ RULES = {
         "rulesets": {
             "هیبرید تهران": {"visitor": TIERS_A_1405_07, "supervisor": {"t1": 200000, "t2": 400000}},
             "A": {"visitor": TIERS_A_1405_07, "supervisor": {"t1": 100000, "t2": 150000}},
-            "B": {"visitor": [[5000, .03], [10000, .05], [30000, .07], [None, .09]], "supervisor": {"t1": 40000, "t2": 50000}},
+            "B": {"visitor": TIERS_B_1405_07, "supervisor": SUP_B_1405_07},
+            # آذربایجان شرقی فقط در مهر: فروش ناخالص زیر ۷۰۰ میلیون تومان ۵٪، بالای آن ۷٪ (اعلام کاربر)؛ سرپرست مثل گروه B
+            "هیبرید آذربایجان شرقی": {"visitor": [[7000, .05], [None, .07]], "supervisor": SUP_B_1405_07, "group": "B"},
         },
         "group_of": {b: "A" for b in ("هیبرید خراسان", "هیبرید کرمان", "هیبرید اصفهان", "هیبرید آذربایجان غربی")},
         "labels": {"هیبرید تهران": "هیبرید تهران (گروه A)", "A": "گروه A (خراسان، کرمان، اصفهان، آذربایجان غربی)",
-                   "B": "گروه B (بقیه هیبریدها)"},
+                   "B": "گروه B (بقیه هیبریدها)", "هیبرید آذربایجان شرقی": "هیبرید آذربایجان شرقی (گروه B، جدول جدا)"},
         "sup_rates": SUP_RATES,
         # فاکتورهای عمده و فاکتورهای با تخفیف مدیریتی: پورسانتی ۳٪ (نرخ سطح اول)، استخدامی ۲٪ ثابت (اعلام کاربر، فقط مهر)
-        "special": ["wholesale", "mgmt"],
+        "special": ["wholesale", "mgmt"], "special_min": SPECIAL_MIN,
         # مبنای پورسانت (ویزیتور، سرپرست و کف استخدامی): فروش خالص + تخفیف نقدی (اعلام کاربر، فقط مهر)
         "comm_base": "net_cash",
         "employed": {**EMPLOYED, "wholesale_rate": 0.02, "reserve": 0.10},
@@ -112,6 +120,7 @@ RULES = {
     "1405/08": {
         "title": "دستورالعمل‌های آبان ۱۴۰۵",
         "rulesets": RULESETS, "group_of": {}, "labels": RULESET_LABEL, "sup_rates": SUP_RATES, "special": ["wholesale"],
+        "special_min": SPECIAL_MIN,
         "employed": {**EMPLOYED, "reserve": 0.0}, "commission": COMMISSION, "supervisor": SUPERVISOR,
     },
 }
@@ -126,7 +135,7 @@ def rules_for(month: str) -> dict:
 def rules_payload(month: str) -> dict:
     R = rules_for(month)
     return {**{k: R[k] for k in ("title", "rulesets", "labels", "sup_rates", "special", "employed", "commission", "supervisor")},
-            "comm_base": R.get("comm_base") or "net",
+            "comm_base": R.get("comm_base") or "net", "special_min": R.get("special_min") or {},
             "wholesale_invoice": WHOLESALE_INVOICE, "groups": GROUPS}
 
 
@@ -208,6 +217,11 @@ def bkey(branch) -> str:
 def ruleset_of(branch: str, R: dict) -> str:
     b = bkey(branch)
     return R["group_of"].get(b) or (b if b in R["rulesets"] else "B")
+
+
+def group_ab(rs: str, R: dict) -> str:
+    """گروه A/B برای فیلتر: جدول جدای یک شعبه گروهش را با "group" می‌گوید."""
+    return R["rulesets"].get(rs, {}).get("group") or ("B" if rs == "B" else "A")
 
 
 def visitor_rate(volume: float, tiers: list) -> tuple[int, float]:
@@ -508,6 +522,8 @@ class Store:
         src = json.loads(self._path(prev[-1]).read_text(encoding="utf-8")) if prev else {}
         return {"month": month, "visitors": src.get("visitors", []), "supervisors": src.get("supervisors", []),
                 "excluded_branches": src.get("excluded_branches", []),
+                # حقوق ثابت ماهانه ثابت است: جدول ماه قبل به ماه تازه می‌آید
+                **({"salaries": src["salaries"]} if src.get("salaries") else {}),
                 "targets": {}, "saved": False, "roster_from": prev[-1] if prev else None}
 
     def put(self, plan: dict) -> dict:
@@ -596,7 +612,11 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
     mine = ms[ms["seller_key"].isin(keys)]
     day_share = wd_elapsed / wd_total if wd_total else 1.0
     rep = _report_metrics(ms, mr, ["seller_key"])
-    ms2 = ms.assign(group2=ms["category"].astype(str) + "-" + ms["brand"].astype(str))
+    # فروش ناخالص و خالص از ابتدای سال همین ماه تا پایان همین ماه (برگشتی‌ها کسر؛ مثل ستون‌های «فروش ناخالص» و «فروش خالص»)
+    ys = sales[(sales["date"] >= f"{month[:4]}/01/01") & (sales["date"].str[:7] <= month)]
+    gross_ytd = ys.groupby("seller_key")["gross"].sum()
+    net_ytd = ys.groupby("seller_key")["net"].sum()
+    ms2 =ms.assign(group2=ms["category"].astype(str) + "-" + ms["brand"].astype(str))
     mr2 = mr.assign(group2=mr["category"].astype(str) + "-" + mr["brand"].astype(str)) if mr is not None else None
     rep_g = _report_metrics(ms2[ms2["seller_key"].isin(keys)], mr2[mr2["seller_key"].isin(keys)] if mr2 is not None else None,
                             ["seller_key", "group2"])
@@ -618,12 +638,30 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
     md = inv[inv["mgmt"] > 0]
     agg["mgmt_n"] = md.groupby(level=0).size()
     agg["mgmt_inv_gross"] = md["gross"].groupby(level=0).sum()
+    # خالص + تخفیف نقدی همان فاکتورها: مبنای پورسانت فاکتورهای ویژه (comm_base = net_cash)
+    agg["mgmt_inv_net_cash"] = (md["net"] + md["cash"]).groupby(level=0).sum()
     agg["mgmt_disc"] = md["mgmt"].groupby(level=0).sum()
     agg["sales_gross"] = sales_only.groupby("seller_key")["gross"].sum()
     # فاکتورهای ویژه همین ماه (عمده و/یا با تخفیف مدیریتی، طبق R["special"]): نرخ ثابت پایه به‌جای نرخ سطح
     kinds = R.get("special") or []
     is_ws, is_mg = inv["gross"] > WHOLESALE_INVOICE, inv["mgmt"] > 0
-    sp = inv[(is_ws & ("wholesale" in kinds)) | (is_mg & ("mgmt" in kinds))]
+    # حد سهم هر نوع (special_min) با فروش ناخالص همان فرد (ستون «فروش ناخالص»، برگشتی‌ها کسر):
+    # درصد عمده‌فروشی = مبلغ ناخالص فاکتورهای عمده ÷ فروش ناخالص؛ درصد فروش مدیریتی = تخفیف مدیریتی ÷ فروش ناخالص
+    smin = R.get("special_min") or {}
+    g_k = rep["gross"].reindex(agg.index).fillna(0)
+    ws_share = (agg["wholesale_gross"].fillna(0) / g_k).where(g_k > 0)
+    mg_share = (agg["mgmt_disc"].fillna(0) / g_k).where(g_k > 0)
+    ws_on = set(agg.index[ws_share >= smin["wholesale"]]) if "wholesale" in smin else set(agg.index)
+    mg_on = set(agg.index[mg_share > smin["mgmt"]]) if "mgmt" in smin else set(agg.index)
+    seller = inv.index.get_level_values(0)
+    sp = inv[(is_ws & ("wholesale" in kinds) & seller.isin(ws_on)) | (is_mg & ("mgmt" in kinds) & seller.isin(mg_on))]
+    # تفکیک برند فاکتورهای عمده هر فرد (از سطرهای همان فاکتورها)
+    wl = sales_only.set_index(["seller_key", "inv_id"])
+    wl = wl[wl.index.isin(big.index)].reset_index()
+    wb = wl.assign(nc=wl["net"] + wl["cash_disc"]).groupby(["seller_key", "brand"], observed=True)[["gross", "net", "nc"]].sum()
+    ws_brands = {k: [{"brand": str(b), "gross": float(r.gross), "net": float(r.net), "net_cash": float(r.nc)}
+                     for b, r in g.droplevel(0).sort_values("gross", ascending=False).iterrows()]
+                 for k, g in wb.groupby(level=0)}
     agg["special_net"] = sp["net"].groupby(level=0).sum()
     agg["special_net_cash"] = (sp["net"] + sp["cash"]).groupby(level=0).sum()
     agg["special_gross"] = sp["gross"].groupby(level=0).sum()
@@ -673,23 +711,28 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
                "req_net": float(rp["req_net"]) if rp is not None else 0.0, "gross": gross,
                "xnet": float(rp["xnet"]) if rp is not None else 0.0, "qty": float(rp["qty"]) if rp is not None else 0.0,
                "customers": int(rp["customers"]) if rp is not None else 0,
-               "target_day": t_day, "ach": gross / t_day if t_day else None, "groups": groups, "groups2": g2}
+               "target_day": t_day, "ach": gross / t_day if t_day else None, "groups": groups, "groups2": g2,
+               "gross_ytd": float(gross_ytd.get(k, 0.0)) if k else 0.0,
+               "net_ytd": float(net_ytd.get(k, 0.0)) if k else 0.0}
         mgmt = float(a["mgmt_disc"]) if a is not None else 0.0
         mgmt_inv = float(a["mgmt_inv_gross"]) if a is not None else 0.0
         sales_gross = float(a["sales_gross"]) if a is not None else 0.0
         row.update(special_net=float(a["special_net"]) if a is not None else 0.0,
                    special_gross=float(a["special_gross"]) if a is not None else 0.0,
-                   special_n=int(a["special_n"]) if a is not None else 0, special_invoices=sp_list.get(k, []))
+                   special_n=int(a["special_n"]) if a is not None else 0, special_invoices=sp_list.get(k, []),
+                   wholesale_brands=ws_brands.get(k, []),
+                   special_ws_on=("wholesale" in kinds) and k in ws_on, special_mg_on=("mgmt" in kinds) and k in mg_on)
         # مبنای پورسانت ماه: فروش خالص، یا فروش خالص + تخفیف نقدی (comm_base = net_cash)
         net_cash = net + (float(a["cash"]) if a is not None else 0.0)
         use_cash = R.get("comm_base") == "net_cash"
         base = net_cash if use_cash else net
         row.update(net_cash=net_cash, base=base, base_forecast=base * pace if pace else base,
                    special_base=(float(a["special_net_cash"]) if a is not None else 0.0) if use_cash else row["special_net"])
-        row.update(group_ab="B" if row["ruleset"] == "B" else "A", sales_gross=sales_gross,
+        row.update(group_ab=group_ab(row["ruleset"], R), sales_gross=sales_gross,
                    wholesale_gross=float(a["wholesale_gross"]) if a is not None else 0.0,
                    wholesale_share=float(a["wholesale_gross"]) / sales_gross if a is not None and sales_gross > 0 else None,
                    mgmt_n=int(a["mgmt_n"]) if a is not None else 0, mgmt_disc=mgmt, mgmt_inv_gross=mgmt_inv,
+                   mgmt_inv_net_cash=float(a["mgmt_inv_net_cash"]) if a is not None else 0.0,
                    mgmt_inv_share=mgmt_inv / sales_gross if sales_gross > 0 else None,  # سهم این فاکتورها از فروش ناخالص
                    mgmt_rate=mgmt / mgmt_inv if mgmt_inv > 0 else None)               # نرخ تخفیف روی همان فاکتورها
         if v["type"] == "commission":
@@ -808,7 +851,7 @@ def _supervisors(plan: dict, rows: list[dict], R: dict) -> list[dict]:
         gfc = sum(r["gross_forecast"] for r in team)
         comm = supervisor_commission(sales, rule, R["sup_rates"], reach=gross)
         target_sum = sum(r["target_rial"] or 0 for r in team)
-        out.append({"id": f"{b}|{name}", "name": name, "branch": b, "ruleset": rs, "group_ab": "B" if rs == "B" else "A",
+        out.append({"id": f"{b}|{name}", "name": name, "branch": b, "ruleset": rs, "group_ab": group_ab(rs, R),
                     "visitors": len(team), "gross": gross,
                     "net": net, "net_cash": sum(r["net_cash"] for r in team), "base": sales,
                     "forecast": fc, "t1": rule["t1"] * M if rule else None, "t2": rule["t2"] * M if rule else None,

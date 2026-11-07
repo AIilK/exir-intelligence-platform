@@ -20,6 +20,7 @@ from pydantic import BaseModel
 import analytics as A
 import chain_store as CS
 import commission as K
+import payroll as PAY
 import inventory as INV
 import loader
 import planning as PL
@@ -48,6 +49,7 @@ STORE = sql_source.SqlStore(ENV_FILE)
 STATE: dict = {"data": None, "error": "در حال دریافت داده از SQL…", "sql_error": None, "stamp": 0,
                "busy": False, "meta_cache": None, "planner": None}
 PLANS = PL.PlanStore(ROOT / "data" / "plans")
+PAYROLL = PAY.Cache(lambda: sql_source.connect(sql_source.settings(sql_source.read_env(ENV_FILE))))  # حقوق ثابت استخدامی‌ها
 COMM = K.Store(ROOT / "data" / "commission")  # فهرست ویزیتورها و تارگت‌های پورسانت، هر ماه یک فایل
 INV_SRC = INV.InventorySource(ENV_FILE, lambda: read_config())
 FACTORY = RK.FactorySource(ENV_FILE, lambda: read_config())
@@ -763,6 +765,13 @@ def category_matrix(req: Request):
     return A.category_matrix(tx, _dims(req, "branch,seller"), cats)
 
 
+@app.get("/api/team_report")
+def team_report(req: Request):
+    """گزارش کامل تیم فروش: شعبه ← فروشنده با خلاصه عملکرد، از ابتدای ماه و ماتریس گروه کالا."""
+    tx, rq, c, f = frames(req)
+    return A.team_report(tx, rq, c, f, STATE["data"]["meta"].get("core_categories") or [])
+
+
 @app.get("/api/daily_matrix")
 def daily_matrix(req: Request):
     tx, rq, c, f = frames(req)
@@ -1058,8 +1067,10 @@ def inventory_overview(refresh: bool = False):
             return INV_OVERVIEW["data"]
         # فقط داده لایو (فروش یا موجودی) عوض شده و تنظیمات همان است: تا چند دقیقه محاسبه سفارش قبلی کافی است،
         # ولی ستون‌های موجودی و ارزش انبار از آخرین موجودی خوانده‌شده تازه می‌شوند (سبک است)
+        # نتیجه‌ای که شعبه خطادار دارد (مثلاً تقویم یا سابقه هنوز خوانده نشده بود) دوباره استفاده نمی‌شود
         if (not refresh and old and old[1:3] == key[1:3]
-                and time.time() - INV_OVERVIEW["at"] < INV_OVERVIEW_MIN_SECONDS):
+                and time.time() - INV_OVERVIEW["at"] < INV_OVERVIEW_MIN_SECONDS
+                and not any(r.get("error") for r in INV_OVERVIEW["data"]["branches"])):
             res = dict(INV_OVERVIEW["data"])
             res["branches"] = [{**r, **INV.stock_totals(INV_SRC.get(r["branch"]))} for r in res["branches"]]
             res["fetched"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(fetched))
@@ -1655,13 +1666,31 @@ def _comm_payload(month: str, plan: dict) -> dict:
     wd_e, wd_t = K.workdays(month, d["meta"].get("today"))
     pace = (wd_t / wd_e) if month == cur and wd_e else None
     res = K.compute(plan, d["sales"], d["requests"], month, wd_e, wd_t, pace)
+    # حقوق ثابت = جدول حقوق ثابت ماه (از اکسل پورسانت؛ plan["salaries"])؛ عدد حقوق و دستمزد کارآمد فقط برای مقایسه
+    salary_error = None
+    sal_v, sal_s = {}, {}
+    try:
+        sal_v, sal_s = PAY.match(PAYROLL.get(month), plan.get("visitors", []), plan.get("supervisors", []))
+    except Exception as e:  # noqa: BLE001 — نبود اتصال نباید صفحه پورسانت را خراب کند
+        salary_error = f"حقوق کارآمد (برای مقایسه) خوانده نشد: {e}"
+    tab = plan.get("salaries") or {}
+    for rows, db, own, employed in ((res["visitors"], sal_v, tab.get("visitors") or {}, lambda r: r["type"] == "employed"),
+                                    (res["supervisors"], sal_s, tab.get("supervisors") or {}, lambda r: True)):
+        for r in rows:
+            pr = db.get(r["id"]) or {}
+            amount = own.get(r["id"])
+            r.update(salary=amount, salary_from=tab.get("from") if amount is not None else None,
+                     salary_db=pr.get("salary"), salary_db_source=pr.get("salary_source"), salary_db_parts=pr.get("salary_parts") or [],
+                     salary_emp=pr.get("salary_emp"), salary_job=pr.get("salary_job"),
+                     salary_note=None if amount is not None else ("در جدول حقوق ثابت این ماه نیست" if employed(r) else None))
     months = sorted(set(d["sales"]["month"].unique()) | set(COMM.months()), reverse=True)
     return {"month": month, "current": cur, "months": months, "pace": pace, "wd_elapsed": wd_e, "wd_total": wd_t,
             "today": d["meta"].get("today"), "target_missing": plan.get("target_missing") or {},
             "import_notes": plan.get("import_notes") or {},
             "enrich_log": plan.get("enrich_log") or [], "enrich_error": plan.get("enrich_error"), "branch_targets": plan.get("branch_targets") or {}, "saved": plan.get("saved", False),
             "updated_at": plan.get("updated_at"), "roster_from": plan.get("roster_from"),
-            "targets": plan.get("targets", {}), "rules": K.rules_payload(month), "types": K.TYPES, **res}
+            "targets": plan.get("targets", {}), "rules": K.rules_payload(month), "types": K.TYPES,
+            "salary_error": salary_error, **res}
 
 
 @app.get("/api/commission")

@@ -207,6 +207,9 @@ h3 { font-size: 15px; margin: 0; font-weight: 600; }
 .table-tools { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
 .table-tools .input { max-width: 260px; }
 .table-scroll { overflow-x: auto; }
+/* نوار اسکرول افقی بالای جدول (هم‌گام با نوار پایین) */
+.table-scroll-top { overflow-x: auto; overflow-y: hidden; height: 14px; margin-bottom: 4px; }
+.table-scroll-top > div { height: 1px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th {
   text-align: right; font-weight: 600; color: var(--text-2); background: var(--surface-2); padding: 8px 10px;
@@ -534,3 +537,52 @@ tr.abn-row td { background: var(--abn); }
 /* ردیف «جمع کل» پایین جدول */
 tfoot tr.total-row td { font-weight: 700; background: var(--accent-soft); border-top: 2px solid var(--border); }
 tfoot tr.total-row td.sticky-col { background: var(--accent-soft); }
+
+/* رنگ گروه‌های سرستون جدول درختی (colorGroups): هر گروه یک رنگ؛ پس‌زمینه‌ها مات تا سرستون چسبان شفاف نشود */
+:root {
+  --gc0-bg: #dbe9fb; --gc0-sub: #eef5fd; --gc0-bd: #3987e5; --gc0-t: #174a8b;
+  --gc1-bg: #dcf2e4; --gc1-sub: #eff9f2; --gc1-bd: #2f9e62; --gc1-t: #13603a;
+  --gc2-bg: #fde9d2; --gc2-sub: #fef5ea; --gc2-bd: #e08a2c; --gc2-t: #8a4b08;
+  --gc3-bg: #fbdde0; --gc3-sub: #fdf0f1; --gc3-bd: #d64b5a; --gc3-t: #8f1f2c;
+  --gc4-bg: #e8e1f8; --gc4-sub: #f4f0fc; --gc4-bd: #7d5bd0; --gc4-t: #4a2f94;
+  --gc5-bg: #d8f0f2; --gc5-sub: #edf8f9; --gc5-bd: #1f9aa6; --gc5-t: #0e5b63;
+  --gc6-bg: #f6e9c8; --gc6-sub: #fbf5e5; --gc6-bd: #b8901d; --gc6-t: #6d5408;
+  --gc7-bg: #f6dcef; --gc7-sub: #fbeff8; --gc7-bd: #c2469f; --gc7-t: #7d1c63;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --gc0-bg: #1d3352; --gc0-sub: #182638; --gc0-bd: #5a9ef0; --gc0-t: #a9cbf7;
+    --gc1-bg: #1c3a2a; --gc1-sub: #172b20; --gc1-bd: #4cbf80; --gc1-t: #9fdcb9;
+    --gc2-bg: #46311a; --gc2-sub: #302416; --gc2-bd: #eda055; --gc2-t: #f5c999;
+    --gc3-bg: #48232a; --gc3-sub: #311b1f; --gc3-bd: #ec6b78; --gc3-t: #f4aab2;
+    --gc4-bg: #2f2850; --gc4-sub: #231e38; --gc4-bd: #9c80e6; --gc4-t: #c9b8f3;
+    --gc5-bg: #183d42; --gc5-sub: #142c30; --gc5-bd: #3bbac6; --gc5-t: #94dbe2;
+    --gc6-bg: #3f3418; --gc6-sub: #2c2514; --gc6-bd: #d4ae3e; --gc6-t: #ecd58f;
+    --gc7-bg: #45213c; --gc7-sub: #2f1a2b; --gc7-bd: #db6abb; --gc7-t: #f0aedc;
+  }
+}
+:root[data-theme="dark"] {
+  --gc0-bg: #1d3352; --gc0-sub: #182638; --gc0-bd: #5a9ef0; --gc0-t: #a9cbf7;
+  --gc1-bg: #1c3a2a; --gc1-sub: #172b20; --gc1-bd: #4cbf80; --gc1-t: #9fdcb9;
+  --gc2-bg: #46311a; --gc2-sub: #302416; --gc2-bd: #eda055; --gc2-t: #f5c999;
+  --gc3-bg: #48232a; --gc3-sub: #311b1f; --gc3-bd: #ec6b78; --gc3-t: #f4aab2;
+  --gc4-bg: #2f2850; --gc4-sub: #231e38; --gc4-bd: #9c80e6; --gc4-t: #c9b8f3;
+  --gc5-bg: #183d42; --gc5-sub: #142c30; --gc5-bd: #3bbac6; --gc5-t: #94dbe2;
+  --gc6-bg: #3f3418; --gc6-sub: #2c2514; --gc6-bd: #d4ae3e; --gc6-t: #ecd58f;
+  --gc7-bg: #45213c; --gc7-sub: #2f1a2b; --gc7-bd: #db6abb; --gc7-t: #f0aedc;
+}
+table.tree th.gc0 { --gbg: var(--gc0-bg); --gsub: var(--gc0-sub); --gbd: var(--gc0-bd); --gt: var(--gc0-t); }
+table.tree th.gc1 { --gbg: var(--gc1-bg); --gsub: var(--gc1-sub); --gbd: var(--gc1-bd); --gt: var(--gc1-t); }
+table.tree th.gc2 { --gbg: var(--gc2-bg); --gsub: var(--gc2-sub); --gbd: var(--gc2-bd); --gt: var(--gc2-t); }
+table.tree th.gc3 { --gbg: var(--gc3-bg); --gsub: var(--gc3-sub); --gbd: var(--gc3-bd); --gt: var(--gc3-t); }
+table.tree th.gc4 { --gbg: var(--gc4-bg); --gsub: var(--gc4-sub); --gbd: var(--gc4-bd); --gt: var(--gc4-t); }
+table.tree th.gc5 { --gbg: var(--gc5-bg); --gsub: var(--gc5-sub); --gbd: var(--gc5-bd); --gt: var(--gc5-t); }
+table.tree th.gc6 { --gbg: var(--gc6-bg); --gsub: var(--gc6-sub); --gbd: var(--gc6-bd); --gt: var(--gc6-t); }
+table.tree th.gc7 { --gbg: var(--gc7-bg); --gsub: var(--gc7-sub); --gbd: var(--gc7-bd); --gt: var(--gc7-t); }
+table.tree th.grp.gc { background: var(--gbg); color: var(--gt); font-weight: 700; border-top: 3px solid var(--gbd); }
+table.tree th.gc:not(.grp) { background: var(--gsub); color: var(--gt); border-bottom: 2px solid var(--gbd); }
+table.tree th.gc:not(.grp) .th-unit { color: inherit; opacity: .75; }
+table.tree th.gstart, table.tree td.gstart { border-inline-start: 2px solid var(--border); }
+table.tree th.gc.gstart { border-inline-start-color: var(--gbd); }
+.tree-name-toggle { cursor: pointer; }
+.tree-name-toggle:hover { text-decoration: underline; text-underline-offset: 3px; }
