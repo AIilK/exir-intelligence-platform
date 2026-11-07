@@ -7,7 +7,7 @@ const VIEWS = new Set([
   'overview', 'management', 'sales', 'users', 'customers', 'cheques', 'receivedCheques', 'issuedCheques', 'cashflow', 'liquidity',
   'inventoryPricing', 'purchaseDocs', 'payables', 'pnl',
   'cashBank', 'companyPayments', 'b2bRemittances', 'monthlyExcel', 'collections', 'distribution',
-  'representatives', 'simulator', 'alerts', 'history', 'performance', 'settings', 'agents',
+  'representatives', 'simulator', 'alerts', 'history', 'performance', 'settings',
 ])
 
 // customer-facing finance pages → the combined files that put the same customers next to their sales

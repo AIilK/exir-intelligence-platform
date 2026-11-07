@@ -1,9 +1,9 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (customer-profile).
 import { useEffect, useState } from "react";
 import { RegCell, chequeNo } from "../cheque-reg";
-import { Heading, K, Risk, description, label } from "./agents";
+import { Heading, K, Risk } from "./widgets";
 import { CustomerSqlAudit } from "./cheques";
-import { cname, daysToDue, fa, fullToman, money, policy, request, risk, textOf } from "./shared";
+import { cname, daysToDue, fa, fullToman, money, request, risk, textOf } from "./shared";
 import type { CashDay, Customer, CustomerAudit } from "./types";
 
 export function LegacyCustomerProfile({

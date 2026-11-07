@@ -18,9 +18,6 @@ from fastapi.responses import StreamingResponse
 from app.schemas.treasury import (
     FinancialQueryRequest,
     PaymentCommitmentDecisionRequest,
-    TreasuryChatRequest,
-    TreasuryChatResponse,
-    TreasuryChatStatusResponse,
 )
 from app.services.bank_reconciliation_service import (
     MAX_FILE_SIZE,
@@ -76,14 +73,6 @@ from app.services.treasury_insight_service import (
 from app.services.financial_query_service import (
     FinancialQueryError,
     ask_financial_data,
-)
-from app.services.treasury_chat_service import (
-    TreasuryAgentConfigurationError,
-    TreasuryAgentExecutionError,
-    TreasuryAgentRateLimitError,
-    TreasuryAgentTimeoutError,
-    get_treasury_agent_status,
-    run_treasury_chat,
 )
 from app.services.cash_bank_movement_service import CashBankMovementService
 from app.services.payment_commitment_service import PaymentCommitmentService
@@ -969,62 +958,6 @@ def treasury_reconciliation_excel(reconciliation_id: str):
             )
         },
     )
-
-
-@router.post(
-    "/chat",
-    response_model=TreasuryChatResponse,
-)
-async def treasury_chat(request: TreasuryChatRequest):
-    try:
-        result = await run_treasury_chat(
-            request.message,
-            session_id=request.session_id,
-        )
-    except TreasuryAgentConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except TreasuryAgentRateLimitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-        ) from exc
-    except TreasuryAgentTimeoutError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=str(exc),
-        ) from exc
-    except TreasuryAgentExecutionError as exc:
-        logger.exception("Treasury chat endpoint failed")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("Unhandled treasury chat endpoint error")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=(
-                "خطای داخلی کنترل‌نشده رخ داد "
-                f"({type(exc).__name__})؛ جزئیات در ترمینال uvicorn ثبت شد."
-            ),
-        ) from exc
-
-    return TreasuryChatResponse(
-        status="success",
-        answer=result.answer,
-        session_id=result.session_id,
-    )
-
-
-@router.get(
-    "/chat/status",
-    response_model=TreasuryChatStatusResponse,
-)
-def treasury_chat_status():
-    return get_treasury_agent_status()
 
 
 @router.post("/cheques/received/analyze-official-scope-rule", summary="کشف Rule دامنه گزارش رسمی چک‌های دریافتی راهکاران")

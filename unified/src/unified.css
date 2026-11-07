@@ -307,7 +307,7 @@ button.u-bucket { background: none; font: inherit; text-align: right; cursor: po
 .fin-scope.fin-embedded main.fd { display: block !important; padding-right: 0 !important; margin-right: 0 !important; grid-template-columns: none !important; }
 .fin-scope.fin-embedded .fd-content,
 .fin-scope.fin-embedded .content { margin-right: 0 !important; max-width: none !important; }
-/* finance «خلاصه مدیریتی»: the agent reports moved to the manager page (FinanceAgents.jsx) */
+/* finance «خلاصه مدیریتی»: old per-module agent report cards stay hidden (per-module agents were removed) */
 .fin-scope.fin-embedded[data-view="management"] .pa-card,
 .fin-scope.fin-embedded[data-view="management"] .executive-report-v109 { display: none !important; }
 /* finance agent components rendered inline on the manager page */

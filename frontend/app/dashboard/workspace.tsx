@@ -1,18 +1,16 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (workspace).
 import { useState } from "react";
-import { AgentCard, Heading, K, ManagerPanel, Risk, Status, label } from "./agents";
+import { Heading, K, Risk, Status } from "./widgets";
 import { CashChart, CashTable } from "./customer-profile";
 import { fa, money, request } from "./shared";
-import type { AgentResult, Alert, Rep } from "./types";
+import type { Alert, Rep } from "./types";
 
 export function Representatives({
   reps,
   unmapped,
-  agent,
 }: {
   reps: Rep[];
   unmapped?: number;
-  agent?: AgentResult;
 }) {
   return (
     <>
@@ -454,68 +452,5 @@ export function Setting({
         onChange={(e) => set({ ...values, [k]: Number(e.target.value) })}
       />
     </label>
-  );
-}
-export function Agents({
-  agents,
-  manager,
-  focusKey,
-}: {
-  agents?: Record<string, AgentResult>;
-  manager?: AgentResult;
-  focusKey?: string | null;
-}) {
-  const hub = manager?.data_context?.karamad || {};
-  const paid = hub?.paid_transfers || {};
-  const agentEntries = Object.entries(agents || {}).sort(([a], [b]) => {
-    if (a === focusKey) return -1;
-    if (b === focusKey) return 1;
-    return 0;
-  });
-  return (
-    <>
-      <ManagerPanel a={manager?.analysis} />
-      {hub?.record_count !== undefined && (
-        <article className="fd-panel agent-data-hub">
-          <Heading h="Snapshot داده متصل به Agentها" p="همه Agentهای مالی این نسخه داده را به‌صورت مشترک می‌خوانند؛ با آپلود Snapshot جدید، گزارش Agentها دوباره ساخته می‌شود." />
-          <div className="audit-status-grid">
-            <article><small>کل رکورد کارآمد</small><b>{fa(hub.record_count || 0)}</b><em>Snapshot فعلی</em></article>
-            <article><small>چک دریافتی</small><b>{fa(hub?.received_cheques?.count || 0)}</b><em>{money(hub?.received_cheques?.amount_rial || 0)}</em></article>
-            <article><small>چک پرداختی ثبت‌شده</small><b>{fa(hub?.issued_cheques?.count || 0)}</b><em>آینده کامل نیست</em></article>
-            <article><small>حواله دریافت</small><b>{fa(hub?.received_transfers?.count || 0)}</b><em>{money(hub?.received_transfers?.amount_rial || 0)}</em></article>
-            <article><small>حواله پرداخت</small><b>{fa(paid?.count || 0)}</b><em>{money(paid?.amount_rial || 0)}</em></article>
-            <article><small>انتقال بانک‌به‌بانک</small><b>{fa(paid?.bank_to_bank_count || 0)}</b><em>اثر خالص صفر</em></article>
-            <article><small>مشتری کارآمد</small><b>{fa(hub?.customer_count || 0)}</b><em>پرونده یکپارچه</em></article>
-          </div>
-        </article>
-      )}
-      {focusKey && agents?.[focusKey] && (
-        <div className="agent-focus-note">
-          <span>Agent انتخاب‌شده برای جزئیات گزارش</span>
-          <b>{agents[focusKey]?.metadata?.agent_name || focusKey}</b>
-        </div>
-      )}
-      <div className="agent-grid large">
-        {agentEntries.map(([key, a]) => (
-          <div key={key} className={key === focusKey ? "agent-focused-wrap" : ""}>
-            <AgentCard agent={a} />
-          </div>
-        ))}
-      </div>
-      <article className="fd-panel agent-flow">
-        <Heading
-          h="نحوه همکاری Agentها"
-          p="Finance Manager Agent عدد جدید تولید نمی‌کند؛ خروجی تخصصی Agentها را جمع‌بندی می‌کند."
-        />
-        <div>
-          <span>رفتار مشتری</span>
-          <span>ریسک چک</span>
-          <span>نقدینگی</span>
-          <span>وصول</span>
-          <span>نمایندگان</span>
-          <b>Finance Manager Agent</b>
-        </div>
-      </article>
-    </>
   );
 }

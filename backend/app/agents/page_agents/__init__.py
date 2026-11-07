@@ -17,7 +17,6 @@ AGENT_VIEWS = {
     "collection": "collections",
     "distribution": "distribution",
     "representative": "representatives",
-    "scenario": "simulator",
     "reconciliation": "management",
     "payables": "payables",
     "liquidity": "liquidity",

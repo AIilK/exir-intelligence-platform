@@ -1,10 +1,9 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (cash-bank-movements).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Heading, K, label } from "./agents";
+import { Heading, K } from "./widgets";
 import { API, fa, fullToman, money, request, treasuryMutation, treasuryRequest } from "./shared";
-import type { AgentResult } from "./types";
 
-export function CashBankMovements({ agent }: { agent?: AgentResult }) {
+export function CashBankMovements() {
   const movementRequestId = useRef(0);
   const [period, setPeriod] = useState("month"),
     [approval, setApproval] = useState("approved"),

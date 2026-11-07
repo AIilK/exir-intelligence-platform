@@ -102,7 +102,7 @@ MODULES: dict[str, dict[str, Any]] = {
     "liquidity": {
         "title": "نقدینگی",
         "views": ["liquidity", "cashflow", "simulator"],
-        "alarm_agents": ["liquidity", "cashflow", "scenario"],
+        "alarm_agents": ["liquidity", "cashflow"],
         "chat_tools": ["liquidity_forecast"],
     },
     "pnl": {
@@ -172,13 +172,10 @@ GROUP_TITLES = {"finance": "مالی و خزانه", "sales": "فروش", "syste
 COMMON_VIEWS = ["alerts"]
 
 # API هایی که فقط برای بعضی ماژول‌ها باز است (پیشوند مسیر ← ماژول‌های مجاز). بقیه APIها فقط ورود می‌خواهند.
-# «admin» یعنی فقط مدیر سیستم (SQL آزاد، اتصال دیتابیس، اجرای دستی همه Agentها).
+# «admin» یعنی فقط مدیر سیستم (اجرای دستی همه Agentها).
 API_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("/api/v1/query", ("admin",)),
     ("/api/v1/chatbot", ("chatbot",)),
-    ("/api/v1/connections", ("admin",)),
     ("/api/v1/finance/agents/run-all", ("admin",)),
-    ("/api/v1/finance/page-agents/run-all", ("admin",)),
     ("/api/v1/finance/payables", ("payables", "management")),
     ("/api/v1/finance/pnl", ("pnl",)),
     ("/api/v1/finance/excel-reports", ("excelReports",)),

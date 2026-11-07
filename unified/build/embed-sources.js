@@ -53,9 +53,6 @@ export default function embedSources({ financeApp, salesSrc }) {
           if (!/export default function Page\(props: \{ view\?: View; onViewChange\?:/.test(out)) {
             throw new Error(`[unified] finance Page no longer accepts { view, onViewChange } in ${id}`)
           }
-          // the manager report is shown on the unified manager page (not on the finance summary);
-          // dashboard-client.tsx re-exports it from ./dashboard/agents
-          if (!/export \{ ManagerPanel \} from /.test(out)) throw new Error(`[unified] ManagerPanel export not found in ${id}`)
         }
         return out === code ? null : { code: out, map: null }
       }

@@ -1,4 +1,4 @@
-"""اجرای Page Agentها: تکی (دکمه هر صفحه) یا همه (روزانه/دکمه تیم) — V171."""
+"""به‌روزرسانی الارم‌ها و گزارش مدیر: قواعد الارم همه ماژول‌ها، سپس Agent مدیر (روزانه، دکمه به‌روزرسانی، بعد از ورود فایل کارآمد)."""
 
 from __future__ import annotations
 
@@ -7,9 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
-from app.agents.page_agents import (
-    AGENT_VIEWS, AGENTS_BY_KEY, PAGE_AGENT_CLASSES, SALES_AGENT_CLASSES, ManagerAgent, SalesManagerAgent,
-)
+from app.agents.page_agents import PAGE_AGENT_CLASSES, ManagerAgent, SalesManagerAgent
 from app.agents.page_agents.context import AgentRunContext
 from app.services.agent_memory_store import AgentMemoryStore
 
@@ -17,46 +15,9 @@ MAX_WORKERS = 4
 _run_all_lock = threading.Lock()
 
 
-def _catalog_entry(cls: type) -> dict[str, Any]:
-    return {"agent_key": cls.key, "page": cls.page, "name": cls.name, "role": cls.role_fa,
-            "view": AGENT_VIEWS.get(cls.key), "primary_metric": cls.primary_metric,
-            "tracked_metrics": cls.tracked_metrics}
-
-
 class PageAgentOrchestrator:
     def __init__(self, store: AgentMemoryStore | None = None):
         self.store = store or AgentMemoryStore()
-
-    # --------------------------------------------------------------- reading
-    def catalog(self) -> list[dict[str, Any]]:
-        return [_catalog_entry(cls) for cls in [ManagerAgent, *PAGE_AGENT_CLASSES, SalesManagerAgent, *SALES_AGENT_CLASSES]]
-
-    def latest(self) -> dict[str, Any]:
-        results = self.store.latest_results()
-        return {
-            "status": "success",
-            "agents": [{**entry, "latest": results.get(entry["agent_key"])} for entry in self.catalog()],
-        }
-
-    def detail(self, agent_key: str) -> dict[str, Any]:
-        cls = AGENTS_BY_KEY.get(agent_key)
-        if cls is None:
-            raise KeyError(agent_key)
-        memory = self.store.memory_context(agent_key, cls.tracked_metrics)
-        history = [{"run_id": r["run_id"], "created_at": r["created_at"], "trigger": r["trigger_type"],
-                    "mode": r["mode"], "metrics": r["metrics"]} for r in self.store.runs(agent_key, limit=30)]
-        return {"status": "success", **_catalog_entry(cls), "latest": self.store.latest_result(agent_key),
-                "series": memory["series"], "history": history,
-                "alerts": self.store.list_alerts(agent_key=agent_key, limit=100)}
-
-    # --------------------------------------------------------------- running
-    def run(self, agent_key: str, trigger: str = "manual") -> dict[str, Any]:
-        if agent_key == ManagerAgent.key:
-            return self.run_all(trigger)["management_summary"]
-        cls = AGENTS_BY_KEY.get(agent_key)
-        if cls is None:
-            raise KeyError(agent_key)
-        return cls(self.store, AgentRunContext()).run(trigger)
 
     def run_all(self, trigger: str = "manual") -> dict[str, Any]:
         if not _run_all_lock.acquire(blocking=False):

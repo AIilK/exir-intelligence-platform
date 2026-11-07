@@ -32,8 +32,6 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_model: str = "gpt-5.6-luna"
-    treasury_agent_max_turns: int = 6
-    treasury_agent_session_db: str = "./treasury_agent_sessions.db"
     treasury_reconciliation_db: str = "./treasury_reconciliation.db"
     # Shared only between the trusted frontend proxy and Backend. Never expose
     # this value in NEXT_PUBLIC_* variables or browser code.

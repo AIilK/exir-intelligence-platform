@@ -1,6 +1,6 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (monthly-excel).
 import { useCallback, useEffect, useState } from "react";
-import { Heading, K, Risk, Status, label } from "./agents";
+import { Heading, K, Risk, Status } from "./widgets";
 import { API, fa, money, request, textOf } from "./shared";
 
 export function MonthlyExcelAutomation({ chequeQuality }: { chequeQuality?: any }) {

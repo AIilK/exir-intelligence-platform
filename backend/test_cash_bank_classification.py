@@ -1,5 +1,5 @@
 from app.services.cash_bank_movement_service import CashBankMovementService
-from app.agents.finance_decision_agents import CashBankMovementDecisionAgent, FinanceManagerDecisionAgent
+from app.agents.finance_decision_agents import FinanceManagerDecisionAgent
 
 
 def _row(description: str, counterpart_name: str = "", *, movement_type: str = "bank_payment", direction: str = "outflow"):
@@ -22,32 +22,8 @@ def test_company_transfer_and_petty_cash_are_not_operational_movements():
     assert service._movement_payload(_row("خرید مواد اولیه"))["classification"] == "operational"
 
 
-def test_cash_bank_agent_keeps_actual_monthly_movement_out_of_forecast_blocks():
-    result = CashBankMovementDecisionAgent().run(
-        {"status": "success", "summary": {"inflow_rial": 3300, "outflow_rial": 500}, "movements": []},
-        {"summary": {"transfer_amount_rial": 1000}},
-        {"summary": {"current_year_overdue": {"amount_rial": 0}}},
-    )
-    prediction = result["analysis"]["prediction"]
-    assert prediction["actual_period"] == {
-        "operational_inflow_rial": 3300,
-        "operational_outflow_rial": 500,
-        "operational_net_rial": 2800,
-        "actual_inflow_rial": 3300,
-        "actual_outflow_rial": 500,
-        "actual_net_rial": 2800,
-    }
-    assert "next_7_days" not in prediction
-    assert result["metadata"]["mode"] == "rules"
-
-
 def test_finance_manager_reads_cash_bank_actual_metrics():
-    cash_bank = CashBankMovementDecisionAgent().run(
-        {"status": "success", "summary": {"inflow_rial": 3300, "outflow_rial": 500}, "movements": []},
-        {"summary": {"transfer_amount_rial": 1000}},
-        {"summary": {}},
-    )
-    manager = FinanceManagerDecisionAgent().run({"cash_bank_movement": cash_bank}, actual_report={"summary": {"bank_receipt_rial": 3300, "bank_payment_total_rial": 1500, "bank_payment_excluding_transfer_rial": 500}})
+    manager = FinanceManagerDecisionAgent().run({}, actual_report={"summary": {"bank_receipt_rial": 3300, "bank_payment_total_rial": 1500, "bank_payment_excluding_transfer_rial": 500}})
     kpis = {item["label"]: item for item in manager["analysis"]["executive_kpis"]}
     assert kpis["حواله دریافتی"]["value_rial"] == 3300
     assert kpis["حواله پرداختی"]["value_rial"] == 1500

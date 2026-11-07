@@ -23,8 +23,8 @@ def _refresh_finance_agents_after_karamad_import(result: dict) -> dict:
     The response tells the UI whether the new report was generated or still needs a retry.
     """
     try:
-        from app.services.finance_operations_service import FinanceAgentOrchestrator
-        refreshed = FinanceAgentOrchestrator().run_all(trigger="karamad_snapshot_update")
+        from app.services.page_agent_orchestrator import PageAgentOrchestrator
+        refreshed = PageAgentOrchestrator().run_all(trigger="karamad_snapshot_update")
         result["agent_refresh"] = {
             "status": "success",
             "report_id": refreshed.get("report_id"),

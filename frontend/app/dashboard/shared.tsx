@@ -1,7 +1,6 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (shared).
 // توابع و اجزای مشترک داشبورد مالی: آدرس API، قالب‌بندی مبلغ و تاریخ، کمک‌کننده‌های چک.
 import { useEffect, useState } from "react";
-import { label } from "./agents";
 import { ALERT_TERM_AMOUNT_RIAL, ALERT_TERM_DAYS, chequeTermDays } from "./collections";
 import type { Cheque, Customer, InsightPayload, InsightRecord, TreasuryCheque, View } from "./types";
 

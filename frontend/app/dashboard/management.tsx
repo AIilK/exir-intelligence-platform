@@ -1,8 +1,8 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (management).
 import ExecutiveOverview, { type ChequeBucket } from "../management/executive-overview";
-import { Heading, Status, label } from "./agents";
+import { Heading, Status } from "./widgets";
 import { JALALI_MONTH_NAMES, chequeDueJalali, cname, currentJalali, daysToDue, fa, fullToman, money, openInsight, risk, textOf } from "./shared";
-import type { AgentResult, Alert, Analysis, CashDay, Cheque, Customer, InsightRecord, TreasuryCheque, View } from "./types";
+import type { Alert, Analysis, CashDay, Cheque, Customer, InsightRecord, TreasuryCheque, View } from "./types";
 
 export function FutureCashflowExecutive({
   cash,
@@ -75,7 +75,6 @@ export function FutureCashflowExecutive({
 
 export function Management({
   manager,
-  agents,
   customers,
   cheques,
   cash,
@@ -88,7 +87,6 @@ export function Management({
   go,
 }: {
   manager?: Analysis;
-  agents?: Record<string, AgentResult>;
   customers: Customer[];
   cheques: Cheque[];
   cash?: any;

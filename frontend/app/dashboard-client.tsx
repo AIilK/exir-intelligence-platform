@@ -1,5 +1,6 @@
+
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./functional.css";
 import "./cheque-totals.css";
 import "./enterprise.css";
@@ -27,7 +28,7 @@ import InventoryPricingPage from "./inventory-pricing/inventory-pricing-page";
 import PurchaseDocsPage from "./purchase-docs/purchase-docs-page";
 import PnlPage from "./pnl/pnl-page";
 import ChatWidget from "./chatbot/chat-widget";
-import { flashChatTarget, useChatLink } from "./chatbot/chat-link";
+import { useChatLink } from "./chatbot/chat-link";
 import PayablesPage from "./payables/payables-page";
 import "./readability-v2.css";
 import { useAuth } from "./auth/auth";
@@ -38,7 +39,7 @@ import ManagerOverview from "./management/manager-overview";
 import { AlarmBell, AlarmCenter, AlarmStrip, AlarmToasts, startAlarms, stopAlarms } from "./alarms/alarms";
 import Pet from "./pet/pet";
 import "./theme/theme.css";
-import { description, label } from "./dashboard/agents";
+import { description, label } from "./dashboard/widgets";
 import { CashBankMovements } from "./dashboard/cash-bank-movements";
 import { Cashflow } from "./dashboard/cashflow";
 import { ChequeHub, ChequeSourcePage } from "./dashboard/cheques";
@@ -52,7 +53,6 @@ import { B2BCustomerRemittances, CompanyPaymentOrders } from "./dashboard/paymen
 import { InsightCenter, cname, fa, menu, request, treasuryRequest } from "./dashboard/shared";
 import type { Alert, Case, Customer, Pack, TreasuryCheque, View } from "./dashboard/types";
 import { Alerts, History, Performance, Representatives, Settings, Simulator } from "./dashboard/workspace";
-export { ManagerPanel } from "./dashboard/agents";
 
 export default function Page(props: { view?: View; onViewChange?: (v: View) => void } = {}) {
   const { profile, can, hasModule, logout } = useAuth();
@@ -72,8 +72,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
     [received, setReceived] = useState<TreasuryCheque[]>([]),
     [issued, setIssued] = useState<TreasuryCheque[]>([]),
     [treasuryError, setTreasuryError] = useState(""),
-    [chequeQuality, setChequeQuality] = useState<any>(null),
-    [agentFocus, setAgentFocus] = useState<string | null>(null);
+    [chequeQuality, setChequeQuality] = useState<any>(null);
   // رفتن به صفحه فقط اگر در ماژول‌های کاربر باشد (لینک چت‌بات، الارم و کارت‌ها هم از همین می‌گذرند).
   const view: View = props.view ?? innerView;
   const { onViewChange } = props;
@@ -269,7 +268,6 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
         {view === "management" && (
           <Management
             manager={manager}
-            agents={pack?.agents}
             customers={customers}
             cheques={cheques}
             cash={cash}
@@ -277,7 +275,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
             received={received.length ? received : cheques}
             issued={issued}
             openChequePage={(kind) => setView(kind === "received" ? "receivedCheques" : "issuedCheques")}
-            openAgent={(key) => { setAgentFocus(key); setView("alerts"); }}
+            openAgent={() => setView("alerts")}
             openView={(v) => setView(v)}
             go={(v) => setView(v as View)}
           />
@@ -288,7 +286,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
         {view === "customers" && (selected ? (
           <CustomerProfile c={selected} close={() => setSelected(null)} refresh={load} embedded />
         ) : (
-          <Customers customers={customers} agent={pack?.agents?.customer_behavior} open={setSelected} />
+          <Customers customers={customers} open={setSelected} />
         ))}
         {view === "cheques" && (
           <ChequeHub
@@ -307,7 +305,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
             error={treasuryError} back={() => setView("cheques")} onUpdated={refreshAfterKaramadUpdate} />
         )}
         {view === "cashflow" && (
-          <Cashflow cash={cash} agent={pack?.agents?.cashflow} openAgent={(key) => { setAgentFocus(key); setView("alerts"); }} />
+          <Cashflow cash={cash} openAgent={() => setView("alerts")} />
         )}
         {view === "liquidity" && <LiquidityPage />}
         {view === "inventoryPricing" && <InventoryPricingPage />}
@@ -319,7 +317,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
         {!onViewChange && hasModule("chatbot") && <ChatWidget view={view} go={(v) => setView(v as View)} />}
         {view === "payables" && <PayablesPage />}
         {view === "cashBank" && (
-          <CashBankMovements agent={pack?.agents?.cash_bank_movement} />
+          <CashBankMovements />
         )}
         {view === "companyPayments" && <CompanyPaymentOrders />}
         {view === "b2bRemittances" && <B2BCustomerRemittances />}
@@ -330,7 +328,6 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
         {view === "collections" && (
           <Collections
             cases={cases}
-            agent={pack?.agents?.collection}
             refresh={load}
             received={received.length ? received : cheques}
           />
@@ -339,7 +336,6 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
           <Representatives
             reps={reps}
             unmapped={pack?.data?.representatives?.unmapped_customer_count}
-            agent={pack?.agents?.representative}
           />
         )}
         {view === "simulator" && (

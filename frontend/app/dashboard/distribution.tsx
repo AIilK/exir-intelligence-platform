@@ -2,8 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import SortTable from "../sort-table";
 import { flashChatTarget, useChatLink } from "../chatbot/chat-link";
-import { label } from "./agents";
-import { API, boldToman, fa, fullToman, money, monthLabel, recentJalaliMonths, request, sumOf } from "./shared";
+import { API, boldToman, fa, fullToman, monthLabel, recentJalaliMonths, request, sumOf } from "./shared";
 import type { YearMonth } from "./shared";
 
 export function MonthlyDistributionReport({ ym, branch, onBranch }: { ym: YearMonth; branch: string; onBranch: (name: string) => void }) {

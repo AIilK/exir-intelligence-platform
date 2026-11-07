@@ -1,12 +1,12 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (cashflow).
 import { useCallback, useEffect, useState } from "react";
-import { Heading, label } from "./agents";
+import { Heading } from "./widgets";
 import { CashChart, CashFlowCompositionChart, CashTable } from "./customer-profile";
 import { FutureCashflowExecutive } from "./management";
-import { fa, money, policy, request } from "./shared";
-import type { AgentResult, CashDay } from "./types";
+import { fa, money, request } from "./shared";
+import type { CashDay } from "./types";
 
-export function Cashflow({ cash, agent, openAgent }: { cash?: any; agent?: AgentResult; openAgent: (key: string) => void }) {
+export function Cashflow({ cash, openAgent }: { cash?: any; openAgent: (key: string) => void }) {
   const [forecastDays, setForecastDays] = useState(30);
   const [selectedCash, setSelectedCash] = useState<any>(cash);
   const [loading, setLoading] = useState(false);

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RegCell, chequeNo } from "../cheque-reg";
 import { useChatLink } from "../chatbot/chat-link";
-import { Heading, K, label } from "./agents";
+import { Heading, K } from "./widgets";
 import { chequeTermDays } from "./collections";
 import { VerticalBars } from "./management";
 import { IssuedChequeTotals, JALALI_MONTHS, RahkaranChequeTotals, chequeDueJalali, chequeInsightRows, cname, daysToDue, fa, fullToman, isLongTermLargeCheque, longTermChequeInsight, money, receivedChequeHoldingBucket, receivedChequeHoldingLabel, remainingLabel, request } from "./shared";

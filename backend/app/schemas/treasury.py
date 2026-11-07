@@ -11,36 +11,6 @@ class AccountBalance(BaseModel):
     credit:float
 
 
-class TreasuryChatRequest(BaseModel):
-    message: str = Field(
-        min_length=1,
-        max_length=2000,
-        description="سؤال فارسی کاربر از Agent خزانه",
-        examples=["مانده حساب ابرام چقدر است؟"],
-    )
-    session_id: str | None = Field(
-        default=None,
-        min_length=8,
-        max_length=100,
-        pattern=r"^[A-Za-z0-9_-]+$",
-        description="شناسه مکالمه؛ در پیام اول اختیاری و برای ادامه گفتگو الزامی است",
-    )
-
-
-class TreasuryChatResponse(BaseModel):
-    status: str
-    answer: str
-    session_id: str
-
-
-class TreasuryChatStatusResponse(BaseModel):
-    status: str
-    ready: bool
-    model: str
-    message: str
-    diagnostics: dict[str, str]
-
-
 class FinancialQueryRequest(BaseModel):
     question: str = Field(
         min_length=3,

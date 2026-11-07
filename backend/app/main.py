@@ -8,9 +8,6 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.treasury import router as treasury_router
-from app.api.v1.catalog import router as catalog_router
-from app.api.v1.datasource import router as datasource_router
-from app.api.v1.query import router as query_router
 from app.api.v1.finance_dashboard import router as finance_dashboard_router
 from app.api.v1.finance_operations import router as finance_operations_router
 from app.api.v1.liquidity import router as liquidity_router
@@ -92,9 +89,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(datasource_router, prefix="/api/v1")
-app.include_router(catalog_router, prefix="/api/v1")
-app.include_router(query_router, prefix="/api/v1")
 app.include_router(finance_dashboard_router, prefix="/api/v1")
 app.include_router(finance_operations_router, prefix="/api/v1")
 app.include_router(treasury_router, prefix="/api/v1")
@@ -104,13 +98,6 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(alarms_router, prefix="/api/v1")
 app.include_router(reminders_router, prefix="/api/v1")
 
-from app.api.v1.finance_agent import router as finance_agent_router
-
-
-app.include_router(
-    finance_agent_router,
-    prefix="/api/v1"
-)
 @app.get("/")
 def root():
     return {

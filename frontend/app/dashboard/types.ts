@@ -1,7 +1,5 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (types).
 // شکل داده‌های API داشبورد مالی (فقط type).
-import { description, label } from "./agents";
-import { policy } from "./shared";
 
 export type View =
   | "overview"
@@ -29,8 +27,7 @@ export type View =
   | "alerts"
   | "history"
   | "performance"
-  | "settings"
-  | "agents";
+  | "settings";
 export type AgentContent =
   string | number | Record<string, unknown> | null | undefined;
 export type Analysis = {

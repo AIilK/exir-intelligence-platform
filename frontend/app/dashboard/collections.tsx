@@ -1,9 +1,9 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (collections).
 import { useEffect, useMemo, useState } from "react";
 import { RegCell, chequeNo } from "../cheque-reg";
-import { Heading, Risk } from "./agents";
+import { Heading, Risk } from "./widgets";
 import { daysToDue, fa, fullToman, receivedChequeHoldingBucket, request } from "./shared";
-import type { AgentResult, Case, TreasuryCheque } from "./types";
+import type { Case, TreasuryCheque } from "./types";
 
 export const ALERT_TERM_DAYS = 90;
 export const ALERT_TERM_AMOUNT_RIAL = 1_000_000_000; // 100M toman
@@ -149,12 +149,10 @@ export const collectionAlertShort: Record<CollectionAlertKey, string> = { return
 
 export function Collections({
   cases,
-  agent,
   refresh,
   received,
 }: {
   cases: Case[];
-  agent?: AgentResult;
   refresh: () => void;
   received: TreasuryCheque[];
 }) {

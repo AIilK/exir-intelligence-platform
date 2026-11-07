@@ -1,17 +1,15 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (customers).
 import { useEffect, useMemo, useState } from "react";
-import { Heading, Risk, label } from "./agents";
+import { Heading, Risk } from "./widgets";
 import { SalesNetwork } from "./sales-network";
 import { JALALI_MONTH_NAMES, cname, currentJalali, daysToDue, fa, fullToman, money, remainingLabel, request, risk } from "./shared";
-import type { AgentResult, Cheque, Customer } from "./types";
+import type { Cheque, Customer } from "./types";
 
 export function Customers({
   customers,
-  agent,
   open,
 }: {
   customers: Customer[];
-  agent?: AgentResult;
   open: (c: Customer) => void;
 }) {
   const [branch, setBranch] = useState("");
@@ -293,7 +291,7 @@ export function CustomerMonthFilter({ value, onChange, loading }: {
   </section>;
 }
 
-export function Cheques({ rows, agent }: { rows: Cheque[]; agent?: AgentResult }) {
+export function Cheques({ rows }: { rows: Cheque[] }) {
   return (
     <>
       <article className="fd-panel">

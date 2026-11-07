@@ -1,6 +1,6 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (payments).
 import { useEffect, useState } from "react";
-import { Heading, K, label } from "./agents";
+import { Heading, K } from "./widgets";
 import { fa, fullToman, treasuryRequest } from "./shared";
 
 export function B2BCustomerRemittances() {

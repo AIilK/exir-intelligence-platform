@@ -1,9 +1,9 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (sales-network).
 import { useEffect, useState } from "react";
 import { RegCell, chequeNo } from "../cheque-reg";
-import { Heading } from "./agents";
+import { Heading } from "./widgets";
 import { ChequeReturnRisk, LastInvoicesTable } from "./customer-profile";
-import { API, fa, fullToman, money, request, risk } from "./shared";
+import { API, fa, fullToman, money, request } from "./shared";
 
 export function SalesNetwork({ data, error, onBack }: { data: any; error: string; onBack: () => void }) {
   const [branchId, setBranchId] = useState<number | null>(null);

@@ -128,7 +128,6 @@ class IssuedChequesAgent(PageAgent):
     tracked_metrics = {"future_amount": "چک پرداختی باز آینده", "next_7_amount": "سررسید ۷ روز آینده",
                        "overdue_amount": "چک پرداختی سررسیدگذشته"}
     primary_metric = "next_7_amount"
-    narrate_with_llm = True
 
     def collect(self):
         rows = self.ctx.issued_open().get("cheques") or []
@@ -471,9 +470,10 @@ class ReconciliationAgent(PageAgent):
 
 # ============================================================= wrapped agents
 class LegacyWrappedAgent(PageAgent):
-    """Wraps an existing decision agent: its analysis text stays, structured alerts/predictions are added."""
+    """بررسی الارم ماژول‌هایی که اعدادشان از سرویس‌های قدیمی (ctx) می‌آید: فقط extra() (قواعد) اجرا می‌شود.
+    فقط Agent مدیر (use_legacy=True) گزارش متنی FinanceManagerDecisionAgent را هم می‌سازد."""
 
-    narrate_with_llm = False
+    use_legacy = False
 
     def legacy_result(self) -> dict[str, Any]:
         raise NotImplementedError
@@ -482,7 +482,7 @@ class LegacyWrappedAgent(PageAgent):
         return {}
 
     def collect(self):
-        legacy = self.ctx.legacy(self.key, self.legacy_result)
+        legacy = self.ctx.legacy(self.key, self.legacy_result) if self.use_legacy else {}
         return {"metrics": self.legacy_metrics(), "legacy": legacy, "mode": (legacy.get("metadata") or {}).get("mode", "rules")}
 
     def extra(self, data, memory, deltas) -> dict[str, Any]:
@@ -504,10 +504,6 @@ class CustomerRiskAgent(LegacyWrappedAgent):
     role_fa = "پیش‌بینی ریسک مشتری و پیشنهاد سیاست اعتبار"
     tracked_metrics = {"open_exposure": "مانده باز مشتریان", "collection_gap": "شکاف وصول", "high_risk_count": "مشتری پرریسک"}
     primary_metric = "collection_gap"
-
-    def legacy_result(self):
-        from app.agents.finance_decision_agents import CustomerRiskDecisionAgent
-        return CustomerRiskDecisionAgent().run(self.ctx.customer())
 
     def legacy_metrics(self):
         s = self.ctx.customer().get("summary") or {}
@@ -537,10 +533,6 @@ class CashflowAgent(LegacyWrappedAgent):
     role_fa = "پیش‌بینی نقدینگی و پیشنهاد جلوگیری از کسری"
     tracked_metrics = {"net_cash_change": "تغییر خالص نقد ۳۰ روز", "lowest_projected_cash": "کمترین موجودی پیش‌بینی"}
     primary_metric = "lowest_projected_cash"
-
-    def legacy_result(self):
-        from app.agents.finance_decision_agents import CashFlowDecisionAgent
-        return CashFlowDecisionAgent().run(self.ctx.cash())
 
     def legacy_metrics(self):
         cash = self.ctx.cash()
@@ -574,10 +566,6 @@ class CashBankAgent(LegacyWrappedAgent):
     tracked_metrics = {"inflow": "ورودی ماه", "outflow": "خروجی ماه", "net": "خالص ماه"}
     primary_metric = "net"
 
-    def legacy_result(self):
-        from app.agents.finance_decision_agents import CashBankMovementDecisionAgent
-        return CashBankMovementDecisionAgent().run(self.ctx.cash_bank(), self.ctx.internal_transfers(), self.ctx.payment_commitments())
-
     def legacy_metrics(self):
         s = self.ctx.cash_bank().get("summary") or {}
         f = self.ctx.cash_bank().get("filters") or {}
@@ -603,10 +591,6 @@ class CollectionAgent(LegacyWrappedAgent):
     role_fa = "پیش‌بینی وصول و تعیین اقدام بعدی مشتریان"
     tracked_metrics = {"overdue_total": "سررسیدگذشته ۱۰۰ مشتری اول", "expected_total": "وصول مورد انتظار"}
     primary_metric = "overdue_total"
-
-    def legacy_result(self):
-        from app.agents.finance_decision_agents import CollectionDecisionAgent
-        return CollectionDecisionAgent().run(self.ctx.collections())
 
     def legacy_metrics(self):
         rows = self.ctx.collections().get("customers") or []
@@ -635,10 +619,6 @@ class RepresentativeAgentPage(LegacyWrappedAgent):
     primary_metric = "critical_count"
     primary_unit = "count"
 
-    def legacy_result(self):
-        from app.agents.finance_specialist_agents import RepresentativeAgent
-        return RepresentativeAgent().run(self.ctx.representatives())
-
     def legacy_metrics(self):
         reps = self.ctx.representatives()
         rows = reps.get("representatives") or []
@@ -653,21 +633,8 @@ class RepresentativeAgentPage(LegacyWrappedAgent):
                                  "فایل customer_representative_mapping.csv تکمیل شود.")], "predictions": []}
 
 
-class ScenarioAgent(LegacyWrappedAgent):
-    key = "scenario"
-    page = "سناریوساز نقدینگی"
-    name = "Finance Scenario Agent"
-    role_fa = "مقایسه سناریوها و انتخاب مسیر کم‌ریسک"
-
-    def legacy_result(self):
-        from app.agents.finance_decision_agents import ChequePaymentDecisionAgent, ScenarioDecisionAgent
-        cash = self.ctx.legacy("cashflow", CashflowAgent(self.store, self.ctx).legacy_result)
-        cheque_payment = self.ctx.legacy("cheque_payment", lambda: ChequePaymentDecisionAgent().run(
-            self.ctx.cheque_quality(), self.ctx.excel_monthly()))
-        return ScenarioDecisionAgent().run(cash.get("analysis") or {}, cheque_payment.get("analysis") or {})
-
-
 class ManagerAgent(LegacyWrappedAgent):
+    use_legacy = True
     key = "management"
     page = "خلاصه مدیریتی"
     name = "Finance Manager Agent"
@@ -722,7 +689,6 @@ class PayablesAgent(PageAgent):
         "nontrade_owe_amount": "بدهی غیرتجاری", "advance_amount": "پیش‌پرداخت / طلب از تأمین‌کنندگان",
     }
     primary_metric = "owe_amount"
-    narrate_with_llm = True
 
     def collect(self):
         from app.services.payables_service import PayablesService
@@ -795,7 +761,6 @@ class LiquidityAgent(PageAgent):
         "inflow_30": "ورودی پیش‌بینی ۳۰ روز", "outflow_30": "خروجی پیش‌بینی ۳۰ روز",
     }
     primary_metric = "financing_need"
-    narrate_with_llm = True
 
     def collect(self):
         from app.services.liquidity.summary import LiquiditySummaryService
@@ -863,5 +828,5 @@ class LiquidityAgent(PageAgent):
 PAGE_AGENT_CLASSES: list[type[PageAgent]] = [
     ReceivedChequesAgent, IssuedChequesAgent, CompanyPaymentsAgent, B2BRemittancesAgent, DistributionAgent,
     DailyCashExcelAgent, ReconciliationAgent, CustomerRiskAgent, CashflowAgent, CashBankAgent, CollectionAgent,
-    RepresentativeAgentPage, ScenarioAgent, PayablesAgent, LiquidityAgent,
+    RepresentativeAgentPage, PayablesAgent, LiquidityAgent,
 ]
