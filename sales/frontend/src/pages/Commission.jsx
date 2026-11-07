@@ -217,12 +217,14 @@ const VISITOR_FINANCE_URL = '/api/v1/finance/sales-network/visitor-finance'
 // تایید اعتباری: (مانده بدهی + چک برگشتی) کمتر از ۲۰٪ فروش از ابتدای سال (ناخالص و خالص جدا)
 const APPROVAL_LIMIT = 0.2
 const OK = 'تایید', NOT_OK = 'عدم تایید'
-/** ok_gross و ok_net را اضافه می‌کند؛ تا مانده بدهی از بخش مالی نیامده هر دو خالی می‌مانند. */
+/** ok_gross، ok_net و ok_final را اضافه می‌کند؛ تا مانده بدهی از بخش مالی نیامده همه خالی می‌مانند.
+ * ok_final: مثل ok_gross ولی با بدهی نهایی (مانده بدهی − توزیع‌نشده) به‌جای مانده بدهی. */
 function withApproval(r) {
-  if (!isNum(r.debt)) return { ...r, ok_gross: null, ok_net: null }
+  if (!isNum(r.debt)) return { ...r, ok_gross: null, ok_net: null, ok_final: null }
   const exposure = (r.debt || 0) + (r.returned || 0)
-  const ok = (base) => (exposure < APPROVAL_LIMIT * (base || 0) ? OK : NOT_OK)
-  return { ...r, ok_gross: ok(r.gross_ytd), ok_net: ok(r.net_ytd) }
+  const ok = (base, exp = exposure) => (exp < APPROVAL_LIMIT * (base || 0) ? OK : NOT_OK)
+  const finalExp = (isNum(r.debt_final) ? r.debt_final : (r.debt || 0) - (r.undist || 0)) + (r.returned || 0)
+  return { ...r, ok_gross: ok(r.gross_ytd), ok_net: ok(r.net_ytd), ok_final: ok(r.gross_ytd, finalExp) }
 }
 const approvalPill = (key) => (r) => (r[key] == null ? ''
   : <span className={`pill ${r[key] === OK ? 'st-green' : 'st-red'}`}>{r[key]}</span>)
@@ -371,8 +373,11 @@ function Sheet({ data }) {
     const x = fin.map?.get(v.seller_key)
     const row = { ...v, cash_disc: (v.net_cash || 0) - (v.net || 0), comm_pct: ratio(v.commission, v.net_cash), cost_pct: costPct(v),
       mgmt_pct: ratio(v.mgmt_disc, v.gross), wholesale_pct: ratio(v.wholesale_gross, v.gross) }
+    // توزیع‌نشده = فاکتورهای بدون حواله خروج (همان تب «توزیع بار»)؛ بدهی نهایی = مانده بدهی − توزیع‌نشده
     return x ? withApproval({ ...row, debt: x.open_account_receivable_rial, debtors: x.debtor_customer_count,
-      returned: x.returned_cheque_rial, returned_n: x.returned_cheque_count }) : row
+      returned: x.returned_cheque_rial, returned_n: x.returned_cheque_count,
+      undist: x.undistributed_rial ?? 0, undist_n: x.undistributed_count ?? 0,
+      debt_final: (x.open_account_receivable_rial || 0) - (x.undistributed_rial || 0), fin: x }) : row
   }), [data.visitors, fin.map])
   const supervisors = useMemo(() => data.supervisors.map((s0) => {
     const mates = visitors.filter((v) => v.supervisor === s0.name && bkey(v.branch) === bkey(s0.branch))
@@ -381,7 +386,8 @@ function Sheet({ data }) {
     const team = visitors.filter((v) => v.supervisor === s.name && bkey(v.branch) === bkey(s.branch) && isNum(v.debt))
     if (!team.length) return s
     const add = (k) => team.reduce((a, v) => a + (v[k] || 0), 0)
-    return withApproval({ ...s, debt: add('debt'), returned: add('returned'), returned_n: add('returned_n') })
+    return withApproval({ ...s, debt: add('debt'), returned: add('returned'), returned_n: add('returned_n'),
+      undist: add('undist'), undist_n: add('undist_n'), debt_final: add('debt_final') })
   }), [data.supervisors, visitors])
   const uniq = (k) => [...new Set(visitors.map((v) => v[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fa'))
   const opts = { branch: uniq('branch'), supervisor: uniq('supervisor').filter((s) => !f.branch || visitors.some((v) => v.branch === f.branch && v.supervisor === s)) }
@@ -402,6 +408,12 @@ function Sheet({ data }) {
   // پورسانت = نرخ × (مبنا − مبنای فاکتورهای ویژه) + نرخ ویژه × مبنای فاکتورهای ویژه (حداقل صفر)
   const split = (ref, ws) => `MAX(N(${ref('rate')})*(N(${ref('base')})-IF(${ws}="",0,N(${ref('special_base')})))+N(${ws})*IF(${ws}="",0,N(${ref('special_base')})),0)`
   const commXf = (ref) => `IF(${ref('rate')}="","",IF(${ref('type_label')}="${COMM_T}",${split(ref, 'R_COMM_WS')},IF(N(${ref('base')})<R_EMP_FLOOR,0,${split(ref, 'R_EMP_WS')})))`
+  // اکسل: «درصد پورسانت» از قواعد حساب می‌شود و «پورسانت» = درصد پورسانت × (فروش خالص + درصد نقدی)؛
+  // اگر درصد پورسانت ردیفی دستی عوض شود، پورسانت، ذخیره، قابل پرداخت و درصد هزینه با همان درصد حساب می‌شوند
+  const pctFrom = (comm) => (ref) => `IF(${comm(ref)}="","",IF(N(${ref('net_cash')})<=0,0,${comm(ref)}/N(${ref('net_cash')})))`
+  const commFromPct = (ref) => `IF(${ref('comm_pct')}="","",N(${ref('comm_pct')})*N(${ref('net_cash')}))`
+  const commPctCol = (hint, comm) => ({ key: 'comm_pct', label: 'درصد پورسانت', type: 'pct', pctDigits: 2, render: (r) => fmtPct(r.comm_pct, 2),
+    hint, ratio: ['commission', 'net_cash'], xf: pctFrom(comm) })
   const reserveXf = (ref) => `IF(${ref('commission')}="",0,N(${ref('commission')})*IF(${ref('type_label')}="${COMM_T}",R_COMM_RES,R_EMP_RES))`
   const payXf = (ref) => `IF(${ref('commission')}="","",N(${ref('commission')})-N(${ref('reserve')}))`
   // سرپرست: پلکانی روی مبنای تیم؛ اگر فروش ناخالص تیم (reach) به تارگت اول نرسد صفر
@@ -417,6 +429,10 @@ function Sheet({ data }) {
         : `فروش خالص (پس از کسر برگشتی و همه تخفیفات، بدون ارزش افزوده) از ۱ فروردین ${year} تا پایان همین ماه` },
     { key: 'debt', label: team ? 'مانده بدهی تیم' : 'مانده بدهی', type: 'money',
       hint: `مانده بدهی مشتریان ${team ? 'ویزیتورهای این سرپرست' : 'این ویزیتور'} از بخش مالی (همان عدد پرونده ویزیتور)` },
+    { key: 'undist', label: team ? 'توزیع‌نشده تیم' : 'توزیع‌نشده', type: 'money',
+      hint: `جمع مبلغ فاکتورهای ${team ? 'ویزیتورهای این سرپرست' : 'این ویزیتور'} که هنوز حواله خروج ندارند (سال مالی جاری؛ همان تب «توزیع بار» داشبورد مالی)` },
+    { key: 'debt_final', label: team ? 'بدهی نهایی تیم' : 'بدهی نهایی', type: 'money',
+      hint: 'مانده بدهی − توزیع‌نشده', xf: (ref) => `IF(${ref('debt')}="","",N(${ref('debt')})-N(${ref('undist')}))` },
     { key: 'returned', label: team ? 'چک برگشتی تیم' : 'چک برگشتی', type: 'money',
       hint: `مبلغ چک‌های برگشتی تسویه‌نشده فاکتورهای ${team ? 'تیم' : 'این ویزیتور'} از بخش مالی${fin.from ? ` (سررسید از ${faDigits(fin.from)})` : ''}` },
     { key: 'returned_n', label: 'تعداد چک برگشتی', type: 'int' },
@@ -424,6 +440,9 @@ function Sheet({ data }) {
       hint: approvalHint('ناخالص', team), xf: approvalXf('gross_ytd') },
     { key: 'ok_net', label: `تایید (${fa(Math.round(APPROVAL_LIMIT * 100))}٪ خالص ${year})`, render: approvalPill('ok_net'),
       hint: approvalHint('خالص', team), xf: approvalXf('net_ytd') },
+    { key: 'ok_final', label: `تایید با بدهی نهایی (${fa(Math.round(APPROVAL_LIMIT * 100))}٪ ناخالص ${year})`, render: approvalPill('ok_final'),
+      hint: `اگر بدهی نهایی${T(team)} (مانده بدهی − توزیع‌نشده) + چک برگشتی${T(team)} کمتر از ${fa(Math.round(APPROVAL_LIMIT * 100))}٪ فروش ناخالص${T(team)} از ابتدای ${year} باشد «تایید»، وگرنه «عدم تایید»`,
+      xf: (ref) => `IF(${ref('debt')}="","",IF(N(${ref('debt_final')})+N(${ref('returned')})<R_APPROVAL*N(${ref('gross_ytd')}),"${OK}","${NOT_OK}"))` },
   ]
   const set = (k) => (e) => { setF({ ...f, [k]: e.target.value, ...(k === 'branch' ? { supervisor: '' } : {}) }); setSel(null); setSelS(null) }
   const vcols = [
@@ -466,8 +485,8 @@ function Sheet({ data }) {
     { key: 'extra_rate', label: 'نرخ خارج از سقف', type: 'pct', pctDigits: 2, exportOnly: true, noTotal: true, hint: 'فقط استخدامی: گروه‌های خارج از سقف (رزتی)' },
     { key: 'rate', label: 'نرخ پورسانت', type: 'pct', pctDigits: 2, exportOnly: true, noTotal: true,
       hint: 'پورسانتی: نرخ سطح فروش ناخالص از جدول قاعده؛ استخدامی: min(نرخ پایه تحقق + تکمیلی، سقف) + خارج از سقف، زیر کف صفر', xf: rateXf },
-    pct2('comm_pct', 'درصد پورسانت', 'پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی)', ['commission', 'net_cash']),
-    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', xf: commXf,
+    commPctCol('پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی). در اکسل ورودی پورسانت است: اگر دستی عوض شود پورسانت با همین درصد حساب می‌شود', commXf),
+    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', xf: commFromPct,
       hint: 'نرخ پورسانت × (مبنای پورسانت − مبنای فاکتورهای ویژه) + نرخ فاکتورهای ویژه × مبنای فاکتورهای ویژه' },
     { key: 'reserve', label: 'ذخیره پورسانت', type: 'money', xf: reserveXf,
       hint: `پورسانتی ${fmtPct(data.rules.commission.reserve, 0)}، استخدامی ${fmtPct(data.rules.employed.reserve, 0)}` },
@@ -493,8 +512,9 @@ function Sheet({ data }) {
       xf: (ref) => `IF(N(${ref('t1')})=0,"",N(${ref('gross')})/N(${ref('t1')}))` },
     { key: 'status', label: 'وضعیت', noTotal: true,
       xf: (ref) => `IF(${ref('t1')}="","بدون قاعده سرپرستی",IF(N(${ref('gross')})<N(${ref('t1')}),"زیر تارگت اول",IF(N(${ref('gross')})>=N(${ref('t2')}),"تارگت دوم","تارگت اول")))` },
-    pct2('comm_pct', 'درصد پورسانت', 'پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی تیم)', ['commission', 'net_cash']),
-    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', xf: (ref) => supComm(ref, `N(${ref('base')})`, `N(${ref('gross')})`),
+    commPctCol('پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی تیم). در اکسل ورودی پورسانت است: اگر دستی عوض شود پورسانت با همین درصد حساب می‌شود',
+      (ref) => supComm(ref, `N(${ref('base')})`, `N(${ref('gross')})`)),
+    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', xf: commFromPct,
       hint: 'پلکانی روی مبنای پورسانت تیم با نرخ‌های سرپرست برگه قواعد؛ اگر فروش ناخالص تیم به تارگت اول نرسد صفر' },
     ...(data.pace ? [{ key: 'forecast_commission', label: 'پورسانت با پیش‌بینی', type: 'money',
       xf: (ref) => supComm(ref, `N(${ref('forecast')})`, `N(${ref('gross')})*R_PACE`), hint: 'همان محاسبه پورسانت روی پیش‌بینی پایان ماه' }] : []),
@@ -563,7 +583,93 @@ function Sheet({ data }) {
           onRowClick={(r) => setSelS(r.key === selS ? null : r.key)} expandedKey={selS}
           renderExpanded={(r) => <SupervisorCalc s={r} data={data} unit={unit} />} totals={sTotals} />
       )}
+      {f.branch && <AccountDetails rows={vrows} branch={f.branch} fin={fin} unit={unit} month={data.month} current={data.current} />}
     </>
+  )
+}
+
+/** ریز مانده حساب ویزیتورهای یک هیبرید (زیر جدول پورسانت، وقتی فیلتر شعبه انتخاب شده). داده: بخش مالی (visitor-finance). */
+function AccountDetails({ rows, branch, fin, unit, month, current }) {
+  const list = rows.filter((v) => v.fin)
+  const [open, setOpen] = useState(() => new Set())
+  const toggle = (id) => setOpen((s) => { const x = new Set(s); if (x.has(id)) x.delete(id); else x.add(id); return x })
+  const title = `ریز مانده حساب ویزیتورها — ${branch}`
+  if (fin.loading) return <Card title={title}><Loading /></Card>
+  if (!list.length) return <Card title={title}><p className="muted">مانده حسابی از بخش مالی برای ویزیتورهای این شعبه نیامد.</p></Card>
+  const m = (v) => fmtMoney(v, unit)
+  const U = UNITS[unit].label
+  // مانده هر مشتری به تفکیک ماه فاکتورها (همان روش «بدهی هر مشتری به تفکیک ماه»): تا پایان ماه پورسانت و بعد از آن تا امروز
+  const next = (mm) => { const y = +mm.slice(0, 4), n = +mm.slice(5, 7); return n === 12 ? `${y + 1}/01` : `${y}/${String(n + 1).padStart(2, '0')}` }
+  const upLabel = `تا پایان ${monthName(month)}`
+  const afterLabel = month >= current ? 'بعد از این ماه' : next(month) === current ? `ماه جاری (${monthName(current)})` : `بعد از ${monthName(month)} تا امروز`
+  const split = (byMonth, total) => {
+    if (!byMonth || !Object.keys(byMonth).length) return { up: total || 0, after: 0 }
+    let up = 0, after = 0
+    for (const [mm, a] of Object.entries(byMonth)) { if (mm > month) after += a; else up += a }
+    return { up, after }
+  }
+  const rowsX = list.map((v) => {
+    const debtors = [...(v.fin.debtors || [])].sort((a, b) => b.amount_rial - a.amount_rial).map((d) => ({ ...d, ...split(d.by_month, d.amount_rial) }))
+    return { v, debtors, up: debtors.reduce((a, d) => a + d.up, 0), after: debtors.reduce((a, d) => a + d.after, 0) }
+  })
+  const tbl = (head, numFrom, body) => (
+    <div className="table-scroll"><table><thead><tr>{head.map((h, i) => <th key={i} className={i >= numFrom ? 'num' : ''}>{h}</th>)}</tr></thead>
+      <tbody>{body}</tbody></table></div>)
+  const sum = (k) => list.reduce((a, v) => a + (v[k] || 0), 0)
+  const sumX = (k) => rowsX.reduce((a, r) => a + r[k], 0)
+  return (
+    <Card title={title}
+      subtitle={`مانده بدهی و بدهکاران از بخش مالی؛ «${upLabel}» و «${afterLabel}» = مانده به تفکیک ماه فاکتورها (پرداخت‌ها اول قدیمی‌ترین بدهی را تسویه می‌کنند)؛ توزیع‌نشده = فاکتورهای بدون حواله خروج (تب «توزیع بار»)؛ بدهی نهایی = مانده بدهی − توزیع‌نشده. روی هر ویزیتور کلیک کنید.`}>
+      <div className="table-scroll"><table>
+        <thead><tr><th>ویزیتور</th><th className="num">مانده {upLabel} ({U})</th><th className="num">مانده {afterLabel} ({U})</th>
+          <th className="num">مانده بدهی کل ({U})</th><th className="num">توزیع‌نشده ({U})</th><th className="num">بدهی نهایی ({U})</th>
+          <th className="num">چک برگشتی ({U})</th><th className="num">مشتری بدهکار</th><th className="num">فاکتور توزیع‌نشده</th></tr></thead>
+        <tbody>{rowsX.flatMap(({ v, debtors, up, after }) => {
+          const x = v.fin
+          const isOpen = open.has(v.id)
+          const und = x.undistributed || []
+          const chq = x.returned_cheques || []
+          const head = (
+            <tr key={v.id} className="clickable" onClick={() => toggle(v.id)}>
+              <td>{isOpen ? '▾' : '◂'} {v.name}</td><td className="num">{m(up)}</td><td className="num">{m(after)}</td>
+              <td className="num">{m(v.debt)}</td><td className="num">{m(v.undist)}</td>
+              <td className="num"><b>{m(v.debt_final)}</b></td><td className="num">{m(v.returned)}</td>
+              <td className="num">{fmtInt(x.debtor_customer_count)}</td><td className="num">{fmtInt(x.undistributed_count)}</td>
+            </tr>)
+          if (!isOpen) return [head]
+          return [head, (
+            <tr key={`${v.id}-d`}><td colSpan={9}>
+              <p><b>مشتریان بدهکار</b> ({fmtInt(debtors.length)})</p>
+              {debtors.length ? tbl(['کد مشتری', 'نام مشتری', 'قدیمی‌ترین بدهی', 'جدیدترین بدهی', 'سن بدهی (روز)',
+                `${upLabel} (${U})`, `${afterLabel} (${U})`, `مانده کل (${U})`], 5, [
+                ...debtors.map((d, i) => (
+                  <tr key={i}><td>{faDigits(d.customer_code)}</td><td>{d.customer_name}</td>
+                    <td title="تاریخ قدیمی‌ترین فاکتور (یا سررسید چک برگشتی) که هنوز در مانده این مشتری است">{d.oldest_date_jalali ? faDigits(d.oldest_date_jalali) : '—'}</td>
+                    <td>{d.latest_date_jalali ? faDigits(d.latest_date_jalali) : '—'}</td>
+                    <td className={isNum(d.age_days) && d.age_days > 90 ? 'neg' : ''}>{isNum(d.age_days) ? fmtInt(d.age_days) : '—'}</td>
+                    <td className="num">{d.up ? m(d.up) : '—'}</td><td className="num">{d.after ? m(d.after) : '—'}</td>
+                    <td className="num">{m(d.amount_rial)}</td></tr>)),
+                <tr key="t" className="total-row"><td colSpan={5}>جمع {fmtInt(debtors.length)} مشتری</td>
+                  <td className="num">{m(up)}</td><td className="num">{m(after)}</td><td className="num">{m(up + after)}</td></tr>])
+                : <p className="muted">بدهکاری ندارد.</p>}
+              <p><b>فاکتورهای توزیع‌نشده</b> ({fmtInt(und.length)})</p>
+              {und.length ? tbl(['شماره فاکتور', 'تاریخ', 'مشتری', `مبلغ (${U})`], 3, und.map((d, i) => (
+                <tr key={i}><td>{faDigits(d.number)}</td><td>{faDigits(d.date_jalali)}</td><td>{d.customer_name} ({faDigits(d.customer_code)})</td><td className="num">{m(d.amount_rial)}</td></tr>)))
+                : <p className="muted">فاکتور توزیع‌نشده ندارد.</p>}
+              <p><b>چک‌های برگشتی</b> ({fmtInt(chq.length)})</p>
+              {chq.length ? tbl(['سریال', 'سررسید', 'مشتری', 'وضعیت', `مبلغ (${U})`], 4, chq.map((d, i) => (
+                <tr key={i}><td>{faDigits(d.serial)}</td><td>{faDigits(d.due_date_jalali)}</td><td>{d.customer_name} ({faDigits(d.customer_code)})</td><td>{d.status}</td><td className="num">{m(d.amount_rial)}</td></tr>)))
+                : <p className="muted">چک برگشتی ندارد.</p>}
+            </td></tr>)]
+        })}</tbody>
+        <tfoot><tr className="total-row"><td>جمع</td>
+          <td className="num">{m(sumX('up'))}</td><td className="num">{m(sumX('after'))}</td>
+          <td className="num">{m(sum('debt'))}</td><td className="num">{m(sum('undist'))}</td><td className="num"><b>{m(sum('debt_final'))}</b></td>
+          <td className="num">{m(sum('returned'))}</td>
+          <td className="num">{fmtInt(list.reduce((a, v) => a + (v.fin.debtor_customer_count || 0), 0))}</td>
+          <td className="num">{fmtInt(list.reduce((a, v) => a + (v.fin.undistributed_count || 0), 0))}</td></tr></tfoot>
+      </table></div>
+    </Card>
   )
 }
 

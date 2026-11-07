@@ -198,7 +198,8 @@ def _visitor_debts(invoices, returned, positions: dict[int, dict[str, Any]]) -> 
 
     def slot(visitor_id: int) -> dict[str, Any]:
         return result.setdefault(visitor_id, {"receivable": 0.0, "credit": 0.0, "debtors": set(), "customers": set(),
-                                              "by_customer": defaultdict(float)})
+                                              "by_customer": defaultdict(float), "dates": defaultdict(list),
+                                              "months": defaultdict(lambda: defaultdict(float))})
 
     for dl, rows in by_invoice.items():
         for visitor_id, _, _ in rows:
@@ -213,6 +214,11 @@ def _visitor_debts(invoices, returned, positions: dict[int, dict[str, Any]]) -> 
                 slot(s["visitor_id"])["receivable"] += s["amount"]
                 slot(s["visitor_id"])["debtors"].add(dl)
                 slot(s["visitor_id"])["by_customer"][dl] += s["amount"]
+                if s["date"] is not None:  # تاریخ فاکتور (یا سررسید چک برگشتی) همان تکه بدهی
+                    slot(s["visitor_id"])["dates"][dl].append(s["date"])
+                # ماه شمسی همان تکه («0000/00» = مانده بدون فاکتور، مثل مانده ابتدای دوره)
+                month = format_jalali_date(s["date"])[:7] if s["date"] is not None else "0000/00"
+                slot(s["visitor_id"])["months"][dl][month] += s["amount"]
 
     return {
         visitor_id: {
@@ -220,7 +226,11 @@ def _visitor_debts(invoices, returned, positions: dict[int, dict[str, Any]]) -> 
             "customer_credit_rial": _num(s["credit"]),
             "debtor_customer_count": len(s["debtors"]),
             "customer_count": len(s["customers"]),
-            "debtors_detail": sorted(({"dl_ref": dl, "amount_rial": _num(a)} for dl, a in s["by_customer"].items() if a > 0),
+            "debtors_detail": sorted(({"dl_ref": dl, "amount_rial": _num(a),
+                                       "oldest_date": min(s["dates"][dl]) if s["dates"].get(dl) else None,
+                                       "latest_date": max(s["dates"][dl]) if s["dates"].get(dl) else None,
+                                       "by_month": {m: _num(a) for m, a in sorted(s["months"][dl].items()) if a > 0}}
+                                      for dl, a in s["by_customer"].items() if a > 0),
                                      key=lambda x: -x["amount_rial"]),
         }
         for visitor_id, s in result.items()
@@ -702,6 +712,26 @@ class KaramadSalesNetworkService:
                     "customer_code": _text(r["DLCode"]), "customer_name": _text(r["DLName"]), "serial": _text(r["Serial"]),
                     "amount_rial": _num(r["Price"]), "due_date_jalali": format_jalali_date(r["DueDate"]),
                     "status": _text(r["StatusName"])})
+            # فاکتورهای توزیع‌نشده هر ویزیتور، با همان تعریف تب «توزیع بار»: سال مالی جاری، حواله خروج ندارد
+            # (خروجی کمتر از ۱) و کاملاً مرجوع نشده؛ مبلغ = مبلغ فاکتور
+            fy = self._fiscal_years(connection)
+            undist: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            for r in connection.execute(text(
+                f"""
+                SELECT f.[VisitorRef], f.[Code], f.[DateE], f.[FactorPriceP], cu.[Name] AS CustomerName, cu.[Code] AS CustomerCode
+                FROM dbo.[tblFactorF] f INNER JOIN dbo.[tblVisitor] v ON v.[ID] = f.[VisitorRef]
+                LEFT JOIN dbo.[tblCustomer] cu ON cu.[ID] = f.[CustomerRef]
+                WHERE f.[FiscalYear] = :fy AND f.[FactorPriceP] >= :min_amount AND v.[BranchRef] IN ({ids})
+                  AND NOT EXISTS (SELECT 1 FROM dbo.[tblExit] e WHERE e.[ID] = f.[ExitRef] AND e.[Code] >= 1)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.[tblFactorB] rb WHERE rb.[FactorFRef] = f.[ID]
+                                  GROUP BY rb.[FactorFRef] HAVING SUM(rb.[FactorPriceP]) >= f.[FactorPriceP])
+                ORDER BY f.[DateE], f.[ID]
+                """
+            ), {"fy": fy["current_id"], "min_amount": MIN_LAST_INVOICE_AMOUNT_RIAL}).mappings():
+                undist[int(r["VisitorRef"])].append({
+                    "number": _text(r["Code"]), "date_jalali": format_jalali_date(r["DateE"]),
+                    "customer_code": _text(r["CustomerCode"]), "customer_name": _text(r["CustomerName"]),
+                    "amount_rial": _num(r["FactorPriceP"])})
             # نام و کد مشتریان بدهکار
             refs = sorted({d["dl_ref"] for x in debts.values() for d in x.get("debtors_detail", [])})
             names: dict[int, tuple[str, str]] = {}
@@ -725,9 +755,18 @@ class KaramadSalesNetworkService:
                 "debtor_customer_count": debt["debtor_customer_count"],
                 "returned_cheque_count": int(ret.get("n") or 0),
                 "returned_cheque_rial": _num(ret.get("amount")),
+                # تاریخ: قدیمی‌ترین و جدیدترین فاکتور (یا سررسید چک برگشتی) که بدهی مشتری از آن‌هاست؛ مانده ابتدای دوره تاریخ ندارد
                 "debtors": [{"customer_code": names.get(d["dl_ref"], ("", ""))[0], "customer_name": names.get(d["dl_ref"], ("", ""))[1],
-                             "amount_rial": d["amount_rial"]} for d in debt.get("debtors_detail", [])],
+                             "amount_rial": d["amount_rial"],
+                             "oldest_date_jalali": format_jalali_date(d.get("oldest_date")) if d.get("oldest_date") else "",
+                             "latest_date_jalali": format_jalali_date(d.get("latest_date")) if d.get("latest_date") else "",
+                             "age_days": (date.today() - d["oldest_date"]).days if d.get("oldest_date") else None,
+                             "by_month": d.get("by_month") or {}}
+                            for d in debt.get("debtors_detail", [])],
                 "returned_cheques": cheques.get(vid, []),
+                "undistributed_rial": sum(x["amount_rial"] for x in undist.get(vid, [])),
+                "undistributed_count": len(undist.get(vid, [])),
+                "undistributed": undist.get(vid, []),
             })
         return {"status": "success", "visitors": rows,
                 "returned_from_jalali": format_jalali_date(returned_from_date())}

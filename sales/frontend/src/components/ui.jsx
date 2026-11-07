@@ -104,13 +104,14 @@ function toXlsx(rows, allColumns, unit, title, total, extras = {}) {
     : c.type === 'money' ? (wholeUnit(unit) ? 'money' : 'dec') : c.type === 'num1' ? 'dec' : 'text')
   const headers = columns.map((c) => ({ label: label(c), kind: kind(c) }))
   const letter = Object.fromEntries(columns.map((c, i) => [c.key, colName(i)]))
-  const formula = (c, row) => {
+  // ستونی که هم xf دارد هم ratio: سطرها با xf، ردیف جمع با ratio (مثل درصد پورسانت که در سطرها ورودی پورسانت است)
+  const formula = (c, row, isTotal = false) => {
     const ref = (k) => {
       if (!letter[k]) throw new Error(k)
       return `${letter[k]}${row}`
     }
     try {
-      if (c.ratio) return { f: `IF(N(${ref(c.ratio[1])})=0,"",N(${ref(c.ratio[0])})/${ref(c.ratio[1])})` }
+      if (c.ratio && (isTotal || !c.xf)) return { f: `IF(N(${ref(c.ratio[1])})=0,"",N(${ref(c.ratio[0])})/${ref(c.ratio[1])})` }
       if (c.xf) return { f: c.xf(ref), ...(c.type ? {} : { k: 'text' }) }
     } catch { /* ستون لازم در خروجی نیست */ }
     return null
@@ -125,7 +126,7 @@ function toXlsx(rows, allColumns, unit, title, total, extras = {}) {
     body.push(columns.map((c) => {
       if (c.noTotal) return ''
       if (c.type === 'money' || c.type === 'int') return total[c.key] != null && rows.length ? { ...sum(c), v: value(c, total) } : value(c, total)
-      return withValue(formula(c, t), c, total) || value(c, total)
+      return withValue(formula(c, t, true), c, total) || value(c, total)
     }))
   }
   // ستون‌های sticky اول جدول (مثل نام شعبه و نام فروشنده) در اکسل هم فریز می‌شوند
