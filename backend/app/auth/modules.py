@@ -185,6 +185,8 @@ API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/finance/inventory-pricing", ("inventoryPricing",)),
     ("/api/v1/finance/distribution", ("distribution", "management", "sales")),
     # فقط ستون‌های مانده بدهی و چک برگشتی صفحه «تحقق و پورسانت» (اولین تطابق اعمال می‌شود)
+    ("/api/v1/finance/ai-analysis/hybrid", ("customers", "sales")),
+    ("/api/v1/finance/ai-analysis/rep", ("salesB2B", "customers")),
     ("/api/v1/finance/sales-network/visitor-finance", ("salesCommission", "customers", "sales")),
     ("/api/v1/finance/sales-network", ("customers", "sales")),
     ("/api/v1/finance/collection-cases", ("collections",)),

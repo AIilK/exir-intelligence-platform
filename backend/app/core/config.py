@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     hybrid_risk_weekly_day: str = "sat"
     hybrid_risk_weekly_hour: int = 7
     hybrid_risk_weekly_minute: int = 30
+    # تحلیل هوشمند پرونده هیبریدها و نمایندگان راهکاران از روی تاریخچه (app/services/ai_file_analysis_service.py):
+    # هفتگی بعد از گزارش ریسک (شنبه ۸ صبح)، فقط پرونده‌هایی که تاریخچه‌شان عوض شده. مدل خالی = همان openai_model.
+    ai_file_analysis_enabled: bool = True
+    ai_file_analysis_model: str = ""
+    ai_file_analysis_weekly_hour: int = 8
+    ai_file_analysis_weekly_minute: int = 0
     customer_intelligence_history_db: str = "./customer_intelligence_history.db"
     customer_representative_mapping_file: str = "./data/customer_representative_mapping.csv"
     # Four recurring KarAmand exports. The folder and its four subfolders are

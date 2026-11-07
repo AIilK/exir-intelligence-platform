@@ -394,6 +394,24 @@ def customer_file_karamad(dl_refs: str = Query(..., min_length=1, max_length=200
         raise HTTPException(status_code=500, detail=f"دریافت فاکتورهای مشتری از کارآمد با خطا مواجه شد: {exc}") from exc
 
 
+@router.get("/ai-analysis/{kind}/{key}", summary="تحلیل هوشمند پرونده هیبرید یا نماینده راهکاران از روی تاریخچه")
+def ai_file_analysis(kind: str, key: str):
+    from app.services import ai_file_analysis_service as ai
+    if kind not in ai.KINDS:
+        raise HTTPException(status_code=404, detail="نوع پرونده نامعتبر است.")
+    return ai.latest(kind, key)
+
+
+@router.post("/ai-analysis/{kind}/{key}/refresh", summary="تحلیل دوباره یک پرونده (در پس‌زمینه، حدود یک دقیقه)")
+def ai_file_analysis_refresh(kind: str, key: str):
+    from app.services import ai_file_analysis_service as ai
+    if kind not in ai.KINDS:
+        raise HTTPException(status_code=404, detail="نوع پرونده نامعتبر است.")
+    if not ai.enabled():
+        raise HTTPException(status_code=503, detail="تحلیل هوشمند غیرفعال است (کلید OpenAI تنظیم نشده).")
+    return {"status": "building", "started": ai.refresh_one_in_background(kind, key)}
+
+
 @router.get("/sales-network/risk", summary="گزارش هفتگی ریسک هیبریدها: امتیاز، سطح، دلیل و تغییر نسبت به هفته و ماه قبل")
 def hybrid_risk():
     from app.services import hybrid_risk_service

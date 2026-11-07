@@ -40,6 +40,9 @@ async def lifespan(app: FastAPI):
             from app.services import hybrid_risk_service
             time.sleep(180)  # بعد از آماده‌سازی نمای مدیر، تا هم‌زمان روی دیتابیس فشار نیاورند
             hybrid_risk_service.ensure_recent()
+            from app.services import ai_file_analysis_service
+            time.sleep(300)  # تحلیل هوشمند از امتیاز ریسک تازه هم استفاده می‌کند
+            ai_file_analysis_service.ensure_recent()
         threading.Thread(target=_hybrid_risk_catch_up, name="hybrid-risk-catch-up", daemon=True).start()
     yield
     stop_customer_scheduler()
