@@ -44,8 +44,6 @@ class Settings(BaseSettings):
     # Comma-separated PayableNote.State codes confirmed by finance as cleared.
     # Example only after verification in this Rahkaran installation: "15,28"
     treasury_issued_paid_states: str = "28"
-    financial_query_max_rows: int = 200
-    financial_query_timeout_seconds: int = 20
     customer_intelligence_scheduler_enabled: bool = True
     customer_intelligence_daily_hour: int = 7
     customer_intelligence_daily_minute: int = 0

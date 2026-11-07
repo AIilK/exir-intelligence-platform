@@ -16,7 +16,6 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from app.schemas.treasury import (
-    FinancialQueryRequest,
     PaymentCommitmentDecisionRequest,
 )
 from app.services.bank_reconciliation_service import (
@@ -66,10 +65,6 @@ from app.services.treasury_insight_service import (
     get_financial_anomaly_report,
     get_payment_plan,
     get_treasury_executive_dashboard,
-)
-from app.services.financial_query_service import (
-    FinancialQueryError,
-    ask_financial_data,
 )
 from app.services.cash_bank_movement_service import CashBankMovementService
 from app.services.payment_commitment_service import PaymentCommitmentService
@@ -202,26 +197,6 @@ def update_payment_commitment_decision(
         raise HTTPException(
             status_code=500,
             detail=f"ثبت تعیین‌تکلیف تعهد پرداخت با خطا مواجه شد: {exc}",
-        ) from exc
-
-
-@router.post(
-    "/intelligence/ask",
-    summary="پرسش آزاد و امن از داده‌های مالی",
-)
-def treasury_financial_intelligence(request: FinancialQueryRequest):
-    try:
-        return ask_financial_data(request.question)
-    except FinancialQueryError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("Safe financial query failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="تحلیل آزاد اطلاعات مالی با خطا مواجه شد.",
         ) from exc
 
 
@@ -451,8 +426,6 @@ def treasury_received_cheque_status_signatures():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"ممیزی وضعیت فعلی چک‌های دریافتی با خطا مواجه شد: {exc}",
         ) from exc
-
-
 
 
 @router.post("/cheques/received/compare-official-excel", summary="مقایسه کاندیدهای SQL با گزارش رسمی راهکاران")
