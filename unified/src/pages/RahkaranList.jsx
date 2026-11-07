@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { n0, pct, signedPct, growth, isNum, moneyText, faDigits, mt } from '../data.js'
-import { LEVEL } from '../model.js'
 import { PageHead, Card, Pending, Kpi, Mt } from '../ui.jsx'
 import { Th, sorter } from '../fileTabs.jsx'
-import { useRahkaranReps, rahkaranPath, RISK_FA, riskCls } from '../rahkaran.js'
+import { useRahkaranReps, rahkaranPath, REP_RISK } from '../rahkaran.js'
 
 const sum = (rows, k) => rows.reduce((s, r) => s + (isNum(r[k]) && r[k] > 0 ? r[k] : 0), 0)
 
@@ -25,7 +24,7 @@ export default function RahkaranList() {
   const g = growth(net, lyNet)
   const active = scoped?.filter((r) => r.net > 0).length
   const debt = scoped ? sum(scoped, 'debt') : null
-  const levels = scoped ? { critical: 0, warn: 0, ok: 0, ...Object.fromEntries(['critical', 'warn', 'ok'].map((l) => [l, scoped.filter((r) => r.level === l).length])) } : null
+  const levels = scoped ? Object.fromEntries(Object.keys(REP_RISK).map((l) => [l, scoped.filter((r) => r.riskLevel === l).length])) : null
   const finReady = !!fin.data
   const sp = { sort, setSort }
 
@@ -54,9 +53,9 @@ export default function RahkaranList() {
         <Kpi label="چک باز در دست" domain="مالی" rial={finReady && scoped ? sum(scoped, 'openCheques') : undefined} value={finReady ? undefined : '…'} to="/finance/receivedCheques" />
         <Kpi label="چک سررسید گذشته" domain="مالی" rial={finReady && scoped ? sum(scoped, 'overdue') : undefined} value={finReady ? undefined : '…'}
           valueTone="bad" note={finReady ? `${n0(scoped?.filter((r) => r.overdue > 0).length)} نماینده` : ''} />
-        <Kpi label="وضعیت نمایندگان" value={levels && finReady ? `${n0(levels.critical)} بحرانی` : '—'}
-          delta={levels && finReady ? `${n0(levels.warn)} نیازمند توجه · ${n0(levels.ok)} سالم` : null} deltaTone={levels?.critical ? 'bad' : 'flat'}
-          note="بحرانی: چک برگشتی تسویه‌نشده، دوره وصول بالای ۱۲۰ روز یا بدهی بدون خرید امسال · توجه: چک سررسید گذشته یا بالای ۷۵ روز" />
+        <Kpi label="ریسک نمایندگان" value={levels && finReady ? `${n0(levels.critical)} بحرانی · ${n0(levels.high)} ریسک بالا` : '—'}
+          delta={levels && finReady ? `${n0(levels.medium)} نیازمند توجه · ${n0(levels.low)} سالم` : null} deltaTone={levels?.critical || levels?.high ? 'bad' : 'flat'}
+          note="نسبت به فروش خود هر نماینده: سررسیدگذشته و برگشتی باز چند ماه فروش است؛ بحرانی و ریسک بالا فقط با مبلغ قابل‌توجه" />
       </section>
 
       <Card title={`همه نمایندگان (${n0(shown?.length ?? 0)})`}
@@ -76,8 +75,7 @@ export default function RahkaranList() {
                 <Th k="openCheques" {...sp} unit="میلیون تومان">چک باز</Th>
                 <Th k="overdue" {...sp} unit="میلیون تومان">سررسید گذشته</Th>
                 <Th k="returned" {...sp} unit="میلیون تومان">برگشتی باز</Th>
-                <Th k="risk" {...sp}>ریسک</Th>
-                <Th k="level" {...sp}>وضعیت</Th>
+                <Th k="riskRank" {...sp}>ریسک</Th>
               </tr></thead>
               <tbody>
                 {shown.map((r) => (
@@ -87,14 +85,16 @@ export default function RahkaranList() {
                     <td className="t-muted">{r.province || '—'}</td>
                     <td><b><Mt rial={r.net} /></b></td>
                     <td className="t-muted">{faDigits(r.lastDate || '—')}</td>
-                    {!r.hasFin ? <td colSpan={7} className="t-muted">{finReady ? 'در داشبورد مالی پیدا نشد' : 'در حال دریافت…'}</td> : <>
+                    {!r.hasFin ? <td colSpan={6} className="t-muted">{finReady ? 'در داشبورد مالی پیدا نشد' : 'در حال دریافت…'}</td> : <>
                       <td className={r.debt > 0 ? '' : 't-muted'}><Mt rial={r.debt} /></td>
                       <td className={r.dso > 120 || r.staleDebt ? 't-bad' : r.dso > 75 ? 't-warn' : 't-muted'}>{isNum(r.dso) ? `${n0(r.dso)} روز` : r.staleDebt ? 'بدون خرید امسال' : '—'}</td>
                       <td><Mt rial={r.openCheques} />{isNum(r.coverage) && r.openCheques > 0 && <small className="u-sub">پوشش {pct(r.coverage)}</small>}</td>
                       <td className={r.overdue > 0 ? 't-bad' : 't-muted'}><Mt rial={r.overdue} /></td>
                       <td className={r.returned > 0 ? 't-bad' : 't-muted'}><Mt rial={r.returned} /></td>
-                      <td><span className={`u-pill ${riskCls(r.risk)}`}>{RISK_FA[r.risk] || '—'}</span></td>
-                      <td><span className={`u-pill ${LEVEL[r.level].cls}`}>{LEVEL[r.level].label}</span></td>
+                      <td title={r.riskReasons?.join('\n') || 'سررسیدگذشته و برگشتی قابل‌توجهی نسبت به فروش ندارد'}>
+                        <span className={`u-pill ${REP_RISK[r.riskLevel].cls}`}>{REP_RISK[r.riskLevel].label}</span>
+                        {r.riskLevel !== 'low' && r.riskReasons?.[0] && <small className="u-sub">{r.riskReasons[0]}</small>}
+                      </td>
                     </>}
                   </tr>
                 ))}
