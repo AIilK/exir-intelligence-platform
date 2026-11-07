@@ -7,6 +7,7 @@ const fa1 = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 })
 // مبالغ در فایل به ریال هستند؛ نمایش به تومان (۱ تومان = ۱۰ ریال)
 const RIAL_PER_TOMAN = 10
 export const UNITS = {
+  rial: { label: 'ریال', div: 1 },
   toman: { label: 'تومان', div: RIAL_PER_TOMAN },
   thousand: { label: 'هزار تومان', div: RIAL_PER_TOMAN * 1e3 },
   million: { label: 'میلیون تومان', div: RIAL_PER_TOMAN * 1e6 },
@@ -22,7 +23,7 @@ export const fmtMoney = (v, unit = 'million') => {
   if (!isNum(v)) return '—'
   const u = UNITS[unit]
   const x = v / u.div
-  return (Math.abs(x) >= 100 || unit === 'toman' ? fa : fa1).format(x)
+  return (Math.abs(x) >= 100 || unit === 'toman' || unit === 'rial' ? fa : fa1).format(x)
 }
 // مقدار کامل برای راهنمای روی عدد (hover)، با همه رقم‌ها: مبلغ ریالی به تومان، و عدد ساده (تعداد، دلار) تا دو رقم اعشار
 const faExact = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 2 })

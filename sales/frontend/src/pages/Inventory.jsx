@@ -208,8 +208,10 @@ function BranchesTab({ onOpen, current }) {
       </div>
       {(issues.length > 0 || noHist.length > 0) && (
         <div className="alerts">
-          {noHist.length > 0 && <div className="alert warn"><span className="alert-icon">!</span>
-            <span>بدون سابقه کافی برای پیشنهاد سفارش (فقط موجودی نمایش داده می‌شود): {noHist.map((r) => lbl(r.branch)).join('، ')}</span></div>}
+          {/* علت واقعی هر گروه از شعب نمایش داده می‌شود (مثلاً تقویم هنوز خوانده نشده، نه فقط «سابقه کافی نیست») */}
+          {Object.entries(noHist.reduce((g, r) => ({ ...g, [r.error]: [...(g[r.error] || []), r] }), {})).map(([why, rs]) => (
+            <div key={why} className="alert warn"><span className="alert-icon">!</span>
+              <span>پیشنهاد سفارش ممکن نیست (فقط موجودی نمایش داده می‌شود) — {why}: {rs.map((r) => lbl(r.branch)).join('، ')}</span></div>))}
           {issues.length > 0 && <div className="alert warn"><span className="alert-icon">!</span>
             <span>داده خرید ناقص (موجودی کارآمد ممکن است دقیق نباشد): {issues.map((r) => lbl(r.branch)).join('، ')} — برای جزئیات نشانگر را روی وضعیت ببرید.</span></div>}
         </div>

@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useApp, useFetch, sendJson, fetchJson, fmtInt, fmtMoney, fmtPct, faDigits, isNum, UNITS } from '../lib.jsx'
 import { Card, Loading, ErrorBox, DataTable, Tabs } from '../components/ui.jsx'
 import { PageHead } from '../components/Layout.jsx'
-import { buildXlsx } from '../xlsx.js'
+import { buildXlsx, colName } from '../xlsx.js'
 import { MONTH_NAMES } from '../jalali.js'
 
 const monthName = (m) => `${MONTH_NAMES[+m.slice(5, 7) - 1]} ${faDigits(m.slice(0, 4))}`
 const TOMAN_M = 1e7  // یک میلیون تومان به ریال
-const pct2 = (key, label, hint) => ({ key, label, type: 'pct', hint, render: (r) => fmtPct(r[key], 2), csv: (r) => (isNum(r[key]) ? Math.round(r[key] * 10000) / 100 : '') })
+// ratio: [صورت, مخرج] تا خروجی اکسل همین درصد را با فرمول بسازد
+const pct2 = (key, label, hint, ratio) => ({ key, label, type: 'pct', pctDigits: 2, hint, ratio, render: (r) => fmtPct(r[key], 2) })
 const achClass = (a) => (!isNum(a) ? 'st-none' : a >= 0.95 ? 'st-green' : a >= 0.7 ? 'st-yellow' : 'st-red')
 export const achPill = (key) => (r) => <span className={`pill ${achClass(r[key])}`}>{fmtPct(r[key], 0)}</span>
 const rulesetLabel = (rules, rs) => rules.labels[rs] || rs
@@ -213,6 +214,129 @@ function GroupTable({ v, rules, unit }) {
 // مبالغ این تب همیشه کامل به تومان است (جدول، جمع، توضیح و خروجی اکسل)، مستقل از واحد انتخاب‌شده در داشبورد.
 const VISITOR_FINANCE_URL = '/api/v1/finance/sales-network/visitor-finance'
 
+// تایید اعتباری: (مانده بدهی + چک برگشتی) کمتر از ۲۰٪ فروش از ابتدای سال (ناخالص و خالص جدا)
+const APPROVAL_LIMIT = 0.2
+const OK = 'تایید', NOT_OK = 'عدم تایید'
+/** ok_gross و ok_net را اضافه می‌کند؛ تا مانده بدهی از بخش مالی نیامده هر دو خالی می‌مانند. */
+function withApproval(r) {
+  if (!isNum(r.debt)) return { ...r, ok_gross: null, ok_net: null }
+  const exposure = (r.debt || 0) + (r.returned || 0)
+  const ok = (base) => (exposure < APPROVAL_LIMIT * (base || 0) ? OK : NOT_OK)
+  return { ...r, ok_gross: ok(r.gross_ytd), ok_net: ok(r.net_ytd) }
+}
+const approvalPill = (key) => (r) => (r[key] == null ? ''
+  : <span className={`pill ${r[key] === OK ? 'st-green' : 'st-red'}`}>{r[key]}</span>)
+// حقوق ثابت: از جدول حقوق ثابت ماه (اکسل پورسانت)؛ راهنمای موس = منبع و عدد حقوق و دستمزد کارآمد برای مقایسه
+const salaryCell = (r) => {
+  const db = isNum(r.salary_db) ? [`کارآمد (${r.salary_db_source === 'فیش حقوق' ? 'فیش همین ماه' : 'حکم فعال، ۳۰ روز'}): ${fmtMoney(r.salary_db, 'rial')}`,
+    ...(r.salary_db_parts || []).map((p) => `   ${p.label}: ${fmtMoney(p.value, 'rial')}`)] : []
+  const who = r.salary_emp ? [`${r.salary_emp}${r.salary_job ? ` — ${r.salary_job}` : ''}`] : []
+  if (isNum(r.salary)) {
+    const tip = [r.salary_from && `از جدول حقوق ثابت (${r.salary_from})`, ...who, ...db].filter(Boolean).join('\n')
+    return <span title={tip || undefined}>{fmtMoney(r.salary, 'rial')}</span>
+  }
+  return r.salary_note ? <span className="muted" title={[r.salary_note, ...who, ...db].join('\n')}>—</span> : ''
+}
+
+// ---------------------------------------------------------------- خروجی اکسل با فرمول
+// برگه «قواعد»: پارامترها و جدول‌های دستورالعمل همان ماه؛ ستون‌های محاسبه‌ای برگه اصلی با فرمول به این خانه‌ها
+// (با نام تعریف‌شده، مثل R_COMM_RES) ارجاع می‌دهند. خانه‌های زرد ورودی‌اند و با تغییرشان همه‌چیز دوباره حساب می‌شود.
+const RULES_SHEET = 'قواعد'
+const abs = (c, r) => `'${RULES_SHEET}'!$${colName(c)}$${r}`
+const absRange = (c1, r1, c2, r2) => `'${RULES_SHEET}'!$${colName(c1)}$${r1}:$${colName(c2)}$${r2}`
+
+function rulesSheet(data) {
+  const R = data.rules
+  const rows = []
+  const names = []
+  const put = (cells) => { rows.push(cells); return rows.length }
+  const input = (v, k) => ({ v: v ?? '', k, st: 'input' })
+  put([{ v: `قواعد محاسبه پورسانت — ${R.title} (${data.month})`, st: 'title' }])
+  put([{ v: 'خانه‌های زرد ورودی‌اند؛ با تغییر هر کدام، همه ستون‌های فرمولی برگه اصلی دوباره حساب می‌شوند. مبالغ به ریال‌اند.', st: 'note' }])
+  put([])
+  put([{ v: 'پارامتر', st: 'head' }, { v: 'مقدار', st: 'head' }, { v: 'توضیح', st: 'head' }])
+  const param = (name, label, cell, note = '') => {
+    const r = put([{ v: label, st: 'label' }, cell, { v: note, st: 'body' }])
+    names.push({ name, ref: abs(1, r) })
+  }
+  param('R_WD_E', 'روز کاری سپری‌شده', input(data.wd_elapsed, 'int'), 'برای تارگت تا روز و پیش‌بینی ماه')
+  param('R_WD_T', 'کل روز کاری ماه', input(data.wd_total, 'int'))
+  param('R_DAY_SHARE', 'سهم روز سپری‌شده', { f: 'IF(N(R_WD_T)=0,1,R_WD_E/R_WD_T)', k: 'pct' }, 'تارگت تا روز = تارگت × این سهم')
+  param('R_PACE', 'ضریب پیش‌بینی ماه', data.pace ? { f: 'IF(N(R_WD_E)=0,"",R_WD_T/R_WD_E)', k: 'dec' } : { v: '' },
+    data.pace ? 'پیش‌بینی = مبلغ تا امروز × این ضریب (فقط ماه جاری)' : 'ماه بسته؛ پیش‌بینی ندارد')
+  param('R_BASE_CASH', 'مبنای پورسانت', input(R.comm_base === 'net_cash' ? 1 : 0, 'int'), '۱ = فروش خالص + تخفیف نقدی، ۰ = فروش خالص')
+  param('R_COMM_WS', 'نرخ فاکتورهای ویژه (پورسانتی)', input(R.commission.wholesale_rate, 'pct2'), 'فاکتورهای عمده / با تخفیف مدیریتی به‌جای نرخ سطح؛ خالی = فاکتور ویژه ندارد')
+  param('R_COMM_RES', 'ذخیره پورسانت (پورسانتی)', input(R.commission.reserve, 'pct'))
+  param('R_EMP_WS', 'نرخ فاکتورهای ویژه (استخدامی)', input(R.employed.wholesale_rate, 'pct2'))
+  param('R_EMP_RES', 'ذخیره پورسانت (استخدامی)', input(R.employed.reserve, 'pct'))
+  param('R_EMP_FLOOR', 'کف پورسانت استخدامی', input(R.employed.floor, 'money'), 'مبنای پورسانت کمتر از این مبلغ: بدون پورسانت')
+  param('R_EMP_MAX', 'سقف نرخ استخدامی', input(R.employed.max_rate, 'pct2'), 'نرخ پایه + تکمیلی حداکثر این نرخ (رزتی خارج از سقف)')
+  R.sup_rates.forEach((x, i) => param(`R_SUP${i + 1}`, `نرخ سرپرست — ${['تا تارگت اول', 'تارگت اول تا دوم', 'مازاد تارگت دوم'][i]}`, input(x, 'pct2')))
+  param('R_SUP_RES', 'ذخیره پورسانت سرپرست', input(R.supervisor.reserve, 'pct'))
+  param('R_APPROVAL', 'حد تایید (مانده بدهی + چک برگشتی)', input(APPROVAL_LIMIT, 'pct'), 'کمتر از این سهم فروش از ابتدای سال = تایید')
+  put([])
+
+  // نرخ پایه استخدامی بر اساس تحقق ریالی: [حد پایین، نرخ]
+  put([{ v: 'نرخ پایه استخدامی (بر اساس تحقق تارگت ریالی)', st: 'title' }])
+  put([{ v: 'از تحقق', st: 'head' }, { v: 'نرخ پایه', st: 'head' }])
+  const empStart = rows.length + 1
+  let lo = 0
+  for (const [upper, rate] of R.employed.base) {
+    put([input(lo, 'pct'), input(rate, 'pct2')])
+    lo = upper
+  }
+  names.push({ name: 'R_EMP_LOW', ref: absRange(0, empStart, 0, rows.length) },
+    { name: 'R_EMP_RATE', ref: absRange(1, empStart, 1, rows.length) })
+  put([])
+
+  // سطح‌های ویزیتور و تارگت سرپرست هر قاعده: حد پایین هر سطح (ریال، از فروش ناخالص) و نرخ آن
+  const sets = Object.entries(R.rulesets)
+  const nTier = Math.max(...sets.map(([, s]) => s.visitor.length))
+  put([{ v: 'سطح‌های پورسانت ویزیتور و تارگت سرپرست هر قاعده', st: 'title' }])
+  put([{ v: 'سطح با فروش ناخالص تعیین می‌شود و نرخ آن روی مبنای پورسانت اعمال می‌شود. «از فروش» حد پایین هر سطح است.', st: 'note' }])
+  put([{ v: 'کد قاعده', st: 'head' }, { v: 'عنوان', st: 'head' }, { v: 'تارگت اول سرپرست', st: 'head' }, { v: 'تارگت دوم سرپرست', st: 'head' },
+    ...Array.from({ length: nTier }, (_, i) => ({ v: `از فروش سطح ${fa(i + 1)}`, st: 'head' })),
+    ...Array.from({ length: nTier }, (_, i) => ({ v: `نرخ سطح ${fa(i + 1)}`, st: 'head' }))])
+  const setStart = rows.length + 1
+  for (const [code, s] of sets) {
+    const lows = [0, ...s.visitor.slice(0, -1).map(([u]) => u * 1e6)]
+    const rates = s.visitor.map(([, r]) => r)
+    // سطح‌های کمتر: آخرین سطح تکرار می‌شود تا جستجو درست بماند
+    while (lows.length < nTier) { lows.push(lows[lows.length - 1]); rates.push(rates[rates.length - 1]) }
+    put([{ v: code, st: 'label' }, { v: R.labels[code] || code }, input(s.supervisor ? s.supervisor.t1 * 1e6 : '', 'money'),
+      input(s.supervisor ? s.supervisor.t2 * 1e6 : '', 'money'), ...lows.map((x) => input(x, 'money')), ...rates.map((x) => input(x, 'pct'))])
+  }
+  const setEnd = rows.length
+  names.push({ name: 'R_NAMES', ref: absRange(0, setStart, 0, setEnd) }, { name: 'R_T1', ref: absRange(2, setStart, 2, setEnd) },
+    { name: 'R_T2', ref: absRange(3, setStart, 3, setEnd) },
+    { name: 'R_LOW', ref: absRange(4, setStart, 3 + nTier, setEnd) }, { name: 'R_RATE', ref: absRange(4 + nTier, setStart, 3 + 2 * nTier, setEnd) })
+  put([])
+
+  // گروه‌های پورسانت تکمیلی استخدامی (فقط برای اطلاع؛ نرخ تکمیلی هر ویزیتور در برگه اصلی آمده است)
+  put([{ v: 'گروه‌های پورسانت تکمیلی استخدامی (فقط اطلاع)', st: 'title' }])
+  put([{ v: `هر گروهی که تحقق تعدادی‌اش حداقل ${fa(Math.round(R.employed.group_min * 100))}٪ باشد نرخش اضافه می‌شود؛ جمع گروه‌ها حداکثر ${fa(R.employed.group_cap * 100)}٪ (به‌جز گروه‌های خارج از سقف).`, st: 'note' }])
+  put([{ v: 'گروه', st: 'head' }, { v: 'نرخ', st: 'head' }, { v: 'خارج از سقف', st: 'head' }])
+  for (const g of R.groups.filter((x) => !x.info)) put([{ v: g.key }, { v: g.rate, k: 'pct2' }, { v: g.extra ? 'بله' : '' }])
+
+  const widths = [34, 20, 20, 20, ...Array(2 * nTier).fill(17)]
+  return { sheet: { name: RULES_SHEET, rows, widths, merges: ['A1:F1', 'A2:F2'], heights: { 1: 26, 2: 30 } }, names }
+}
+
+/** برگه «راهنمای ستون‌ها»: عنوان، توضیح و فرمولی بودن هر ستون خروجی. */
+function guideSheet(columns) {
+  const rows = [[{ v: 'راهنمای ستون‌ها', st: 'title' }], [],
+    [{ v: 'ستون', st: 'head' }, { v: 'نوع مقدار', st: 'head' }, { v: 'توضیح', st: 'head' }]]
+  for (const c of columns.filter((x) => x.csv !== false)) {
+    rows.push([{ v: c.label, st: 'label' }, { v: c.xf || c.ratio ? 'فرمول' : 'داده کارآمد / بخش مالی' }, { v: c.hint || '' }])
+  }
+  return { name: 'راهنمای ستون‌ها', rows, widths: [42, 22, 100], heights: { 1: 26 } }
+}
+
+const commissionExtras = (data, columns) => () => {
+  const { sheet, names } = rulesSheet(data)
+  return { extraSheets: [sheet, guideSheet(columns)], names }
+}
+
 /** مانده بدهی و چک برگشتی هر ویزیتور از بک‌اند مالی؛ در داشبورد فروش تنها (بدون بخش مالی) خالی می‌ماند. */
 function useVisitorFinance() {
   const [state, setState] = useState({ map: null, loading: true, error: null, from: '' })
@@ -227,23 +351,37 @@ function useVisitorFinance() {
 }
 
 function Sheet({ data }) {
-  const unit = 'toman'
+  const unit = 'rial'
+  const year = faDigits(data.month.slice(0, 4))
   const fin = useVisitorFinance()
   const [who, setWho] = useState('visitors')
   const [f, setF] = useState({ branch: '', supervisor: '', type: '', group: '' })
   const [sel, setSel] = useState(null)
   const [selS, setSelS] = useState(null)
   // ستون‌های مالی: ویزیتور از پرونده خودش، سرپرست = جمع ویزیتورهای همان شعبه و سرپرست
+  // درصد پورسانت = پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی)
+  // درصد مدیریتی = تخفیف مدیریتی ÷ فروش ناخالص؛ درصد عمده‌فروشی = مبلغ فاکتورهای عمده ÷ فروش ناخالص
+  const ratio = (a, b) => (b > 0 ? a / b : null)
+  // درصد هزینه فروش = (حقوق ثابت + پورسانت) ÷ (فروش خالص + درصد نقدی)
+  const costPct = (r) => (isNum(r.salary) || isNum(r.commission) ? ratio((r.salary || 0) + (r.commission || 0), r.net_cash) : null)
+  const costCol = (team) => ({ key: 'cost_pct', label: 'درصد هزینه فروش', type: 'pct', pctDigits: 2, render: (r) => fmtPct(r.cost_pct, 2),
+    hint: `(حقوق ثابت + پورسانت محاسبه‌شده) ÷ (فروش خالص + درصد نقدی${team ? ' تیم' : ''})`,
+    xf: (ref) => `IF(N(${ref('net_cash')})<=0,"",(N(${ref('salary')})+N(${ref('commission')}))/N(${ref('net_cash')}))` })
   const visitors = useMemo(() => data.visitors.map((v) => {
     const x = fin.map?.get(v.seller_key)
-    return x ? { ...v, debt: x.open_account_receivable_rial, debtors: x.debtor_customer_count,
-      returned: x.returned_cheque_rial, returned_n: x.returned_cheque_count } : v
+    const row = { ...v, cash_disc: (v.net_cash || 0) - (v.net || 0), comm_pct: ratio(v.commission, v.net_cash), cost_pct: costPct(v),
+      mgmt_pct: ratio(v.mgmt_disc, v.gross), wholesale_pct: ratio(v.wholesale_gross, v.gross) }
+    return x ? withApproval({ ...row, debt: x.open_account_receivable_rial, debtors: x.debtor_customer_count,
+      returned: x.returned_cheque_rial, returned_n: x.returned_cheque_count }) : row
   }), [data.visitors, fin.map])
-  const supervisors = useMemo(() => data.supervisors.map((s) => {
+  const supervisors = useMemo(() => data.supervisors.map((s0) => {
+    const mates = visitors.filter((v) => v.supervisor === s0.name && bkey(v.branch) === bkey(s0.branch))
+    const s = { ...s0, comm_pct: ratio(s0.commission, s0.net_cash), cost_pct: costPct(s0), gross_ytd: mates.reduce((a, v) => a + (v.gross_ytd || 0), 0),
+      net_ytd: mates.reduce((a, v) => a + (v.net_ytd || 0), 0) }
     const team = visitors.filter((v) => v.supervisor === s.name && bkey(v.branch) === bkey(s.branch) && isNum(v.debt))
     if (!team.length) return s
     const add = (k) => team.reduce((a, v) => a + (v[k] || 0), 0)
-    return { ...s, debt: add('debt'), returned: add('returned'), returned_n: add('returned_n') }
+    return withApproval({ ...s, debt: add('debt'), returned: add('returned'), returned_n: add('returned_n') })
   }), [data.supervisors, visitors])
   const uniq = (k) => [...new Set(visitors.map((v) => v[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fa'))
   const opts = { branch: uniq('branch'), supervisor: uniq('supervisor').filter((s) => !f.branch || visitors.some((v) => v.branch === f.branch && v.supervisor === s)) }
@@ -251,12 +389,41 @@ function Sheet({ data }) {
     && (!f.type || v.type === f.type) && (!f.group || v.group_ab === f.group))
   const srows = supervisors.filter((s) => (!f.branch || bkey(s.branch) === bkey(f.branch)) && (!f.supervisor || s.name === f.supervisor)
     && (!f.group || s.group_ab === f.group))
+  const T = team => (team ? ' تیم' : '')
+  const approvalHint = (base, team) => `اگر مانده بدهی${T(team)} + چک برگشتی${T(team)} کمتر از ${fa(Math.round(APPROVAL_LIMIT * 100))}٪ فروش ${base}${T(team)} از ابتدای ${year} باشد «تایید»، وگرنه «عدم تایید»؛ تا مانده بدهی از بخش مالی نیامده خالی است`
+  // فرمول‌های اکسل (ref(key) = خانه همان سطر در ستون key؛ R_… = خانه‌های برگه «قواعد»)
+  const approvalXf = (base) => (ref) => `IF(${ref('debt')}="","",IF(N(${ref('debt')})+N(${ref('returned')})<R_APPROVAL*N(${ref(base)}),"${OK}","${NOT_OK}"))`
+  const COMM_T = data.types.commission  // «پورسانتی»
+  const baseXf = (ref) => `IF(R_BASE_CASH=1,N(${ref('net_cash')}),N(${ref('net')}))`
+  const tierRate = (ref) => `LOOKUP(MAX(N(${ref('gross')}),0),INDEX(R_LOW,MATCH(${ref('ruleset')},R_NAMES,0),0),INDEX(R_RATE,MATCH(${ref('ruleset')},R_NAMES,0),0))`
+  // پورسانتی: نرخ سطح؛ استخدامی: بدون تارگت ریالی خالی، زیر کف صفر، وگرنه min(نرخ پایه + تکمیلی، سقف) + خارج از سقف
+  const rateXf = (ref) => `IF(${ref('type_label')}="${COMM_T}",${tierRate(ref)},IF(${ref('target_rial')}="","",IF(N(${ref('base')})<R_EMP_FLOOR,0,`
+    + `MIN(LOOKUP(MAX(N(${ref('ach')}),0),R_EMP_LOW,R_EMP_RATE)+N(${ref('bonus_rate')}),R_EMP_MAX)+N(${ref('extra_rate')}))))`
+  // پورسانت = نرخ × (مبنا − مبنای فاکتورهای ویژه) + نرخ ویژه × مبنای فاکتورهای ویژه (حداقل صفر)
+  const split = (ref, ws) => `MAX(N(${ref('rate')})*(N(${ref('base')})-IF(${ws}="",0,N(${ref('special_base')})))+N(${ws})*IF(${ws}="",0,N(${ref('special_base')})),0)`
+  const commXf = (ref) => `IF(${ref('rate')}="","",IF(${ref('type_label')}="${COMM_T}",${split(ref, 'R_COMM_WS')},IF(N(${ref('base')})<R_EMP_FLOOR,0,${split(ref, 'R_EMP_WS')})))`
+  const reserveXf = (ref) => `IF(${ref('commission')}="",0,N(${ref('commission')})*IF(${ref('type_label')}="${COMM_T}",R_COMM_RES,R_EMP_RES))`
+  const payXf = (ref) => `IF(${ref('commission')}="","",N(${ref('commission')})-N(${ref('reserve')}))`
+  // سرپرست: پلکانی روی مبنای تیم؛ اگر فروش ناخالص تیم (reach) به تارگت اول نرسد صفر
+  const supComm = (ref, b, reach) => `IF(${ref('t1')}="","",IF(${reach}<N(${ref('t1')}),0,MIN(MAX(${b},0),N(${ref('t1')}))*R_SUP1`
+    + `+MAX(MIN(MAX(${b},0),N(${ref('t2')}))-N(${ref('t1')}),0)*R_SUP2+MAX(MAX(${b},0)-N(${ref('t2')}),0)*R_SUP3))`
+  const supTarget = (name) => (ref) => `IF(N(INDEX(${name},MATCH(${ref('ruleset')},R_NAMES,0)))=0,"",INDEX(${name},MATCH(${ref('ruleset')},R_NAMES,0)))`
   const finCols = (team) => [
+    { key: 'gross_ytd', label: `فروش ناخالص${T(team)} از ابتدای ${year}`, type: 'money',
+      hint: team ? 'جمع ستون «فروش ناخالص از ابتدای سال» ویزیتورهای همین سرپرست'
+        : `جمع قبل تخفیف فاکتورها از ۱ فروردین ${year} تا پایان همین ماه؛ برگشتی‌ها کسر شده‌اند` },
+    { key: 'net_ytd', label: `فروش خالص${T(team)} از ابتدای ${year}`, type: 'money',
+      hint: team ? 'جمع ستون «فروش خالص از ابتدای سال» ویزیتورهای همین سرپرست'
+        : `فروش خالص (پس از کسر برگشتی و همه تخفیفات، بدون ارزش افزوده) از ۱ فروردین ${year} تا پایان همین ماه` },
     { key: 'debt', label: team ? 'مانده بدهی تیم' : 'مانده بدهی', type: 'money',
       hint: `مانده بدهی مشتریان ${team ? 'ویزیتورهای این سرپرست' : 'این ویزیتور'} از بخش مالی (همان عدد پرونده ویزیتور)` },
     { key: 'returned', label: team ? 'چک برگشتی تیم' : 'چک برگشتی', type: 'money',
       hint: `مبلغ چک‌های برگشتی تسویه‌نشده فاکتورهای ${team ? 'تیم' : 'این ویزیتور'} از بخش مالی${fin.from ? ` (سررسید از ${faDigits(fin.from)})` : ''}` },
     { key: 'returned_n', label: 'تعداد چک برگشتی', type: 'int' },
+    { key: 'ok_gross', label: `تایید (${fa(Math.round(APPROVAL_LIMIT * 100))}٪ ناخالص ${year})`, render: approvalPill('ok_gross'),
+      hint: approvalHint('ناخالص', team), xf: approvalXf('gross_ytd') },
+    { key: 'ok_net', label: `تایید (${fa(Math.round(APPROVAL_LIMIT * 100))}٪ خالص ${year})`, render: approvalPill('ok_net'),
+      hint: approvalHint('خالص', team), xf: approvalXf('net_ytd') },
   ]
   const set = (k) => (e) => { setF({ ...f, [k]: e.target.value, ...(k === 'branch' ? { supervisor: '' } : {}) }); setSel(null); setSelS(null) }
   const vcols = [
@@ -264,58 +431,97 @@ function Sheet({ data }) {
     { key: 'branch', label: 'نام شعبه', sticky: true }, { key: 'name', label: 'نام فروشنده', sticky: true },
     { key: 'code', label: 'کد فروشنده' }, { key: 'supervisor', label: 'نام سرپرست' }, { key: 'type_label', label: 'نوع' },
     { key: 'group_ab', label: 'گروه' },
+    { key: 'ruleset', label: 'کد قاعده', exportOnly: true, hint: 'ردیف همین قاعده در جدول سطح‌های برگه «قواعد»' },
     { key: 'target_rial', label: 'تارگت', type: 'money' },
-    { key: 'ach', label: 'تحقق', type: 'pct', render: achPill('ach'), hint: 'فروش ناخالص ÷ تارگت (ماه جاری: تارگت تا روز)' },
+    { key: 'target_day', label: 'تارگت تا روز', type: 'money', exportOnly: true, noTotal: true,
+      hint: 'تارگت × سهم روز سپری‌شده (برگه قواعد)', xf: (ref) => `IF(${ref('target_rial')}="","",N(${ref('target_rial')})*R_DAY_SHARE)` },
+    { key: 'ach', label: 'تحقق', type: 'pct', render: achPill('ach'), noTotal: true, hint: 'فروش ناخالص ÷ تارگت (ماه جاری: تارگت تا روز)',
+      xf: (ref) => `IF(N(${ref('target_day')})=0,"",N(${ref('gross')})/N(${ref('target_day')}))` },
     { key: 'gross', label: 'فروش ناخالص', type: 'money', hint: 'جمع قبل تخفیف فاکتورها؛ برگشتی‌ها کسر شده‌اند' },
     { key: 'net', label: 'فروش خالص', type: 'money', hint: 'پس از کسر برگشتی و همه تخفیفات، بدون ارزش افزوده' },
-    { key: 'net_cash', label: 'فروش خالص + درصد نقدی', type: 'money', hint: 'فروش خالص به‌اضافه تخفیف نقدی (برگشتی‌ها کسر شده)' },
-    ...(data.pace ? [{ key: 'forecast', label: 'پیش‌بینی ماه', type: 'money', hint: 'فروش خالص ÷ روز کاری سپری‌شده × کل روز کاری ماه' }] : []),
+    { key: 'cash_disc', label: 'تخفیف نقدی', type: 'money', exportOnly: true, hint: 'تخفیف نقدی فاکتورها (برگشتی‌ها کسر شده)' },
+    { key: 'net_cash', label: 'فروش خالص + درصد نقدی', type: 'money', hint: 'فروش خالص به‌اضافه تخفیف نقدی (برگشتی‌ها کسر شده)',
+      xf: (ref) => `N(${ref('net')})+N(${ref('cash_disc')})` },
+    { key: 'base', label: 'مبنای پورسانت', type: 'money', exportOnly: true, hint: 'فروش خالص یا فروش خالص + نقدی، طبق «مبنای پورسانت» برگه قواعد', xf: baseXf },
+    { key: 'special_base', label: 'مبنای فاکتورهای ویژه', type: 'money', exportOnly: true,
+      hint: `مبنای پورسانت فاکتورهای ویژه (${(data.rules.special || []).map((k) => ({ wholesale: 'عمده', mgmt: 'با تخفیف مدیریتی' }[k] || k)).join(' و ') || 'ندارد'}) که نرخ ثابت می‌گیرند` },
+    ...(data.pace ? [{ key: 'forecast', label: 'پیش‌بینی ماه', type: 'money', hint: 'فروش خالص ÷ روز کاری سپری‌شده × کل روز کاری ماه',
+      xf: (ref) => `N(${ref('net')})*R_PACE` }] : []),
     { key: 'wholesale_n', label: 'تعداد فاکتور بالای ۷۰۰', type: 'int', hint: 'فاکتورهای فروشی که مبلغ ناخالص (جمع قبل تخفیف) هر کدام بیش از ۷۰۰ میلیون تومان است' },
-    { key: 'wholesale_gross', label: 'مبلغ عمده‌فروشی', type: 'money', hint: 'جمع مبلغ ناخالص همان فاکتورهای بالای ۷۰۰ میلیون تومان' },
-    pct2('wholesale_share', 'درصد عمده‌فروشی', 'مبلغ عمده‌فروشی ÷ مبلغ ناخالص همه فاکتورهای فروش (بدون برگشتی)'),
+    { key: 'wholesale_gross', label: 'مبلغ عمده‌فروشی', type: 'money', hint: 'جمع مبلغ ناخالص همان فاکتورهای بالای ۷۰۰ میلیون تومان؛ برگشتی از آن کم نمی‌شود' },
+    pct2('wholesale_pct', 'درصد عمده‌فروشی', 'مبلغ عمده‌فروشی ÷ فروش ناخالص (همان ستون «فروش ناخالص» که برگشتی از آن کم شده؛ اگر برگشتی زیاد باشد ممکن است از ۱۰۰٪ بیشتر شود)',
+      ['wholesale_gross', 'gross']),
     { key: 'customers', label: 'تعداد مشتری', type: 'int', hint: 'مشتریانی که جمع تعداد خریدشان مثبت است' },
     // فاکتورهای فروش دارای تخفیف مدیریتی (از کارآمد: انواع تخفیفی که نامشان «مدیریت» دارد)
     { key: 'mgmt_n', label: 'تعداد فاکتور با تخفیف مدیریتی', type: 'int', hint: 'فاکتورهای فروشی که تخفیف مدیریتی دارند' },
-    { key: 'mgmt_inv_gross', label: 'مبلغ فاکتورهای با تخفیف مدیریتی', type: 'money', hint: 'جمع مبلغ ناخالص (قبل تخفیف) همان فاکتورها' },
-    pct2('mgmt_inv_share', 'سهم از فروش ناخالص', 'مبلغ فاکتورهای با تخفیف مدیریتی ÷ مبلغ ناخالص همه فاکتورهای فروش (بدون برگشتی)'),
+    { key: 'mgmt_inv_gross', label: 'ناخالص فاکتورهای با تخفیف مدیریتی', type: 'money', hint: 'جمع مبلغ ناخالص (قبل تخفیف) فاکتورهای فروشی که تخفیف مدیریتی دارند' },
+    { key: 'mgmt_inv_net_cash', label: 'خالص + نقدی فاکتورهای با تخفیف مدیریتی', type: 'money',
+      hint: 'فروش خالص به‌اضافه تخفیف نقدی همان فاکتورها؛ مبنای پورسانت فاکتورهای ویژه (همان عددهای ستون «خالص + نقدی» در توضیح محاسبه)' },
     { key: 'mgmt_disc', label: 'مبلغ تخفیف مدیریتی', type: 'money' },
-    pct2('mgmt_rate', 'نرخ تخفیف مدیریتی', 'مبلغ تخفیف مدیریتی ÷ مبلغ ناخالص همان فاکتورها'),
-    { key: 'status', label: 'وضعیت' },
-    pct2('rate', 'درصد پورسانت', 'پورسانتی: نرخ سطح (با فروش ناخالص)؛ استخدامی: نرخ نهایی (پایه + تکمیلی)'),
-    pct2('eff_rate', 'نرخ مؤثر', 'پورسانت محاسبه‌شده ÷ فروش خالص؛ با فاکتورهای ویژه (عمده / تخفیف مدیریتی) که نرخ پایه می‌گیرند، کمتر از درصد پورسانت می‌شود'),
-    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money' },
-    { key: 'reserve', label: 'ذخیره پورسانت', type: 'money', hint: `پورسانتی ${fmtPct(data.rules.commission.reserve, 0)}، استخدامی ${fmtPct(data.rules.employed.reserve, 0)}` },
-    { key: 'payable', label: 'قابل پرداخت', type: 'money', hint: 'پورسانت منهای ذخیره' },
+    pct2('mgmt_rate', 'نرخ تخفیف مدیریتی', 'مبلغ تخفیف مدیریتی ÷ مبلغ ناخالص همان فاکتورها', ['mgmt_disc', 'mgmt_inv_gross']),
+    pct2('mgmt_pct', 'درصد فروش مدیریتی', 'مجموع تخفیف مدیریتی ÷ فروش ناخالص', ['mgmt_disc', 'gross']),
+    { key: 'status', label: 'وضعیت', noTotal: true },
+    { key: 'bonus_rate', label: 'نرخ تکمیلی گروه‌ها', type: 'pct', pctDigits: 2, exportOnly: true, noTotal: true,
+      hint: 'فقط استخدامی: جمع نرخ گروه‌هایی که تحقق تعدادی‌شان به حد رسیده (با سقف)، از تارگت‌های تعدادی هر گروه' },
+    { key: 'extra_rate', label: 'نرخ خارج از سقف', type: 'pct', pctDigits: 2, exportOnly: true, noTotal: true, hint: 'فقط استخدامی: گروه‌های خارج از سقف (رزتی)' },
+    { key: 'rate', label: 'نرخ پورسانت', type: 'pct', pctDigits: 2, exportOnly: true, noTotal: true,
+      hint: 'پورسانتی: نرخ سطح فروش ناخالص از جدول قاعده؛ استخدامی: min(نرخ پایه تحقق + تکمیلی، سقف) + خارج از سقف، زیر کف صفر', xf: rateXf },
+    pct2('comm_pct', 'درصد پورسانت', 'پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی)', ['commission', 'net_cash']),
+    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', xf: commXf,
+      hint: 'نرخ پورسانت × (مبنای پورسانت − مبنای فاکتورهای ویژه) + نرخ فاکتورهای ویژه × مبنای فاکتورهای ویژه' },
+    { key: 'reserve', label: 'ذخیره پورسانت', type: 'money', xf: reserveXf,
+      hint: `پورسانتی ${fmtPct(data.rules.commission.reserve, 0)}، استخدامی ${fmtPct(data.rules.employed.reserve, 0)}` },
+    { key: 'payable', label: 'قابل پرداخت', type: 'money', hint: 'پورسانت منهای ذخیره', xf: payXf },
+    { key: 'salary', label: 'حقوق ثابت', type: 'money', render: salaryCell,
+      hint: 'فقط استخدامی: مبلغ ثابت ماهانه از جدول حقوق ثابت (اکسل پورسانت شهریور؛ هر ماه از ماه قبل می‌آید). '
+        + 'موس روی عدد = منبع و برای مقایسه عدد حقوق و دستمزد کارآمد' },
+    costCol(false),
     ...finCols(false),
   ]
   const scols = [
     { key: 'branch', label: 'نام شعبه', sticky: true }, { key: 'name', label: 'نام سرپرست', sticky: true }, { key: 'group_ab', label: 'گروه' },
+    { key: 'ruleset', label: 'کد قاعده', exportOnly: true, hint: 'ردیف همین قاعده در جدول سطح‌های برگه «قواعد»' },
     { key: 'visitors', label: 'ویزیتور', type: 'int' },
-    { key: 'gross', label: 'فروش ناخالص تیم', type: 'money' }, { key: 'net', label: 'فروش خالص تیم', type: 'money' },
-    { key: 'net_cash', label: 'فروش خالص + درصد نقدی تیم', type: 'money' },
-    ...(data.pace ? [{ key: 'forecast', label: 'پیش‌بینی ماه', type: 'money' }] : []),
-    { key: 't1', label: 'تارگت اول', type: 'money' }, { key: 't2', label: 'تارگت دوم', type: 'money' },
-    { key: 'ach_t1', label: 'تحقق تارگت اول', type: 'pct', render: achPill('ach_t1'), hint: 'فروش ناخالص تیم ÷ تارگت اول' },
-    { key: 'status', label: 'وضعیت' },
-    pct2('eff_rate', 'درصد پورسانت', 'پورسانت محاسبه‌شده ÷ فروش خالص تیم'),
-    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', hint: 'پلکانی روی فروش خالص تیم طبق جدول سرپرستی همان ماه؛ اگر فروش ناخالص تیم به تارگت اول نرسد صفر' },
-    ...(data.pace ? [{ key: 'forecast_commission', label: 'پورسانت با پیش‌بینی', type: 'money' }] : []),
-    { key: 'reserve', label: 'ذخیره پورسانت', type: 'money', hint: `${fmtPct(data.rules.supervisor.reserve, 0)} پورسانت` },
-    { key: 'payable', label: 'قابل پرداخت', type: 'money', hint: 'پورسانت منهای ذخیره' },
+    { key: 'gross', label: 'فروش ناخالص تیم', type: 'money', hint: 'جمع فروش ناخالص ویزیتورهای همین سرپرست' },
+    { key: 'net', label: 'فروش خالص تیم', type: 'money', hint: 'جمع فروش خالص ویزیتورهای همین سرپرست' },
+    { key: 'net_cash', label: 'فروش خالص + درصد نقدی تیم', type: 'money', hint: 'جمع فروش خالص + تخفیف نقدی ویزیتورهای همین سرپرست' },
+    { key: 'base', label: 'مبنای پورسانت تیم', type: 'money', exportOnly: true, hint: 'فروش خالص یا فروش خالص + نقدی تیم، طبق «مبنای پورسانت» برگه قواعد', xf: baseXf },
+    ...(data.pace ? [{ key: 'forecast', label: 'پیش‌بینی ماه', type: 'money', hint: 'مبنای پورسانت تیم × ضریب پیش‌بینی', xf: (ref) => `N(${ref('base')})*R_PACE` }] : []),
+    { key: 't1', label: 'تارگت اول', type: 'money', xf: supTarget('R_T1'), hint: 'از جدول قاعده همین شعبه در برگه قواعد' },
+    { key: 't2', label: 'تارگت دوم', type: 'money', xf: supTarget('R_T2'), hint: 'از جدول قاعده همین شعبه در برگه قواعد' },
+    { key: 'ach_t1', label: 'تحقق تارگت اول', type: 'pct', render: achPill('ach_t1'), hint: 'فروش ناخالص تیم ÷ تارگت اول',
+      xf: (ref) => `IF(N(${ref('t1')})=0,"",N(${ref('gross')})/N(${ref('t1')}))` },
+    { key: 'status', label: 'وضعیت', noTotal: true,
+      xf: (ref) => `IF(${ref('t1')}="","بدون قاعده سرپرستی",IF(N(${ref('gross')})<N(${ref('t1')}),"زیر تارگت اول",IF(N(${ref('gross')})>=N(${ref('t2')}),"تارگت دوم","تارگت اول")))` },
+    pct2('comm_pct', 'درصد پورسانت', 'پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی تیم)', ['commission', 'net_cash']),
+    { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', xf: (ref) => supComm(ref, `N(${ref('base')})`, `N(${ref('gross')})`),
+      hint: 'پلکانی روی مبنای پورسانت تیم با نرخ‌های سرپرست برگه قواعد؛ اگر فروش ناخالص تیم به تارگت اول نرسد صفر' },
+    ...(data.pace ? [{ key: 'forecast_commission', label: 'پورسانت با پیش‌بینی', type: 'money',
+      xf: (ref) => supComm(ref, `N(${ref('forecast')})`, `N(${ref('gross')})*R_PACE`), hint: 'همان محاسبه پورسانت روی پیش‌بینی پایان ماه' }] : []),
+    { key: 'reserve', label: 'ذخیره پورسانت', type: 'money', hint: `${fmtPct(data.rules.supervisor.reserve, 0)} پورسانت`,
+      xf: (ref) => `IF(${ref('commission')}="",0,N(${ref('commission')})*R_SUP_RES)` },
+    { key: 'payable', label: 'قابل پرداخت', type: 'money', hint: 'پورسانت منهای ذخیره', xf: payXf },
+    { key: 'salary', label: 'حقوق ثابت', type: 'money', render: salaryCell,
+      hint: 'مبلغ ثابت ماهانه سرپرست از جدول حقوق ثابت (اکسل پورسانت شهریور؛ هر ماه از ماه قبل می‌آید). '
+        + 'موس روی عدد = منبع و برای مقایسه عدد حقوق و دستمزد کارآمد' },
+    costCol(true),
     ...finCols(true),
   ]
   const sum = (rows, k) => rows.reduce((s, r) => s + (r[k] || 0), 0)
-  const ratio = (a, b) => (b > 0 ? a / b : null)
   // ردیف «جمع کل»: مبالغ و تعدادها جمع می‌شوند؛ درصدها از جمع‌ها دوباره حساب می‌شوند (نه جمع درصدها)
   const vTotals = (rs) => {
     const t = Object.fromEntries(vcols.filter((c) => c.type === 'money' || c.type === 'int').map((c) => [c.key, sum(rs, c.key)]))
-    return { ...t, branch: 'جمع کل', key: '__total',
-      eff_rate: ratio(t.commission, sum(rs, 'base')), wholesale_share: ratio(t.wholesale_gross, sum(rs, 'sales_gross')),
-      mgmt_inv_share: ratio(t.mgmt_inv_gross, sum(rs, 'sales_gross')), mgmt_rate: ratio(t.mgmt_disc, t.mgmt_inv_gross) }
+    const hasFin = rs.some((r) => isNum(r.debt))
+    return withApproval({ ...t, ...(hasFin ? {} : { debt: null }), branch: 'جمع کل', key: '__total',
+      comm_pct: ratio(t.commission, t.net_cash), cost_pct: ratio((t.salary || 0) + (t.commission || 0), t.net_cash),
+      wholesale_pct: ratio(t.wholesale_gross, t.gross),
+      mgmt_pct: ratio(t.mgmt_disc, t.gross), mgmt_rate: ratio(t.mgmt_disc, t.mgmt_inv_gross) })
   }
   const sTotals = (rs) => {
     const t = Object.fromEntries(scols.filter((c) => c.type === 'money' || c.type === 'int').map((c) => [c.key, sum(rs, c.key)]))
-    return { ...t, t1: null, t2: null, branch: 'جمع کل', key: '__total', eff_rate: ratio(t.commission, sum(rs, 'base')) }
+    const hasFin = rs.some((r) => isNum(r.debt))
+    return withApproval({ ...t, ...(hasFin ? {} : { debt: null }), t1: null, t2: null, branch: 'جمع کل', key: '__total',
+      comm_pct: ratio(t.commission, t.net_cash), cost_pct: ratio((t.salary || 0) + (t.commission || 0), t.net_cash) })
   }
   const tag = data.month.replace('/', '-')
   const select = (k, label, list) => (
@@ -337,6 +543,7 @@ function Sheet({ data }) {
         </span>
         {fin.loading && <span className="muted small">در حال خواندن مانده بدهی و چک برگشتی از بخش مالی…</span>}
         {fin.error && <span className="muted small">مانده بدهی و چک برگشتی از بخش مالی خوانده نشد: {fin.error}</span>}
+        {data.salary_error && <span className="muted small">{data.salary_error}</span>}
       </div>
       <div className="filter-bar">
         {select('branch', 'شعبه', opts.branch.map((b) => [b, b]))}
@@ -347,12 +554,12 @@ function Sheet({ data }) {
       </div>
       {who === 'visitors' ? (
         <DataTable rows={vrows.map((r) => ({ ...r, key: r.id }))} columns={vcols} unit={unit} pageSize={100}
-          exportName={`commission-visitors-${tag}`} defaultSort={{ key: 'branch', dir: 'asc' }}
+          exportName={`commission-visitors-${tag}`} exportExtras={commissionExtras(data, vcols)} defaultSort={{ key: 'branch', dir: 'asc' }}
           onRowClick={(r) => setSel(r.key === sel ? null : r.key)} expandedKey={sel}
           renderExpanded={(r) => <VisitorCalc v={r} data={data} unit={unit} />} totals={vTotals} />
       ) : (
         <DataTable rows={srows.map((s) => ({ ...s, key: s.id }))} columns={scols} unit={unit} pageSize={50}
-          search={false} exportName={`commission-supervisors-${tag}`} defaultSort={{ key: 'branch', dir: 'asc' }}
+          search={false} exportName={`commission-supervisors-${tag}`} exportExtras={commissionExtras(data, scols)} defaultSort={{ key: 'branch', dir: 'asc' }}
           onRowClick={(r) => setSelS(r.key === selS ? null : r.key)} expandedKey={selS}
           renderExpanded={(r) => <SupervisorCalc s={r} data={data} unit={unit} />} totals={sTotals} />
       )}
@@ -383,14 +590,36 @@ function VisitorCalc({ v, data, unit }) {
   const kinds = [(r.special || []).includes('wholesale') && 'عمده باشد (مبلغ ناخالص فاکتور بیش از ۷۰۰ میلیون تومان)',
     (r.special || []).includes('mgmt') && 'تخفیف مدیریتی داشته باشد'].filter(Boolean).join(' یا ')
   const rateText = v.type === 'commission' ? `نرخ سطح (${fmtPct(v.rate, 2)})` : `نرخ نهایی (${fmtPct(v.rate, 2)})`
+  const sMin = r.special_min || {}
+  const wsShare = isNum(v.gross) && v.gross > 0 ? v.wholesale_gross / v.gross : null
+  const mgShare = isNum(v.gross) && v.gross > 0 ? v.mgmt_disc / v.gross : null
+  const hasWs = (r.special || []).includes('wholesale'), hasMg = (r.special || []).includes('mgmt')
   const wsLine = v.wholesale_n > 0 && (
-    <li>{fa(v.wholesale_n)} فاکتور عمده (مبلغ ناخالص بالای ۷۰۰ میلیون تومان) داشته: {money(v.wholesale_gross, unit)} ناخالص، {fmtPct(v.wholesale_share, 1)} فروش ناخالص.</li>)
+    <li>{fa(v.wholesale_n)} فاکتور عمده (مبلغ ناخالص بالای ۷۰۰ میلیون تومان) داشته: {money(v.wholesale_gross, unit)} ناخالص، یعنی درصد عمده‌فروشی <b>{fmtPct(wsShare, 1)}</b> فروش ناخالص.
+      {hasWs && isNum(sMin.wholesale) && (v.special_ws_on
+        ? <> چون از {fmtPct(sMin.wholesale, 0)} کمتر نیست، این فاکتورها جدا با نرخ پایه حساب می‌شوند.</>
+        : <> چون کمتر از {fmtPct(sMin.wholesale, 0)} است، <b>این فاکتورها جدا حساب نمی‌شوند</b> و با نرخ عادی می‌آیند.</>)}
+      {v.wholesale_brands?.length > 0 && (
+        <div className="table-scroll"><table>
+          <thead><tr><th>برند</th><th className="num">مبلغ ناخالص</th><th className="num">فروش خالص</th>{cashBase && <th className="num">خالص + نقدی</th>}<th className="num">سهم از عمده</th></tr></thead>
+          <tbody>{v.wholesale_brands.map((b) => (
+            <tr key={b.brand}><td>{b.brand}</td><td className="num">{money(b.gross, unit)}</td><td className="num">{money(b.net, unit)}</td>
+              {cashBase && <td className="num">{money(b.net_cash, unit)}</td>}<td className="num">{fmtPct(v.wholesale_gross > 0 ? b.gross / v.wholesale_gross : null, 1)}</td></tr>))}
+          </tbody>
+        </table></div>)}
+    </li>)
   const mgLine = v.mgmt_n > 0 && (
-    <li>{fa(v.mgmt_n)} فاکتور با تخفیف مدیریتی داشته: مبلغ ناخالص {money(v.mgmt_inv_gross, unit)} ({fmtPct(v.mgmt_inv_share, 1)} فروش ناخالص)،
-      {' '}تخفیف مدیریتی {money(v.mgmt_disc, unit)} یعنی نرخ {fmtPct(v.mgmt_rate, 2)} روی همان فاکتورها.</li>)
+    <li>{fa(v.mgmt_n)} فاکتور با تخفیف مدیریتی داشته: مبلغ ناخالص {money(v.mgmt_inv_gross, unit)}، خالص + نقدی {money(v.mgmt_inv_net_cash, unit)}،
+      {' '}تخفیف مدیریتی {money(v.mgmt_disc, unit)} یعنی نرخ {fmtPct(v.mgmt_rate, 2)} روی همان فاکتورها؛ درصد فروش مدیریتی (تخفیف مدیریتی ÷ فروش ناخالص) <b>{fmtPct(mgShare, 2)}</b>.
+      {hasMg && isNum(sMin.mgmt) && (v.special_mg_on
+        ? <> چون بیشتر از {fmtPct(sMin.mgmt, 0)} است، این فاکتورها جدا با نرخ پایه حساب می‌شوند.</>
+        : <> چون {fmtPct(sMin.mgmt, 0)} یا کمتر است، <b>این فاکتورها جدا حساب نمی‌شوند</b> و با نرخ عادی می‌آیند.</>)}
+    </li>)
   const specialRule = isNum(spRate) && (
     <li><b>قاعده فاکتورهای ویژه این ماه:</b> هر فاکتوری که {kinds}، پورسانتش با نرخ پایه <b>{fmtPct(spRate, 0)}</b> حساب می‌شود، نه {rateText}.
       {' '}بقیه فروش با {rateText} حساب می‌شود.
+      {(isNum(sMin.wholesale) || isNum(sMin.mgmt)) && <>{' '}شرط: فاکتورهای عمده فقط وقتی جدا حساب می‌شوند که درصد عمده‌فروشی فرد دست‌کم {fmtPct(sMin.wholesale, 0)} باشد
+        {hasMg && <> و فاکتورهای با تخفیف مدیریتی فقط وقتی که درصد فروش مدیریتی بیش از {fmtPct(sMin.mgmt, 0)} باشد</>}؛ وگرنه همان فاکتورها با نرخ عادی می‌آیند.</>}
       {v.special_n > 0 ? (
         <>
           {' '}این فرد <b>{fa(v.special_n)} فاکتور ویژه</b> داشته ({B} {money(v.special_base, unit)}):

@@ -428,6 +428,62 @@ def category_matrix(tx, dims, cats) -> dict:
     return out
 
 
+def team_report(tx, rq, ctx, f, cats) -> dict:
+    """گزارش کامل تیم فروش (شعبه ← فروشنده): خلاصه عملکرد، «از ابتدای ماه» گزارش روزانه و ماتریس گروه کالا در یک جدول.
+    فقط فروشندگان فعال (دارای فاکتور مؤثر در بازه) ردیف جدا دارند؛ اعداد شعبه و کل شامل همه اسناد است."""
+    dims = ["branch", "seller"]
+    days, full_month = elapsed_days(ctx, f, tx, rq)
+    bt = _basis(tx, ctx, _cut(f, full_month))
+    total_net = float(tx["net"].sum())
+    inv = _invoice_counts(tx, ["seller_key"]) if len(tx) else pd.Series(dtype=float)
+    active = set(inv[inv > 0].index)
+
+    def fn(keycols):
+        t, k = _grp(tx, keycols)
+        g = _period(tx, keycols)
+        sale, ret = t[~t["is_return"]], t[t["is_return"]]
+        g["sales_net"] = sale.groupby(k, observed=True)["net"].sum()
+        g["returns_net"] = -ret.groupby(k, observed=True)["net"].sum()
+        sg = sale.groupby(k, observed=True)[["gross", "disc"]].sum()
+        g["disc_rate"] = sg["disc"] / sg["gross"].replace(0, np.nan)
+        g["sku"] = t[t["qty"] > 0].groupby(k, observed=True)["product_code"].nunique()
+        g["last_date"] = t.groupby(k, observed=True)["date"].max()
+        if rq is not None and len(rq):
+            r, rk = _grp(rq, keycols)
+            g = g.join(r.groupby(rk, observed=True)["net"].sum().rename("req_net"), how="left")
+            done = r[r["status"] == 1].groupby(rk, observed=True)["net"].sum().reindex(g.index)
+            g["req_conv"] = done / g["req_net"].replace(0, np.nan)
+        g = g.fillna({c: 0 for c in ("sales_net", "returns_net", "sku", "req_net")})
+        b = _period(bt, keycols).reindex(g.index).fillna(0) if bt is not tx else g
+        g["avg_net"] = b["net"] / days
+        g["avg_invoices"] = b["invoices"] / days
+        g["forecast"] = b["net"] / days * ctx["wd_total"] if full_month else np.nan
+        g["return_rate"] = g["returns_net"] / g["sales_net"].replace(0, np.nan)
+        g["share"] = g["net"] / total_net if total_net else np.nan
+        g["avg_invoice"] = g["net"] / g["invoices"].replace(0, np.nan)
+        g["lines_per_inv"] = g["lines"] / g["invoices"].replace(0, np.nan)
+        for i, c in enumerate(cats):
+            x = t[t["category"] == c]
+            g[f"q{i}"] = x.groupby(k, observed=True)["qty"].sum().reindex(g.index).fillna(0)
+            g[f"s{i}"] = x.groupby(k, observed=True)["net"].sum().reindex(g.index) / g["net"].replace(0, np.nan)
+        if keycols != ["branch", "seller_key"]:
+            # تعداد فروشنده فعال زیر هر ردیف (شعبه یا کل)
+            a = t[t["seller_key"].isin(active)].groupby(k, observed=True)["seller_key"].nunique()
+            g["sellers"] = a.reindex(g.index).fillna(0)
+        else:
+            # رتبه فقط بین فروشندگان فعال: در کل و در همان شعبه (بر اساس فروش خالص)
+            act = g[g.index.get_level_values(-1).isin(active)]
+            g["rank"] = act["net"].rank(ascending=False, method="min")
+            g["branch_rank"] = act.groupby(level=0)["net"].rank(ascending=False, method="min")
+        return g
+
+    src = pd.concat([tx, rq]) if rq is not None else tx
+    out = _tree(dims, src, fn, {"seller": ["supervisor", "seller_code"]})
+    out["nodes"] = [n for n in out["nodes"] if n["level"] == 0 or n["key"] in active]
+    out.update(categories=cats, days=days, full_month=full_month)
+    return out
+
+
 def daily_matrix(df, dims, metric, dates, wd_elapsed) -> dict:
     """روند روزانه هر ردیف (مشابه Trend / Trend2) + روزهای فعال."""
     def fn(keycols):

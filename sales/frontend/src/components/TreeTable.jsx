@@ -36,20 +36,22 @@ export function Spark({ values, width = 90, height = 22 }) {
   )
 }
 
-// خروجی اکسل: سطح درخت با تورفتگی نام نشان داده می‌شود؛ عددها مثل جدول (مبلغ به واحد انتخاب‌شده، درصد × ۱۰۰)
+// خروجی اکسل: سطح درخت با تورفتگی نام نشان داده می‌شود؛ مبلغ به واحد انتخاب‌شده، درصد با قالب ٪
 function toXlsx(rows, columns, unit, firstLabel, title) {
   const cols = columns.filter((c) => c.type !== 'spark')
+  const whole = unit === 'rial' || unit === 'toman'
   const val = (v, t) => {
     if (typeof v !== 'number' || !Number.isFinite(v)) return v ?? ''
-    if (t === 'money') return Math.round((v / UNITS[unit].div) * 10) / 10
-    if (t === 'pct') return Math.round(v * 1000) / 10
+    if (t === 'money') return whole ? Math.round(v / UNITS[unit].div) : Math.round((v / UNITS[unit].div) * 10) / 10
+    if (t === 'pct') return Math.round(v * 100000) / 100000
     if (t === 'num1') return Math.round(v * 10) / 10
     return Math.round(v)
   }
   const headers = [{ label: 'سطح', kind: 'int' }, ...cols.map((c) => ({
     label: (c.key === 'label' ? firstLabel : (c.group ? `${c.group} - ${c.label}` : c.label))
-      + (c.type === 'money' ? ` (${UNITS[unit].label})` : c.type === 'pct' ? ' (٪)' : ''),
-    kind: c.key === 'label' || !NUMERIC.has(c.type) ? 'text' : c.type === 'int' ? 'int' : 'dec',
+      + (c.type === 'money' ? ` (${UNITS[unit].label})` : ''),
+    kind: c.key === 'label' || !NUMERIC.has(c.type) ? 'text' : c.type === 'int' ? 'int' : c.type === 'pct' ? 'pct'
+      : c.type === 'money' && whole ? 'money' : 'dec',
   }))]
   const body = rows.map((r) => [r.level ?? '', ...cols.map((c) => (c.key === 'label'
     ? '   '.repeat(r.level || 0) + (r.label ?? '') : val(r[c.key], c.type)))])
@@ -61,12 +63,22 @@ function toXlsx(rows, columns, unit, firstLabel, title) {
  * nodes: [{id, parent, level, label, ...metrics}] ؛ total: ردیف «کل».
  */
 export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames = [], onRowClick, exportName,
-  defaultDepth = 0, cellStyle, firstLabel = 'نام' }) {
-  const { unit } = useApp()
+  defaultDepth = 0, cellStyle, firstLabel = 'نام', unit: fixedUnit, colorGroups = false }) {
+  const app = useApp()
+  // unit ثابت (مثلاً 'rial') واحد انتخاب‌شده سراسری را برای این جدول و خروجی اکسلش نادیده می‌گیرد
+  const unit = fixedUnit || app.unit
   const defaultOpen = () => new Set(nodes.filter((n) => n.level < defaultDepth).map((n) => n.id))
   const [open, setOpen] = useState(defaultOpen)
-  // با تغییر داده (فیلتر، روز گزارش) وضعیت باز/بسته به پیش‌فرض برمی‌گردد
-  useEffect(() => { setOpen(defaultOpen()) }, [nodes, defaultDepth])
+  // تازه‌سازی لایو (هر چند ثانیه) آرایه nodes جدید می‌دهد؛ وضعیت باز/بسته فقط وقتی ساختار درخت عوض شود
+  // (فیلتر، روز گزارش) بازبینی می‌شود: گره‌های بازی که هنوز وجود دارند باز می‌مانند
+  const idsKey = useMemo(() => nodes.map((n) => n.id).join('|'), [nodes])
+  useEffect(() => {
+    setOpen((prev) => {
+      const ids = new Set(nodes.map((n) => n.id))
+      const kept = new Set([...prev].filter((id) => ids.has(id)))
+      return kept.size ? kept : defaultOpen()
+    })
+  }, [idsKey, defaultDepth])
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ key: sortKey, dir: 'desc' })
   const maxLevel = Math.max(0, ...nodes.map((n) => n.level))
@@ -131,6 +143,19 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
     else groups.push({ g, span: 1, col: c })
   }
   const hasGroups = groups.some((g) => g.g)
+  // رنگ هر گروه سرستون (به ترتیب ظهور) و ستون اول هر گروه برای خط جداکننده
+  const groupColor = new Map()
+  const groupStart = new Set()
+  if (colorGroups) {
+    let gi = 0
+    for (const g of groups) {
+      if (!g.g) continue
+      if (!groupColor.has(g.g)) groupColor.set(g.g, gi++ % 8)
+      groupStart.add(g.col.key)
+    }
+  }
+  const gcls = (c) => (c.group && groupColor.has(c.group)
+    ? ` gc gc${groupColor.get(c.group)}${groupStart.has(c.key) ? ' gstart' : ''}` : '')
 
   const download = () => {
     const ordered = []
@@ -145,7 +170,7 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
   }
 
   const header = (c, rowSpan) => (
-    <th key={c.key} rowSpan={rowSpan} className={NUMERIC.has(c.type) ? 'num' : ''} title={c.hint}
+    <th key={c.key} rowSpan={rowSpan} className={(NUMERIC.has(c.type) ? 'num' : '') + gcls(c)} title={c.hint}
       onClick={() => c.type !== 'spark' && setSort((s) => (s.key === c.key ? { key: c.key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key: c.key, dir: 'desc' }))}>
       {c.key === 'label' ? firstLabel : c.label}
       {c.type === 'money' && <span className="th-unit"> ({UNITS[unit].label})</span>}
@@ -163,13 +188,15 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
           {hasKids
             ? <button className="tree-toggle" onClick={(e) => { e.stopPropagation(); toggle(n) }} aria-label={opened ? 'بستن' : 'باز کردن'}>{opened ? '▾' : '◂'}</button>
             : <span className="tree-toggle placeholder" />}
-          <span className={`lvl lvl${n.level}`}>{n.label}</span>
+          {/* کلیک روی نام ردیفی که زیرمجموعه دارد بازش می‌کند؛ بقیه خانه‌های ردیف همچنان به پرونده می‌روند */}
+          <span className={`lvl lvl${n.level}${hasKids ? ' tree-name-toggle' : ''}`}
+            onClick={hasKids ? (e) => { e.stopPropagation(); toggle(n) } : undefined}>{n.label}</span>
         </td>
       )
     }
     const v = n[c.key]
     return (
-      <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${typeof v === 'number' && v < 0 && c.type !== 'spark' ? 'neg' : ''}`}
+      <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${typeof v === 'number' && v < 0 && c.type !== 'spark' ? 'neg' : ''}${groupStart.has(c.key) ? ' gstart' : ''}`}
         style={cellStyle ? cellStyle(n, c) : undefined} title={c.render ? undefined : fullTitle(v, c.type)}>
         {c.render ? c.render(n) : cell(v, c.type, unit)}
       </td>
@@ -193,7 +220,7 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
               <>
                 <tr>
                   {groups.map((g, i) => (g.g
-                    ? <th key={i} colSpan={g.span} className="grp">{g.g}</th>
+                    ? <th key={i} colSpan={g.span} className={'grp' + gcls(g.col)}>{g.g}</th>
                     : header(g.col, 2)))}
                 </tr>
                 <tr>{columns.filter((c) => c.group).map((c) => header(c, 1))}</tr>

@@ -33,7 +33,7 @@ import loader
 ROOT = Path(__file__).resolve().parent.parent
 MAP_FILE = ROOT / "category_map.json"
 CACHE_DIR = ROOT / "data" / "cache" / "sql"
-CACHE_VERSION = 1
+CACHE_VERSION = 4  # 2: تخفیف مدیریتی فقط با نام دقیق؛ 3: + «تخفیف مدیریتی - مبلغ فروش»؛ 4: + «تخفیفات مدیریت»
 ENV_PREFIX = "KARAMAD_SQLSERVER_"
 CUSTOMERS_REFRESH_MIN = 60
 # مشتریان «نمونه کالا» (فاکتور صفر ریالی نمونه محصول، در هر شعبه کد جدا): از نمودار نرخ تخفیف کنار گذاشته می‌شوند
@@ -56,10 +56,17 @@ _COLS = """
 
 # تخفیف مدیریتی: ستون Discount ویو همه تخفیف‌های غیرنقدی سطر (آفر، جشنواره، مدیریتی، ...) است؛ ریز آن در
 # tblFactorfDiscount (فروش) و tblFactorBDiscount (برگشتی) به تفکیک نوع (tblAccDiscount) ثبت می‌شود.
-# انواعی که نامشان «مدیریت» دارد («تخفیف مدیریتی»، «تخفیفات مدیریت - هیبرید ...») جدا و از حجمی کسر می‌شوند.
+# فقط انواعی که نامشان دقیقاً یکی از MGMT_NAMES است جدا و از حجمی کسر می‌شوند؛ «تخفیفات مدیریت» و مانند آن جزو حجمی می‌مانند.
+#   «تخفیف مدیریتی»: مثل گزارش «ریز تخفیف‌های فاکتور فروش» کارآمد با فیلتر نام تخفیف
+#     (کنترل مهر ۱۴۰۵: فروش ۹۱۲٬۵۳۴٬۹۲۰ منهای برگشتی ۱۰۸٬۵۶۰٬۲۴۹ = ۸۰۳٬۹۷۴٬۶۷۱ ریال، برابر جمع همان گزارش)
+#   «تخفیف مدیریتی - مبلغ فروش»: تخفیف مدیریتی هیبرید گیلان (اعلام کاربر؛ مهر ۱۴۰۵: ۷۲۰٬۱۳۹٬۶۰۰ ریال)
+#   «تخفیفات مدیریت»: تخفیف مدیریتی هیبرید خراسان (اعلام کاربر؛ مهر ۱۴۰۵: فروش ۴٬۸۹۷٬۶۰۹٬۰۵۶، برگشتی ۱۳۱٬۳۳۹٬۲۹۵ ریال)
+# نام موقع خواندن از SQL مقایسه می‌شود؛ اگر در کارآمد نام‌ها به «تخفیف مدیریتی» یکی شوند، همچنان مدیریتی می‌مانند.
 # مبالغ برگشتی در ویو منفی‌اند ولی در tblFactorBDiscount مثبت؛ برای همین -mb.mg.
+MGMT_NAMES = ("تخفیف مدیریتی", "تخفیف مدیریتی - مبلغ فروش", "تخفیفات مدیریت")
 _MGMT = """(SELECT d.FactorRef, d.RowRef, SUM(d.Price) AS mg FROM dbo.{t} d
-   JOIN dbo.tblAccDiscount a ON a.ID = d.DiscountRef WHERE a.Name LIKE N'%مدیریت%' GROUP BY d.FactorRef, d.RowRef)"""
+   JOIN dbo.tblAccDiscount a ON a.ID = d.DiscountRef WHERE LTRIM(RTRIM(a.Name)) IN (""" + ", ".join(f"N'{n}'" for n in MGMT_NAMES) + """)
+   GROUP BY d.FactorRef, d.RowRef)"""
 
 SALES_SQL = f"""
 SELECT v.PersianDate AS [تاریخ], v.FactorType AS [نوع فاکتور], v.FactorDCode AS [شماره مرجع], {_COLS},
