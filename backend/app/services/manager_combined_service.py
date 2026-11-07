@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from sqlalchemy import text
+from app.utils.swr_cache import swr_get
 
 CACHE_SECONDS = 300
 _cache: dict[str, tuple[float, Any]] = {}
@@ -47,14 +48,7 @@ RECEIVABLE_SQL = text(
 
 
 def _cached(key: str, loader):
-    with _lock:
-        hit = _cache.get(key)
-        if hit and time.time() - hit[0] < CACHE_SECONDS:
-            return hit[1]
-    value = loader()
-    with _lock:
-        _cache[key] = (time.time(), value)
-    return value
+    return swr_get(_cache, _lock, key, CACHE_SECONDS, loader)
 
 
 def _sales_api(path: str, params: dict[str, Any]) -> dict[str, Any] | None:
@@ -123,26 +117,3 @@ def overview(year: int, month: int) -> dict[str, Any]:
         out["errors"].append(f"مطالبات راهکاران: {exc}")
     return out
 
-
-def warm_up() -> None:
-    """داده سنگین نمای مدیر را در پس‌زمینه می‌سازد تا اولین بازکردن صفحه منتظر SQL نماند
-    (چک‌های دریافتی حدود یک دقیقه، P&L لایو حدود ۳۰ ثانیه)."""
-    def run():
-        import jdatetime
-
-        from app.services import pnl_live_service, process_health_service
-        from app.services.karamad_sales_network_service import KaramadSalesNetworkService
-        from app.services.liquidity.issued_cheques import IssuedChequeService
-        from app.services.liquidity.received_cheques import ReceivedChequeService
-
-        t = jdatetime.date.today()
-        steps = [lambda: ReceivedChequeService().report(horizon_days=30), lambda: IssuedChequeService().report(horizon_days=30),
-                 lambda: overview(t.year, t.month), lambda: process_health_service.load(),
-                 lambda: KaramadSalesNetworkService().visitor_finance()]  # جدول ویزیتورهای گزارش‌ساز اکسل
-        steps += [lambda k=k: pnl_live_service.load(k) for k in ("b2b", "hybrid", "export")]
-        for step in steps:
-            try:
-                step()
-            except Exception:  # noqa: BLE001 — آماده‌سازی؛ خطا در درخواست واقعی نشان داده می‌شود
-                pass
-    threading.Thread(target=run, daemon=True).start()

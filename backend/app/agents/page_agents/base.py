@@ -1,11 +1,10 @@
-"""پایه Page Agent: هر صفحه داشبورد یک Agent گزارشی با هشدار، پیش‌بینی و حافظه (V171).
+"""پایه بررسی‌های الارم هر ماژول (قبلاً «Page Agent»؛ گزارش و متن هوش مصنوعی هر ماژول حذف شده است).
 
-جریان اجرا:
+هر ماژول فقط قواعد ماشینی خودش را اجرا می‌کند تا الارم‌های همان ماژول (زنگ، فهرست الارم صفحه) ساخته شوند:
   collect() → اعداد زنده از سرویس‌های موجود
-  memory    → اعداد اجرای قبل و ~۷ روز قبل از AgentMemoryStore
-  rules()   → تحلیل قطعی بدون LLM (تیتر، خلاصه، هشدار، پیش‌بینی، اقدام)
-  narrate() → اگر کلید OpenAI باشد فقط متن تیتر/خلاصه/نشانه‌ها بازنویسی می‌شود؛
-              اعداد، هشدارها، پیش‌بینی‌ها و اقدام‌ها همیشه از قواعد ماشینی می‌آیند.
+  memory    → اعداد اجرای قبل و ~۷ روز قبل از AgentMemoryStore (برای تکرار/رفع الارم)
+  rules()   → هشدارها و پیش‌بینی‌های قطعی، بدون LLM
+تنها گزارش متنی، گزارش «Agent مدیر» است (ManagerAgent در agents.py) که در نمای مدیر نشان داده می‌شود.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.agents.finance_decision_agents import _toman
-from app.core.config import settings
 from app.services.agent_memory_store import AgentMemoryStore
 
 LEVEL_ORDER = {"critical": 0, "high": 1, "medium": 2, "info": 3}
@@ -109,8 +107,6 @@ class PageAgent:
     #: metric drawn as the memory sparkline on the page card.
     primary_metric = ""
     primary_unit = "rial"
-    #: Wrapped legacy agents already call the LLM themselves.
-    narrate_with_llm = True
 
     def __init__(self, store: AgentMemoryStore | None = None, context: Any = None):
         from app.agents.page_agents.context import AgentRunContext
@@ -151,11 +147,7 @@ class PageAgent:
         alerts = sorted(analysis.pop("alerts", []), key=lambda x: LEVEL_ORDER.get(x["level"], 9))
         predictions = analysis.pop("predictions", [])
         analysis.setdefault("management_status", self._status(alerts))
-        mode, fallback_reason = "rules", None
-        if self.narrate_with_llm:
-            mode, fallback_reason = self._narrate(analysis, metrics, alerts, predictions, delta_rows, memory)
-        else:
-            mode = data.get("mode") or "rules"
+        mode, fallback_reason = data.get("mode") or "rules", None
 
         result = {
             **base,
@@ -197,45 +189,3 @@ class PageAgent:
         if levels & {"high", "medium"}:
             return "attention"
         return "healthy"
-
-    def _narrate(
-        self,
-        analysis: dict[str, Any],
-        metrics: dict[str, Any],
-        alerts: list[dict[str, Any]],
-        predictions: list[dict[str, Any]],
-        deltas: list[dict[str, Any]],
-        memory: dict[str, Any],
-    ) -> tuple[str, str | None]:
-        if not settings.openai_api_key:
-            return "rules", "کلید OpenAI تنظیم نشده است"
-        try:
-            from openai import OpenAI
-
-            prompt = f"""
-تو {self.name} شرکت اکسیر کادوس هستی؛ گزارش‌دهنده صفحه «{self.page}». نقش: {self.role_fa}.
-{self.prompt_fa}
-فقط از اعداد و واقعیت‌های JSON زیر استفاده کن؛ عدد، نام، درصد یا رویداد جدید نساز.
-حافظه تو اعداد اجرای قبلی و ~۷ روز قبل است (deltas)؛ اگر تغییری معنادار است آن را در خلاصه بگو.
-مخاطب مدیرعامل و مدیر مالی است: فارسی روان، مبالغ به تومان خوانا، بدون نام جدول/فیلد انگلیسی.
-فقط JSON معتبر با کلیدهای headline (یک جمله)، summary (حداکثر ۳ جمله)، good_signals (آرایه)،
-risks (آرایه) و next_best_action (یک جمله) برگردان.
-{json.dumps({"draft": analysis, "metrics": metrics, "alerts": alerts, "predictions": predictions,
-             "deltas": deltas, "previous_run_at": (memory.get("previous") or {}).get("at")},
-            ensure_ascii=False, default=str)}
-"""
-            raw = OpenAI(api_key=settings.openai_api_key).responses.create(
-                model=settings.openai_model, input=prompt,
-            ).output_text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[1].rsplit("```", 1)[0]
-            text = json.loads(raw)
-            for key in ("headline", "summary", "next_best_action"):
-                if isinstance(text.get(key), str) and text[key].strip():
-                    analysis[key] = text[key].strip()
-            for key in ("good_signals", "risks"):
-                if isinstance(text.get(key), list):
-                    analysis[key] = [str(x) for x in text[key] if str(x).strip()][:6]
-            return "llm", None
-        except Exception as exc:  # noqa: BLE001
-            return "rules", f"{type(exc).__name__}: {str(exc)[:160]}"

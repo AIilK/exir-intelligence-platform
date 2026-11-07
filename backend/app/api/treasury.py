@@ -16,11 +16,7 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 
 from app.schemas.treasury import (
-    FinancialQueryRequest,
     PaymentCommitmentDecisionRequest,
-    TreasuryChatRequest,
-    TreasuryChatResponse,
-    TreasuryChatStatusResponse,
 )
 from app.services.bank_reconciliation_service import (
     MAX_FILE_SIZE,
@@ -53,8 +49,6 @@ from app.services.treasury_service import (
     get_latest_payments,
     get_company_payment_orders,
     get_company_payment_orders_karamad,
-    get_customer_b2b_remittances,
-    get_customer_b2b_remittances_karamad,
     get_latest_received_cheques,
     get_open_issued_cheques,
     get_open_received_cheques,
@@ -65,25 +59,12 @@ from app.services.treasury_service import (
     search_accounts,
 )
 from app.services.treasury_insight_service import (
-    get_cashflow_scenarios,
     get_cheque_risk_dashboard,
     get_customer_financial_profile,
     get_daily_treasury_briefing,
     get_financial_anomaly_report,
     get_payment_plan,
     get_treasury_executive_dashboard,
-)
-from app.services.financial_query_service import (
-    FinancialQueryError,
-    ask_financial_data,
-)
-from app.services.treasury_chat_service import (
-    TreasuryAgentConfigurationError,
-    TreasuryAgentExecutionError,
-    TreasuryAgentRateLimitError,
-    TreasuryAgentTimeoutError,
-    get_treasury_agent_status,
-    run_treasury_chat,
 )
 from app.services.cash_bank_movement_service import CashBankMovementService
 from app.services.payment_commitment_service import PaymentCommitmentService
@@ -219,54 +200,6 @@ def update_payment_commitment_decision(
         ) from exc
 
 
-@router.post(
-    "/intelligence/ask",
-    summary="پرسش آزاد و امن از داده‌های مالی",
-)
-def treasury_financial_intelligence(request: FinancialQueryRequest):
-    try:
-        return ask_financial_data(request.question)
-    except FinancialQueryError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("Safe financial query failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="تحلیل آزاد اطلاعات مالی با خطا مواجه شد.",
-        ) from exc
-
-
-@router.get(
-    "/forecast/cashflow",
-    summary="سناریوهای توضیح‌پذیر جریان نقد",
-)
-def treasury_cashflow_forecast(
-    days: int = Query(default=30, ge=1, le=180),
-    opening_cash: str | None = Query(default=None),
-    history_days: int = Query(default=90, ge=30, le=730),
-):
-    try:
-        return get_cashflow_scenarios(
-            days=days,
-            opening_cash=opening_cash,
-            history_days=history_days,
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("Cashflow scenario forecast failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="ساخت سناریوی جریان نقد با خطا مواجه شد.",
-        ) from exc
-
-
 async def _process_reconciliation_upload(
     file: UploadFile,
     **options,
@@ -383,33 +316,6 @@ def company_payment_orders(
     return result
 
 
-@router.get("/customer-b2b-remittances", summary="حواله‌ها و واریزهای B2B مشتریان")
-def customer_b2b_remittances(
-    limit: int = Query(default=20000, ge=1, le=20000),
-    counterpart_ref: int | None = Query(default=None, ge=1),
-    source: str = Query(default="rahkaran", pattern="^(rahkaran|karamad|all)$"),
-):
-    try:
-        if source == "rahkaran":
-            return get_customer_b2b_remittances(limit=limit, counterpart_ref=counterpart_ref)
-        if source == "karamad":
-            return get_customer_b2b_remittances_karamad(limit=limit, counterpart_ref=counterpart_ref)
-        rahkaran = get_customer_b2b_remittances(limit=limit, counterpart_ref=counterpart_ref)
-        karamad = get_customer_b2b_remittances_karamad(limit=limit, counterpart_ref=counterpart_ref)
-        merged_rows = rahkaran.get("rows", []) + karamad.get("rows", [])
-        merged_rows.sort(key=lambda x: (x.get("deposit_date_jalali") or "", str(x.get("receipt_deposit_id") or "")), reverse=True)
-        return {
-            "status": "success", "source": "Rahkaran + Karamad", "rows": merged_rows,
-            "summary": {
-                key: (rahkaran["summary"].get(key, 0) or 0) + (karamad["summary"].get(key, 0) or 0)
-                for key in rahkaran["summary"]
-            },
-        }
-    except Exception as exc:
-        logger.exception("Customer B2B remittances endpoint failed")
-        raise HTTPException(status_code=500, detail="دریافت حواله‌های B2B مشتریان با خطا مواجه شد.") from exc
-
-
 @router.get("/payments/latest")
 def latest_treasury_payments(
     limit: int = Query(default=10, ge=1, le=100),
@@ -520,8 +426,6 @@ def treasury_received_cheque_status_signatures():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"ممیزی وضعیت فعلی چک‌های دریافتی با خطا مواجه شد: {exc}",
         ) from exc
-
-
 
 
 @router.post("/cheques/received/compare-official-excel", summary="مقایسه کاندیدهای SQL با گزارش رسمی راهکاران")
@@ -969,62 +873,6 @@ def treasury_reconciliation_excel(reconciliation_id: str):
             )
         },
     )
-
-
-@router.post(
-    "/chat",
-    response_model=TreasuryChatResponse,
-)
-async def treasury_chat(request: TreasuryChatRequest):
-    try:
-        result = await run_treasury_chat(
-            request.message,
-            session_id=request.session_id,
-        )
-    except TreasuryAgentConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except TreasuryAgentRateLimitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(exc),
-        ) from exc
-    except TreasuryAgentTimeoutError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=str(exc),
-        ) from exc
-    except TreasuryAgentExecutionError as exc:
-        logger.exception("Treasury chat endpoint failed")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("Unhandled treasury chat endpoint error")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=(
-                "خطای داخلی کنترل‌نشده رخ داد "
-                f"({type(exc).__name__})؛ جزئیات در ترمینال uvicorn ثبت شد."
-            ),
-        ) from exc
-
-    return TreasuryChatResponse(
-        status="success",
-        answer=result.answer,
-        session_id=result.session_id,
-    )
-
-
-@router.get(
-    "/chat/status",
-    response_model=TreasuryChatStatusResponse,
-)
-def treasury_chat_status():
-    return get_treasury_agent_status()
 
 
 @router.post("/cheques/received/analyze-official-scope-rule", summary="کشف Rule دامنه گزارش رسمی چک‌های دریافتی راهکاران")

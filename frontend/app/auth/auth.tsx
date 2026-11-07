@@ -7,8 +7,7 @@ import type { ReactNode } from "react";
 import LoginPage from "./login-page";
 import { applyLook } from "../theme/theme";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-export const AUTH_API = () => `http://${apiHost()}:8000/api/v1/auth`;
+export const AUTH_API = () => `/api/v1/auth`;
 
 export type ModuleInfo = { key: string; title: string; views: string[]; has_alarms: boolean; group?: string; group_title?: string };
 export type AppUser = {

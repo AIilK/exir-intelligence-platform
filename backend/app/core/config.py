@@ -32,8 +32,6 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_model: str = "gpt-5.6-luna"
-    treasury_agent_max_turns: int = 6
-    treasury_agent_session_db: str = "./treasury_agent_sessions.db"
     treasury_reconciliation_db: str = "./treasury_reconciliation.db"
     # Shared only between the trusted frontend proxy and Backend. Never expose
     # this value in NEXT_PUBLIC_* variables or browser code.
@@ -46,22 +44,22 @@ class Settings(BaseSettings):
     # Comma-separated PayableNote.State codes confirmed by finance as cleared.
     # Example only after verification in this Rahkaran installation: "15,28"
     treasury_issued_paid_states: str = "28"
-    financial_query_max_rows: int = 200
-    financial_query_timeout_seconds: int = 20
     customer_intelligence_scheduler_enabled: bool = True
     customer_intelligence_daily_hour: int = 7
     customer_intelligence_daily_minute: int = 0
+    # گزارش هفتگی ریسک هیبریدها (app/services/hybrid_risk_service.py): شنبه ساعت ۷:۳۰ صبح
+    hybrid_risk_weekly_enabled: bool = True
+    hybrid_risk_weekly_day: str = "sat"
+    hybrid_risk_weekly_hour: int = 7
+    hybrid_risk_weekly_minute: int = 30
+    # تحلیل هوشمند پرونده هیبریدها و نمایندگان راهکاران از روی تاریخچه (app/services/ai_file_analysis_service.py):
+    # هفتگی بعد از گزارش ریسک (شنبه ۸ صبح)، فقط پرونده‌هایی که تاریخچه‌شان عوض شده. مدل خالی = همان openai_model.
+    ai_file_analysis_enabled: bool = True
+    ai_file_analysis_model: str = ""
+    ai_file_analysis_weekly_hour: int = 8
+    ai_file_analysis_weekly_minute: int = 0
     customer_intelligence_history_db: str = "./customer_intelligence_history.db"
     customer_representative_mapping_file: str = "./data/customer_representative_mapping.csv"
-    customer_behavior_agent_enabled: bool = True
-    customer_behavior_agent_model: str = ""
-    customer_behavior_agent_max_customers: int = 25
-    cashflow_excel_inbox: str = "C:/Users/Ai.WWW/Desktop/Exir_Finance_Agent_Command_Center_V12/Inbox"
-    cashflow_excel_archive: str = "C:/Users/Ai.WWW/Desktop/Exir_Finance_Agent_Command_Center_V12/Archive"
-    cashflow_excel_state_file: str = "./data/cashflow_excel/folder_import_state.json"
-    cashflow_excel_scan_enabled: bool = True
-    cashflow_excel_scan_minutes: int = 15
-    cashflow_excel_min_file_age_seconds: int = 30
     # Four recurring KarAmand exports. The folder and its four subfolders are
     # created automatically on Backend startup/first scan.
     karamad_excel_inbox: str = "KaramadInbox"

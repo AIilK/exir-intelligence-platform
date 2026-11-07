@@ -8,8 +8,7 @@ import { RegCell, chequeNo } from "../cheque-reg";
 type Channel = "all" | "b2b" | "hybrid";
 type Section = "forecast" | "received" | "issued" | "flows" | "payroll";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const LIQUIDITY_API = () => `http://${apiHost()}:8000/api/v1/liquidity`;
+const LIQUIDITY_API = () => `/api/v1/liquidity`;
 
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });

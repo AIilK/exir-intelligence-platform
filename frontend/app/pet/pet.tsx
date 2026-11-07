@@ -28,8 +28,7 @@ type Reminder = { id: number; text: string; due_at: string | null; done: boolean
 type Mode = "walk" | "sit" | "sleep";
 type Bubble = { text: string; kind?: "reminder" | "alarm" | "info"; reminder?: Reminder } | null;
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const API = () => `http://${apiHost()}:8000/api/v1/reminders`;
+const API = () => `/api/v1/reminders`;
 const IDLE_SLEEP_MS = 90_000;      // بی‌کاری کاربر تا خوابیدن
 const POLL_MS = 30_000;            // بررسی یادآوری‌های سررسیده
 const ALARM_NAG_MS = 15 * 60_000;  // هر ربع ساعت یک بار الارم باز را یادآوری می‌کند
@@ -128,7 +127,7 @@ export default function Pet({ onGo }: { onGo?: (view: string) => void }) {
   useEffect(() => {
     if (!pet) return;
     void loadReminders();
-    const t = window.setInterval(() => void loadReminders(), POLL_MS);
+    const t = window.setInterval(() => { if (!document.hidden) void loadReminders(); }, POLL_MS);
     return () => window.clearInterval(t);
   }, [pet, loadReminders]);
   const say = useCallback((b: Bubble) => {

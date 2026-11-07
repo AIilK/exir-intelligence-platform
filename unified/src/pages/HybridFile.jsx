@@ -7,6 +7,8 @@ import { useSalesSet, NETWORK_URL } from '../hooks.js'
 import { PageHead, Card, Pending, Bar, Kpi, Money } from '../ui.jsx'
 import { YearChart, ChequeHealth, DebtSummary, ChequesTab, DebtTab, InvoicesTab, VisitorsTable, visitorIds } from '../fileTabs.jsx'
 import { useHybridDistribution, DistributionGlance, DistributionTab } from '../distTab.jsx'
+import { useHybridRisk, RiskPill, RiskTab } from '../hybridRisk.jsx'
+import { useAiAnalysis, AiAnalysisPanel } from '../aiAnalysis.jsx'
 
 const TABS = [
   { id: 'overview', label: 'نمای کلی', tone: 'text' },
@@ -16,6 +18,8 @@ const TABS = [
   { id: 'visitors', label: 'ویزیتورها', tone: 'text' },
   { id: 'invoices', label: 'فاکتورهای اخیر و وصول', tone: 'fin' },
   { id: 'distribution', label: 'توزیع بار', tone: 'fin' },
+  { id: 'risk', label: 'ریسک (هفتگی)', tone: 'fin' },
+  { id: 'ai', label: 'تحلیل هوشمند', tone: 'sales' },
 ]
 
 const short = (xs = []) => (xs.length ? `${xs.slice(0, 3).join('، ')}${xs.length > 3 ? ` و ${n0(xs.length - 3)} نفر دیگر` : ''}` : '—')
@@ -49,6 +53,9 @@ export default function HybridFile() {
   const yg = ytdPrev >= MIN_GROWTH_BASE_RIAL ? growth(ytd, ytdPrev) : null
 
   const dist = useHybridDistribution(name, P)
+  const risk = useHybridRisk()
+  const riskRow = branch ? risk.data?.branches?.find((b) => b.branch_id === branch.branch_id) : null
+  const ai = useAiAnalysis('hybrid', tab === 'ai' && branch ? String(branch.branch_id) : null)
   const ch = useMemo(() => branchCheques(file.data), [file.data])
   const chq = useMemo(() => chequesByVisitor(ch.rows), [ch])
   const ids = useMemo(() => visitorIds(file.data?.visitors), [file.data])
@@ -79,7 +86,7 @@ export default function HybridFile() {
           <div className="u-identity-name">
             <i aria-hidden>⬢</i>
             <div>
-              <div className="u-row-gap"><h1>{name}</h1>{file.data && <span className={`u-pill ${LEVEL[level].cls}`}>{LEVEL[level].label}</span>}</div>
+              <div className="u-row-gap"><h1>{name}</h1>{file.data && <span className={`u-pill ${LEVEL[level].cls}`}>{LEVEL[level].label}</span>}{riskRow && <button className="u-link-btn" onClick={() => go('risk')}><RiskPill b={riskRow} /></button>}</div>
               <small>
                 {file.data
                   ? `هیبرید من: ${short(file.data.hybrids)} · سرپرست: ${short(file.data.supervisors)} · ${n0(file.data.visitors?.length)} ویزیتور · ${n0(debt?.customer_count)} مشتری`
@@ -146,6 +153,8 @@ export default function HybridFile() {
         : <VisitorsTable visitors={file.data.visitors} monthBy={monthBy} chq={chq} Y={Y} />)}
       {tab === 'invoices' && <InvoicesTab file={file} ids={ids} />}
       {tab === 'distribution' && <DistributionTab d={dist} ids={ids} />}
+      {tab === 'risk' && <RiskTab risk={risk} branchId={branch?.branch_id} />}
+      {tab === 'ai' && <AiAnalysisPanel ai={ai} subject={name} />}
     </div>
   )
 }

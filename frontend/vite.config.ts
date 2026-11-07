@@ -1,21 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import { defineConfig, loadEnv } from "vite";
 
 const PROXY_PREFIX = "/__reconciliation_proxy";
-
-// صفحه‌ها آدرس بک‌اند را ثابت «:8000» نوشته‌اند. در نصب یکپارچه پورت 8000 مال بک‌اند فروش است و
-// بک‌اند مالی روی پورت دیگری (BACKEND_BASE_URL در .env.local) است؛ اینجا همان پورت جایگزین می‌شود.
-function backendPort(port: string): Plugin {
-  return {
-    name: "exir-backend-port",
-    enforce: "pre",
-    transform(code, id) {
-      if (port === "8000" || !/\.[jt]sx?$/.test(id.split("?")[0]) || !code.includes("}:8000/api/v1")) return null;
-      return { code: code.replaceAll("}:8000/api/v1", `}:${port}/api/v1`), map: null };
-    },
-  };
-}
 
 // پنل مغایرت‌گیری صفحه ورود ندارد. کلید API بک‌اند را Proxy همین فرانت اضافه می‌کند تا مرورگر
 // اپراتور کلید را نبیند. اگر فرانت .env.local نداشت، کلید از backend/.env خوانده می‌شود.
@@ -31,7 +18,9 @@ function backendEnvValue(name: string): string {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const backendBaseUrl = (env.BACKEND_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+  // بک‌اند مالی همیشه روی 8010 است (8000 مال بک‌اند فروش). صفحه‌ها آدرس نسبی /api/v1 را صدا می‌زنند
+  // و همین Proxy آن را به بک‌اند می‌رساند؛ پس مرورگر فقط پورت همین فرانت را می‌بیند.
+  const backendBaseUrl = (env.BACKEND_BASE_URL || "http://127.0.0.1:8010").replace(/\/$/, "");
   const apiKey = (env.RECONCILIATION_API_KEY || backendEnvValue("RECONCILIATION_API_KEY")).trim();
   const proxy = {
     [PROXY_PREFIX]: {
@@ -41,10 +30,10 @@ export default defineConfig(({ mode }) => {
       headers: apiKey ? { "X-Reconciliation-API-Key": apiKey } : {},
       rewrite: (path: string) => path.replace(PROXY_PREFIX, "/api/v1/treasury"),
     },
+    "/api/v1": { target: backendBaseUrl, changeOrigin: true, secure: false },
   };
 
   return {
-    plugins: [backendPort(new URL(backendBaseUrl).port || "80")],
     server: { host: "0.0.0.0", port: 3000, proxy },
     preview: { host: "0.0.0.0", port: 3000, proxy },
   };

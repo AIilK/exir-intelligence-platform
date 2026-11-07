@@ -16,7 +16,7 @@ MODULES: dict[str, dict[str, Any]] = {
         "title": "خلاصه مدیریتی مالی",
         "views": ["overview", "management", "history"],
         # خلاصه مالی همه بلوک‌هایش را نشان می‌دهد؛ پس الارم همان بخش‌ها را هم می‌گیرد.
-        "alarm_agents": ["management", "received_cheques", "issued_cheques", "payables", "liquidity", "cashflow", "distribution"],
+        "alarm_agents": ["management", "received_cheques", "issued_cheques", "payables", "liquidity", "distribution"],
         "chat_tools": ["cheques_overview", "cheque_status_list", "liquidity_forecast", "payables_overview", "distribution_month"],
     },
     "sales": {
@@ -83,14 +83,14 @@ MODULES: dict[str, dict[str, Any]] = {
     },
     "cashBank": {
         "title": "نقد و حواله",
-        "views": ["cashBank", "monthlyExcel"],
-        "alarm_agents": ["cash_bank_movement", "daily_cash_excel"],
+        "views": ["cashBank"],
+        "alarm_agents": ["cash_bank_movement"],
         "chat_tools": [],
     },
     "companyPayments": {
         "title": "حواله‌های پرداختی شرکت",
-        "views": ["companyPayments", "b2bRemittances"],
-        "alarm_agents": ["company_payments", "b2b_remittances"],
+        "views": ["companyPayments"],
+        "alarm_agents": ["company_payments"],
         "chat_tools": [],
     },
     "payables": {
@@ -101,8 +101,8 @@ MODULES: dict[str, dict[str, Any]] = {
     },
     "liquidity": {
         "title": "نقدینگی",
-        "views": ["liquidity", "cashflow", "simulator"],
-        "alarm_agents": ["liquidity", "cashflow", "scenario"],
+        "views": ["liquidity"],
+        "alarm_agents": ["liquidity"],
         "chat_tools": ["liquidity_forecast"],
     },
     "pnl": {
@@ -172,13 +172,10 @@ GROUP_TITLES = {"finance": "مالی و خزانه", "sales": "فروش", "syste
 COMMON_VIEWS = ["alerts"]
 
 # API هایی که فقط برای بعضی ماژول‌ها باز است (پیشوند مسیر ← ماژول‌های مجاز). بقیه APIها فقط ورود می‌خواهند.
-# «admin» یعنی فقط مدیر سیستم (SQL آزاد، اتصال دیتابیس، اجرای دستی همه Agentها).
+# «admin» یعنی فقط مدیر سیستم (اجرای دستی همه Agentها).
 API_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("/api/v1/query", ("admin",)),
     ("/api/v1/chatbot", ("chatbot",)),
-    ("/api/v1/connections", ("admin",)),
     ("/api/v1/finance/agents/run-all", ("admin",)),
-    ("/api/v1/finance/page-agents/run-all", ("admin",)),
     ("/api/v1/finance/payables", ("payables", "management")),
     ("/api/v1/finance/pnl", ("pnl",)),
     ("/api/v1/finance/excel-reports", ("excelReports",)),
@@ -188,6 +185,8 @@ API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/finance/inventory-pricing", ("inventoryPricing",)),
     ("/api/v1/finance/distribution", ("distribution", "management", "sales")),
     # فقط ستون‌های مانده بدهی و چک برگشتی صفحه «تحقق و پورسانت» (اولین تطابق اعمال می‌شود)
+    ("/api/v1/finance/ai-analysis/hybrid", ("customers", "sales")),
+    ("/api/v1/finance/ai-analysis/rep", ("salesB2B", "customers")),
     ("/api/v1/finance/sales-network/visitor-finance", ("salesCommission", "customers", "sales")),
     ("/api/v1/finance/sales-network", ("customers", "sales")),
     ("/api/v1/finance/collection-cases", ("collections",)),
@@ -195,7 +194,6 @@ API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/finance/karamad-payment-transfers", ("cashBank", "companyPayments")),
     ("/api/v1/treasury/cash-bank", ("cashBank", "management")),
     ("/api/v1/treasury/payment-orders", ("companyPayments",)),
-    ("/api/v1/treasury/customer-b2b-remittances", ("companyPayments",)),
     ("/api/v1/liquidity/summary", ("liquidity", "management")),
     ("/api/v1/liquidity/financing", ("liquidity", "management")),
     ("/api/v1/liquidity/payroll", ("liquidity", "management")),

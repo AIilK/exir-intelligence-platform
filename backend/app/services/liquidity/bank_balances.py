@@ -29,6 +29,7 @@ from sqlalchemy import text
 
 from app.services.liquidity.cash_movements import CHANNEL_LABELS, CHANNEL_SYSTEMS, SYSTEM_CHANNEL, SalesChannel
 from app.utils.jalali import format_jalali_date
+from app.utils.swr_cache import swr_get
 
 CACHE_TTL_SECONDS = 300
 STALE_POSTING_DAYS = 3
@@ -132,16 +133,9 @@ class BankBalanceService:
         self.cache_ttl_seconds = cache_ttl_seconds
 
     def _load(self, system: str, refresh: bool) -> list[dict[str, Any]]:
-        key = (system, self.today)
-        now = time.monotonic()
-        with _cache_lock:
-            hit = _cache.get(key)
-            if hit and not refresh and now - hit[0] < self.cache_ttl_seconds:
-                return hit[1]
-        rows = self.fetchers[system](self.today + timedelta(days=1))
-        with _cache_lock:
-            _cache[key] = (now, rows)
-        return rows
+        return swr_get(_cache, _cache_lock, (system, self.today), self.cache_ttl_seconds,
+                       lambda: self.fetchers[system](self.today + timedelta(days=1)),
+                       refresh=refresh, clock=time.monotonic)
 
     def _normalize(self, system: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         sl_kinds = RAHKARAN_BANK_SL if system == "rahkaran" else KARAMAD_BANK_SL

@@ -28,6 +28,7 @@ from app.services.liquidity.account_map import (
     classify,
 )
 from app.utils.jalali import _gregorian_to_jalali, _jalali_to_gregorian, format_jalali_date
+from app.utils.swr_cache import swr_get
 
 SalesChannel = Literal["b2b", "hybrid", "all"]
 CHANNEL_SYSTEMS: dict[str, tuple[str, ...]] = {
@@ -342,17 +343,10 @@ class CashMovementService:
     # -- data loading ---------------------------------------------------------
 
     def _load(self, system: str, refresh: bool) -> list[Movement]:
-        key = (system, self.today)
-        now = time.monotonic()
-        with _cache_lock:
-            hit = _cache.get(key)
-            if hit and not refresh and now - hit[0] < self.cache_ttl_seconds:
-                return hit[1]
         start = self.today - timedelta(days=HISTORY_DAYS)
-        rows = self.fetchers[system](start, self.today + timedelta(days=1))
-        with _cache_lock:
-            _cache[key] = (now, rows)
-        return rows
+        return swr_get(_cache, _cache_lock, (system, self.today), self.cache_ttl_seconds,
+                       lambda: self.fetchers[system](start, self.today + timedelta(days=1)),
+                       refresh=refresh, clock=time.monotonic)
 
     def _classified(self, channel: SalesChannel, refresh: bool) -> tuple[list[ClassifiedMovement], list[str], list[dict[str, str]]]:
         classified: list[ClassifiedMovement] = []

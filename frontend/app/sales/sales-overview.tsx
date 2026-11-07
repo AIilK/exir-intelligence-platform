@@ -9,8 +9,7 @@ import { ChartCard, DivergingRows, FlowCompare, MonthBars, PALETTE, StackBar } f
 import { Stat, jumpTo, peekRows } from "../management/executive-overview";
 import "../management/executive-overview.css";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const FIN = () => `http://${apiHost()}:8000/api/v1/finance`;
+const FIN = () => `/api/v1/finance`;
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number | null | undefined = 0) => nf.format(v || 0);

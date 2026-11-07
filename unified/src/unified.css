@@ -307,7 +307,7 @@ button.u-bucket { background: none; font: inherit; text-align: right; cursor: po
 .fin-scope.fin-embedded main.fd { display: block !important; padding-right: 0 !important; margin-right: 0 !important; grid-template-columns: none !important; }
 .fin-scope.fin-embedded .fd-content,
 .fin-scope.fin-embedded .content { margin-right: 0 !important; max-width: none !important; }
-/* finance «خلاصه مدیریتی»: the agent reports moved to the manager page (FinanceAgents.jsx) */
+/* finance «خلاصه مدیریتی»: old per-module agent report cards stay hidden (per-module agents were removed) */
 .fin-scope.fin-embedded[data-view="management"] .pa-card,
 .fin-scope.fin-embedded[data-view="management"] .executive-report-v109 { display: none !important; }
 /* finance agent components rendered inline on the manager page */
@@ -475,3 +475,23 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
 .xr-team li small { color: var(--u-muted); margin-inline-start: 8px; white-space: nowrap; }
 .xr-team p { margin: 8px 0 0; color: var(--u-muted); }
 .xr-team p b { color: var(--u-text); }
+
+/* صفحه‌ای که هنوز فایلش دانلود نشده (React.lazy در main.jsx) */
+.u-page-loading { padding: 48px 24px; text-align: center; opacity: .6; font-size: 14px; }
+
+/* گزارش هفتگی ریسک هیبریدها (hybridRisk.jsx) */
+.u-reasons { margin: 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--u-text); font-size: 13px; line-height: 1.8; }
+.u-list-row.u-risk-row { grid-template-columns: minmax(110px, 1fr) minmax(120px, 1.4fr) auto minmax(0, 2.6fr); }
+.u-risk-row > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--u-text-2); }
+
+/* تحلیل هوشمند پرونده (aiAnalysis.jsx) */
+.u-ai-headline { margin: 4px 0 8px; font-size: 15px; line-height: 1.8; color: var(--u-text); }
+.u-ai-text { margin: 0 0 8px; font-size: 13px; line-height: 2; color: var(--u-text); }
+.u-ai-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.u-ai-list b { display: block; font-size: 13px; margin-bottom: 6px; }
+.u-ai-list b.good { color: var(--u-good-t); } .u-ai-list b.bad { color: var(--u-bad-t); }
+.u-ai-list ul { margin: 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.9; color: var(--u-text); }
+.u-ai-table-wrap { overflow-x: auto; }
+.u-ai-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.u-ai-table th, .u-ai-table td { padding: 6px 8px; text-align: center; border-bottom: 1px solid var(--u-surface-3); white-space: nowrap; }
+.u-ai-table th { color: var(--u-text-2); font-weight: 600; } .u-ai-table td.bad { color: var(--u-bad-t); }

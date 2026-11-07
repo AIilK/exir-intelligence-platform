@@ -2,15 +2,16 @@ import { useMemo } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { sendChatLink } from '@finance/chatbot/chat-link.ts'
 import { useJson, qs, mt, n0, pct, signedPct, isNum, faDigits, moneyText, monthName } from '../data.js'
-import { LEVEL } from '../model.js'
 import { Card, Pending, Bar, Kpi, Money, PairBars, Mt } from '../ui.jsx'
-import { PORTFOLIO_URL, finFacts, repLevel, RISK_FA, riskCls } from '../rahkaran.js'
+import { PORTFOLIO_URL, finFacts, repRisk, REP_RISK } from '../rahkaran.js'
+import { useAiAnalysis, AiAnalysisPanel } from '../aiAnalysis.jsx'
 
 const TABS = [
   { id: 'overview', label: 'نمای کلی', tone: 'text' },
   { id: 'sales', label: 'فروش', tone: 'sales' },
   { id: 'cheques', label: 'چک‌های باز', tone: 'fin' },
   { id: 'invoices', label: 'فاکتورها و وصول', tone: 'fin' },
+  { id: 'ai', label: 'تحلیل هوشمند', tone: 'sales' },
 ]
 
 const daysText = (d) => (!isNum(d) ? '—' : d < 0 ? `${n0(-d)} روز گذشته` : d === 0 ? 'امروز' : `${n0(d)} روز مانده`)
@@ -34,6 +35,7 @@ export default function RahkaranFile() {
   const ref = f?.ref
   const file = useJson(ref ? `/api/v1/finance/customer-file/rahkaran/${ref}` : null)
   const cheques = useJson(ref ? `/api/v1/liquidity/received-cheques/customers/rahkaran/${ref}` : null)
+  const ai = useAiAnalysis('rep', tab === 'ai' ? code : null)
 
   const c = sales.data?.customer
   const k = sales.data?.kpis
@@ -41,7 +43,7 @@ export default function RahkaranFile() {
   const yl = today ? faDigits(today.slice(0, 4)) : 'امسال'
   const pyl = today ? faDigits(Number(today.slice(0, 4)) - 1) : 'پارسال'
   const periodLabel = period === 'YTD' ? `${yl} تا امروز` : monthName(period)
-  const level = f ? repLevel(f) : null
+  const risk = f ? repRisk(f, today) : null
   const finMissing = portfolio.data && !finRow
 
   // open the same customer inside the original dashboards
@@ -65,8 +67,7 @@ export default function RahkaranFile() {
             <div>
               <div className="u-row-gap">
                 <h1>{name}</h1>
-                {f && <span className={`u-pill ${LEVEL[level].cls}`}>{LEVEL[level].label}</span>}
-                {f?.risk && <span className={`u-pill ${riskCls(f.risk)}`}>{RISK_FA[f.risk]}</span>}
+                {risk && <span className={`u-pill ${REP_RISK[risk.level].cls}`} title={risk.reasons.join('\n') || 'سررسیدگذشته و برگشتی قابل‌توجهی نسبت به فروش ندارد'}>{REP_RISK[risk.level].label}</span>}
               </div>
               <small>
                 کد {faDigits(code)}{c ? ` · برند ${c.brand || '—'} · ${c.city || '—'}، ${c.province || '—'}` : ''}
@@ -127,6 +128,7 @@ export default function RahkaranFile() {
       {tab === 'sales' && <SalesTab sales={sales} periodLabel={periodLabel} f={f} go={go} openSales={openSales} />}
       {tab === 'cheques' && <ChequesCard cheques={cheques} ref_={ref} finMissing={finMissing} portfolio={portfolio} nav={nav} />}
       {tab === 'invoices' && <InvoicesCard file={file} finMissing={finMissing} portfolio={portfolio} open />}
+      {tab === 'ai' && <AiAnalysisPanel ai={ai} subject={name} />}
     </div>
   )
 }

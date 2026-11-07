@@ -35,6 +35,7 @@ from app.services.customer_file_service import (
     karamad_invoice_settlements,
 )
 from app.utils.jalali import format_jalali_date
+from app.utils.swr_cache import swr_get
 
 OPEN_CHEQUE_STATUSES = (1, 2, 3, 6, 7, 10)
 COLLECTED_CHEQUE_STATUS = 4
@@ -84,7 +85,7 @@ def _left_sql(alias: str, invoice_column: str) -> str:
 SUPERVISOR_LEFT = _left_sql("s", "SupervisorRef")
 VISITOR_LEFT = _left_sql("v", "VisitorRef")
 
-_ledger_cache: dict[str, Any] = {"at": 0.0, "data": None}
+_ledger_cache: dict[str, tuple[float, dict[int, dict[str, Any]]]] = {}
 _ledger_lock = threading.Lock()
 _file_cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
 _file_lock = threading.Lock()
@@ -106,12 +107,10 @@ def _as_date(value: Any) -> date | None:
 
 def ledger_positions() -> dict[int, dict[str, Any]]:
     """All customer ledger balances (one ~14s query), cached for 10 minutes."""
-    with _ledger_lock:
-        if _ledger_cache["data"] is None or time.time() - _ledger_cache["at"] > LEDGER_CACHE_SECONDS:
-            from app.services.karamad_customer_account_service import KaramadCustomerAccountService
-            _ledger_cache["data"] = KaramadCustomerAccountService().bulk_account_positions()
-            _ledger_cache["at"] = time.time()
-        return _ledger_cache["data"]
+    def load():
+        from app.services.karamad_customer_account_service import KaramadCustomerAccountService
+        return KaramadCustomerAccountService().bulk_account_positions()
+    return swr_get(_ledger_cache, _ledger_lock, "positions", LEDGER_CACHE_SECONDS, load)
 
 
 def _debt(dl_refs: list[int], positions: dict[int, dict[str, Any]]) -> dict[str, Any]:
@@ -264,15 +263,8 @@ class KaramadSalesNetworkService:
 
     @staticmethod
     def _cached(key: tuple[str, int], build) -> dict[str, Any]:
-        with _file_lock:
-            hit = _file_cache.get(key)
-            if hit and time.time() - hit[0] < FILE_CACHE_SECONDS:
-                return hit[1]
-        result = build()
-        if result.get("status") == "success":
-            with _file_lock:
-                _file_cache[key] = (time.time(), result)
-        return result
+        return swr_get(_file_cache, _file_lock, key, FILE_CACHE_SECONDS, build,
+                       keep=lambda result: result.get("status") == "success")
 
     @staticmethod
     def _fiscal_years(connection) -> dict[str, Any]:

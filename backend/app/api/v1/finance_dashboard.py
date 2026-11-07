@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
-
-from app.services.finance_dashboard_service import FinanceDashboardService
 
 
 router = APIRouter(prefix="/finance", tags=["finance-intelligence"])
@@ -23,8 +21,8 @@ def _refresh_finance_agents_after_karamad_import(result: dict) -> dict:
     The response tells the UI whether the new report was generated or still needs a retry.
     """
     try:
-        from app.services.finance_operations_service import FinanceAgentOrchestrator
-        refreshed = FinanceAgentOrchestrator().run_all(trigger="karamad_snapshot_update")
+        from app.services.page_agent_orchestrator import PageAgentOrchestrator
+        refreshed = PageAgentOrchestrator().run_all(trigger="karamad_snapshot_update")
         result["agent_refresh"] = {
             "status": "success",
             "report_id": refreshed.get("report_id"),
@@ -38,79 +36,6 @@ def _refresh_finance_agents_after_karamad_import(result: dict) -> dict:
             "error": f"{type(exc).__name__}: {str(exc)[:240]}",
         }
     return result
-
-
-@router.post("/cashflow-excel/upload", summary="بارگذاری روزانه Cash Flow و تحلیل خودکار ماه شمسی")
-async def upload_daily_cashflow_excel(file: UploadFile = File(...)):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    filename = Path(file.filename or "").name
-    if not filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=422, detail="فقط فایل Excel با پسوند xlsx مجاز است.")
-    temporary: Path | None = None
-    try:
-        content = await file.read()
-        if len(content) > 25 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="حجم فایل نباید بیشتر از ۲۵ مگابایت باشد.")
-        with NamedTemporaryFile(delete=False, suffix=".xlsx") as handle:
-            handle.write(content)
-            temporary = Path(handle.name)
-        return MonthlyCashflowExcelService().save_upload(temporary, filename)
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"پردازش فایل Cash Flow با خطا مواجه شد: {exc}") from exc
-    finally:
-        if temporary and temporary.exists():
-            temporary.unlink()
-
-
-@router.get("/cashflow-excel/months", summary="ماه‌های دارای فایل Cash Flow")
-def cashflow_excel_months():
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    return {"status": "success", "months": MonthlyCashflowExcelService().months()}
-
-
-@router.get("/cashflow-excel/folder/status", summary="وضعیت پوشه خودکار Cash Flow")
-def cashflow_excel_folder_status():
-    from app.services.cashflow_folder_import_service import CashflowFolderImportService
-    return CashflowFolderImportService().status()
-
-
-@router.post("/cashflow-excel/folder/scan", summary="بررسی فوری پوشه خودکار Cash Flow")
-def cashflow_excel_folder_scan():
-    from app.services.cashflow_folder_import_service import CashflowFolderImportService
-    try:
-        return CashflowFolderImportService().scan()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"بررسی پوشه Cash Flow با خطا مواجه شد: {exc}") from exc
-
-
-@router.get("/cashflow-excel/analysis", summary="تحلیل Cash Flow از ابتدای ماه شمسی انتخاب‌شده")
-def cashflow_excel_analysis(
-    jalali_year: int = Query(..., ge=1300, le=1500),
-    jalali_month: int = Query(..., ge=1, le=12),
-):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    return MonthlyCashflowExcelService().analyze(jalali_year, jalali_month)
-
-@router.get("/cashflow-excel/files/{jalali_year}/{jalali_month}/{stored_file}/preview", summary="نمایش شیت‌های فایل Cash Flow")
-def cashflow_excel_preview(jalali_year: int, jalali_month: int, stored_file: str):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    try:
-        return MonthlyCashflowExcelService().workbook_preview(jalali_year, jalali_month, stored_file)
-    except (ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-@router.get("/cashflow-excel/files/{jalali_year}/{jalali_month}/{stored_file}/download", summary="دانلود فایل اصلی Cash Flow")
-def cashflow_excel_download(jalali_year: int, jalali_month: int, stored_file: str):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    try:
-        path = MonthlyCashflowExcelService().stored_workbook(jalali_year, jalali_month, stored_file)
-        return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=stored_file.split("__", 1)[-1])
-    except (ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/karamad-payment-transfers/upload", summary="ورود حواله‌های پرداختی کارآمد از Excel")
@@ -234,8 +159,6 @@ async def replace_karamad_received_cheques(file: UploadFile = File(...)):
             temporary.unlink()
 
 
-
-
 @router.post("/karamad-manual/issued-cheques/replace", summary="جایگزینی چک‌های پرداختی ثبت‌شده کارآمد")
 async def replace_karamad_issued_cheques(file: UploadFile = File(...)):
     from app.services.karamad_manual_import_service import KaramadManualImportService
@@ -327,20 +250,6 @@ def customer_automation_latest():
     if payload is None:
         return {"status": "empty", "message": "هنوز اجرای موفق ذخیره‌شده‌ای وجود ندارد."}
     return payload
-
-@router.get("/customer-agent/status", summary="وضعیت Customer Behavior Agent")
-def customer_agent_status():
-    from app.core.config import settings
-    from app.services.customer_automation_service import CustomerAutomationStore
-    latest = CustomerAutomationStore().recent_runs(limit=1)
-    return {
-        "status": "ready" if settings.customer_behavior_agent_enabled else "disabled",
-        "agent_name": "Customer Behavior Agent",
-        "llm_configured": bool(settings.openai_api_key),
-        "model": settings.customer_behavior_agent_model or settings.openai_model,
-        "fallback_available": True,
-        "last_run": latest[0] if latest else None,
-    }
 
 
 @router.get(
@@ -485,6 +394,39 @@ def customer_file_karamad(dl_refs: str = Query(..., min_length=1, max_length=200
         raise HTTPException(status_code=500, detail=f"دریافت فاکتورهای مشتری از کارآمد با خطا مواجه شد: {exc}") from exc
 
 
+@router.get("/ai-analysis/{kind}/{key}", summary="تحلیل هوشمند پرونده هیبرید یا نماینده راهکاران از روی تاریخچه")
+def ai_file_analysis(kind: str, key: str):
+    from app.services import ai_file_analysis_service as ai
+    if kind not in ai.KINDS:
+        raise HTTPException(status_code=404, detail="نوع پرونده نامعتبر است.")
+    return ai.latest(kind, key)
+
+
+@router.post("/ai-analysis/{kind}/{key}/refresh", summary="تحلیل دوباره یک پرونده (در پس‌زمینه، حدود یک دقیقه)")
+def ai_file_analysis_refresh(kind: str, key: str):
+    from app.services import ai_file_analysis_service as ai
+    if kind not in ai.KINDS:
+        raise HTTPException(status_code=404, detail="نوع پرونده نامعتبر است.")
+    if not ai.enabled():
+        raise HTTPException(status_code=503, detail="تحلیل هوشمند غیرفعال است (کلید OpenAI تنظیم نشده).")
+    return {"status": "building", "started": ai.refresh_one_in_background(kind, key)}
+
+
+@router.get("/sales-network/risk", summary="گزارش هفتگی ریسک هیبریدها: امتیاز، سطح، دلیل و تغییر نسبت به هفته و ماه قبل")
+def hybrid_risk():
+    from app.services import hybrid_risk_service
+
+    return hybrid_risk_service.latest()
+
+
+@router.post("/sales-network/risk/refresh", summary="ساخت دوباره گزارش ریسک هیبریدها (در پس‌زمینه، چند دقیقه)")
+def hybrid_risk_refresh():
+    from app.services import hybrid_risk_service
+
+    started = hybrid_risk_service.build_in_background("manual")
+    return {"status": "building", "started": started}
+
+
 @router.get("/sales-network", summary="شبکه فروش کارآمد: هیبرید من‌ها به تفکیک شعبه")
 def sales_network_overview():
     from app.services.karamad_sales_network_service import KaramadSalesNetworkService
@@ -548,13 +490,21 @@ def distribution_overview():
         raise HTTPException(status_code=500, detail=f"دریافت اطلاعات توزیع بار با خطا مواجه شد: {exc}") from exc
 
 
+# فهرست‌های سنگین گزارش ماه که نمای مدیر لازم ندارد (حدود ۹۰٪ حجم پاسخ)
+DISTRIBUTION_DETAIL_KEYS = ("customers", "undistributed", "collection_control")
+
+
 @router.get("/distribution/monthly", summary="توزیع و وصول فاکتورهای یک ماه هیبریدها (مثل گزارش واحد مالی)")
-def distribution_monthly(year: int, month: int):
+def distribution_monthly(year: int, month: int, view: str = Query("full", pattern="^(full|summary)$")):
+    """view=summary: فقط جمع‌ها، فروش شرکت و ردیف هر هیبرید (برای نمای مدیر)، بدون فهرست مشتریان و فاکتورها."""
     from app.services.karamad_distribution_service import KaramadDistributionService
     if not (1 <= month <= 12):
         raise HTTPException(status_code=400, detail="ماه نامعتبر است.")
     try:
-        return KaramadDistributionService().monthly(year, month)
+        data = KaramadDistributionService().monthly(year, month)
+        if view == "summary":
+            return {k: v for k, v in data.items() if k not in DISTRIBUTION_DETAIL_KEYS}
+        return data
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"دریافت گزارش توزیع و وصول با خطا مواجه شد: {exc}") from exc
 
@@ -783,48 +733,6 @@ def customer_intelligence_detail(
 
 
 @router.get(
-    "/dashboard",
-    summary="داشبورد هوشمند مالی از SQL Server شرکت",
-)
-def finance_dashboard(
-    allowed_term_days: int = Query(default=90, ge=1, le=365),
-    history_days: int = Query(default=365, ge=30, le=730),
-    forecast_days: int = Query(default=30, ge=1, le=180),
-    opening_cash: float | None = Query(
-        default=None,
-        ge=0,
-        description="اختیاری؛ اگر مانده نقد قطعی موجود است برای سناریوی نقدینگی استفاده می‌شود.",
-    ),
-):
-    try:
-        return FinanceDashboardService(
-            allowed_term_days=allowed_term_days,
-            history_days=history_days,
-            forecast_days=forecast_days,
-            opening_cash=opening_cash,
-        ).build_dashboard()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"ساخت داشبورد مالی از SQL Server با خطا مواجه شد: {exc}",
-        ) from exc
-
-
-@router.get(
-    "/dashboard/health",
-    summary="بررسی اتصال منبع SQL داشبورد مالی",
-)
-def finance_dashboard_health():
-    try:
-        return FinanceDashboardService().health()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"SQL Server dashboard source is unavailable: {exc}",
-        ) from exc
-
-
-@router.get(
     "/predictions/customers",
     summary="پیش‌بینی وصول، دیرکرد و ریسک برگشت به تفکیک مشتری",
 )
@@ -908,62 +816,6 @@ def cheque_return_predictions(
 
 
 @router.get(
-    "/predictions/cash-shortage",
-    summary="پیش‌بینی روزانه فشار/کسری نقدینگی",
-)
-def cash_shortage_prediction(
-    history_days: int = Query(default=365, ge=30, le=730),
-    forecast_days: int = Query(default=30, ge=1, le=180),
-    opening_cash: float | None = Query(default=None, ge=0),
-):
-    from app.services.finance_prediction_service import FinancePredictionService
-
-    try:
-        return FinancePredictionService(
-            history_days=history_days,
-            forecast_days=forecast_days,
-            opening_cash=opening_cash,
-        ).cash_shortage_forecast()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"پیش‌بینی کسری نقدینگی با خطا مواجه شد: {exc}",
-        ) from exc
-
-
-@router.get(
-    "/cashflow/unified",
-    summary="Cash Flow واحد: موجودی Excel و خط زمان SQL",
-)
-def unified_cashflow(
-    history_days: int = Query(default=365, ge=30, le=730),
-    forecast_days: int = Query(default=30, ge=7, le=180),
-    allowed_term_days: int = Query(default=90, ge=1, le=365),
-):
-    from app.services.unified_cashflow_service import UnifiedDailyCashflowService
-    try:
-        return UnifiedDailyCashflowService(
-            history_days=history_days,
-            forecast_days=forecast_days,
-            allowed_term_days=allowed_term_days,
-        ).build()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"ساخت Cash Flow واحد با خطا مواجه شد: {exc}",
-        ) from exc
-
-
-@router.get(
-    "/cashflow/history",
-    summary="مقایسه چند ماه Cash Flow واقعی Excel",
-)
-def cashflow_history(months: int = Query(default=6, ge=2, le=24)):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    return MonthlyCashflowExcelService().historical_comparison(months_limit=months)
-
-
-@router.get(
     "/collection-priorities",
     summary="پیشنهاد اولویت وصول مشتریان",
 )
@@ -1032,8 +884,13 @@ def process_health(refresh: bool = Query(default=False, description="دوبار�
 
 
 @router.get("/manager-combined", summary="سهم راهکاران در شاخص‌های نمای مدیر (فروش ماه و مطالبات) برای جمع با کارآمد")
-def manager_combined(year: int, month: int = Query(ge=1, le=12)):
-    from app.services import manager_combined_service
+def manager_combined(request: Request, year: int, month: int = Query(ge=1, le=12)):
+    from app.auth.guard import INTERNAL_HEADER
+    from app.services import manager_combined_service, manager_view_warmer
+
+    # فقط نمای مدیر این آدرس را می‌خواند: یعنی کسی صفحه را باز کرده و داده‌اش باید گرم بماند
+    if not request.headers.get(INTERNAL_HEADER):
+        manager_view_warmer.touch()
 
     return manager_combined_service.overview(year, month)
 

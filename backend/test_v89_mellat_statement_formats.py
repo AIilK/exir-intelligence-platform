@@ -22,8 +22,9 @@ def test_mellat_html_export_is_parsed_without_header_row_input():
 
 def test_reconciliation_accepts_pdf_extension_before_parsing(monkeypatch):
     from app.services import bank_reconciliation_service as service
+    from app.services import bank_statement_parser as parser  # parse_bank_statement و خواننده PDF اینجا هستند
     expected = [["تاریخ", "واریز", "برداشت"], ["1405/01/01", "1", "0"]]
-    monkeypatch.setattr(service, '_read_pdf_statement', lambda _content: expected)
+    monkeypatch.setattr(parser, '_read_pdf_statement', lambda _content: expected)
     rows, _meta = service.parse_bank_statement(content=b'%PDF-fake', filename='mellat.pdf')
     assert len(rows) == 1
     assert rows[0]['direction'] == 'deposit'

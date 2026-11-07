@@ -19,8 +19,7 @@ export type MyStatus = "open" | "seen" | "done" | "dismissed";
 /** الارم‌هایی که هنوز برای همین کاربر باز است (نه انجام‌شده، نه نادیده) */
 const pending = (a: Alarm) => a.my_status === "open" || a.my_status === "seen";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const API = () => `http://${apiHost()}:8000/api/v1/alarms`;
+const API = () => `/api/v1/alarms`;
 const POLL_MS = 60_000;
 export const LEVEL_FA: Record<Level, string> = { critical: "فوری", high: "مهم", medium: "قابل توجه", info: "اطلاع" };
 const LEVEL_ICON: Record<Level, string> = { critical: "⚠", high: "◆", medium: "●", info: "ℹ" };
@@ -69,7 +68,8 @@ export function startAlarms(userKey: string) {
   snapshot = { alarms: [], loaded: false, fresh: [] };
   void refreshAlarms();
   if (timer) window.clearInterval(timer);
-  timer = window.setInterval(() => void refreshAlarms(), POLL_MS);
+  // تب پنهان درخواست نمی‌فرستد (بار سرور با تعداد تب‌های باز زیاد نشود)
+  timer = window.setInterval(() => { if (!document.hidden) void refreshAlarms(); }, POLL_MS);
 }
 export function stopAlarms() {
   if (timer) window.clearInterval(timer);

@@ -13,7 +13,7 @@ from app.auth.modules import MODULES, alarm_agents, alarm_module
 router = APIRouter(prefix="/alarms", tags=["alarms"])
 LEVELS = ("critical", "high", "medium", "info")
 # کاربرانی که الارم برایشان نمایش داده نمی‌شود (تصمیم مدیریت ۱۴۰۵/۰۸)
-ALARMS_HIDDEN_USERS = {"mralizade", "mrsalizade"}
+ALARMS_HIDDEN_USERS = {"mralizade", "mrsalizade", "mrnaseralizade"}
 
 
 def alarms_hidden(user: dict[str, Any]) -> bool:

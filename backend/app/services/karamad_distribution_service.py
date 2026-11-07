@@ -28,11 +28,11 @@ from sqlalchemy import text
 from app.services.customer_file_service import MIN_LAST_INVOICE_AMOUNT_RIAL
 from app.services.karamad_sales_network_service import KaramadSalesNetworkService, _as_date, _num, _text
 from app.utils.jalali import format_jalali_date
+from app.utils.swr_cache import swr_get
 
 CACHE_SECONDS = 300
-_cache: dict[str, Any] = {"at": 0.0, "data": None}
 _lock = threading.Lock()
-_month_cache: dict[tuple[int, int], tuple[float, dict[str, Any]]] = {}
+_month_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}  # گزارش ماه، خط زمانی و نمای کلی
 
 JALALI_MONTHS = ("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
 
@@ -82,13 +82,7 @@ class KaramadDistributionService:
         return self._engine
 
     def overview(self) -> dict[str, Any]:
-        with _lock:
-            if _cache["data"] is not None and time.time() - _cache["at"] < CACHE_SECONDS:
-                return _cache["data"]
-        data = self._overview()
-        with _lock:
-            _cache.update(at=time.time(), data=data)
-        return data
+        return swr_get(_month_cache, _lock, ("overview",), CACHE_SECONDS, self._overview)
 
     # ------------------------------------------------------------- monthly report
     def monthly(self, year: int, month: int) -> dict[str, Any]:
@@ -105,14 +99,7 @@ class KaramadDistributionService:
         Only branches named «هیبرید…», as in the report.
         """
         key = (int(year), int(month))
-        with _lock:
-            hit = _month_cache.get(key)
-            if hit and time.time() - hit[0] < CACHE_SECONDS:
-                return hit[1]
-        data = self._monthly(*key)
-        with _lock:
-            _month_cache[key] = (time.time(), data)
-        return data
+        return swr_get(_month_cache, _lock, key, CACHE_SECONDS, lambda: self._monthly(*key))
 
     def _monthly(self, year: int, month: int) -> dict[str, Any]:
         from app.services.karamad_customer_account_service import LEDGER_READ_ISOLATION
@@ -302,14 +289,7 @@ class KaramadDistributionService:
             start, end = date.today() - timedelta(days=safe_days), None
             key = ("timeline", safe_days)
             label = None
-        with _lock:
-            hit = _month_cache.get(key)
-            if hit and time.time() - hit[0] < CACHE_SECONDS:
-                return hit[1]
-        data = self._timeline(safe_days, start, end, label)
-        with _lock:
-            _month_cache[key] = (time.time(), data)
-        return data
+        return swr_get(_month_cache, _lock, key, CACHE_SECONDS, lambda: self._timeline(safe_days, start, end, label))
 
     def _timeline(self, days: int, start: date, end: date | None = None, label: str | None = None) -> dict[str, Any]:
         from datetime import datetime, timedelta

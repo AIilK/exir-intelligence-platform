@@ -39,16 +39,12 @@ const GROUPS = [
       { to: '/finance/cashBank', label: 'نقد و حواله', icon: '⇄' },
       { to: '/finance/companyPayments', label: 'حواله‌های پرداختی شرکت', icon: '↗' },
       { to: '/finance/payables', label: 'پرداخت تجاری', icon: '◧' },
-      { to: '/finance/b2bRemittances', label: 'حواله‌های مشتریان B2B', icon: '⇢' },
       { to: '/finance/liquidity', label: 'نقدینگی', icon: '₪' },
-      { to: '/finance/cashflow', label: 'پیش‌بینی نقدینگی', icon: '⌁' },
       { to: '/finance/inventoryPricing', label: 'قیمت‌گذاری انبار', icon: '▦' },
       { to: '/finance/purchaseDocs', label: 'اسناد خرید', icon: '▤' },
       { to: '/finance/pnl', label: 'سود و زیان (P&L)', icon: '∑' },
-      { to: '/finance/monthlyExcel', label: 'Cash Flow روزانه', icon: '▥' },
       { to: '/finance/collections', label: 'مرکز عملیات وصول', icon: '✓' },
       { to: '/finance/distribution', label: 'توزیع بار', icon: '⛟' },
-      { to: '/finance/simulator', label: 'سناریوساز نقدینگی', icon: '◫' },
       { to: '/reconciliation', label: 'مغایرت‌گیری بانک', icon: '⚖' },
     ],
   },
@@ -151,10 +147,12 @@ function ShellPet() {
 function useSalesLive() {
   const [live, setLive] = useState(null)
   useEffect(() => {
-    const check = () => fetchJson('/api/stamp').then((s) => setLive(!!s.live)).catch(() => setLive(false))
+    // تب پنهان نمی‌پرسد؛ پس اگر هیچ تب بازی نباشد، بک‌اند فروش بررسی‌های لایو SQL را متوقف می‌کند (viewers_idle)
+    const check = () => { if (!document.hidden) fetchJson('/api/stamp').then((s) => setLive(!!s.live)).catch(() => setLive(false)) }
     check()
     const id = setInterval(check, 10000)
-    return () => clearInterval(id)
+    document.addEventListener('visibilitychange', check)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', check) }
   }, [])
   return live
 }

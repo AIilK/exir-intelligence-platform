@@ -6,8 +6,8 @@ Reads directly from dbo.tblChequeD (and its lookup tables) instead of the
 manual Excel snapshot. Output shape matches
 KaramadManualImportService.cheque_rows("received_cheques") field-for-field,
 so the frontend and every downstream service that already consumes that
-shape (treasury_service._karamad_cheques, finance_prediction_service,
-unified_cashflow_service, ...) work unchanged.
+shape (treasury_service._karamad_cheques, finance_prediction_service, ...)
+work unchanged.
 
 Every join below was confirmed against three real rows (شناسه 36540, 38709,
 41775) pulled from the same Excel export the person uses today:

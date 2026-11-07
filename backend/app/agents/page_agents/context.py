@@ -103,35 +103,10 @@ class AgentRunContext:
         from app.services.treasury_service import get_cheque_state_quality
         return self._get("cheque_quality", get_cheque_state_quality)
 
-    # ------------------------------------------------------------ cashflow
-    def excel_service(self):
-        from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-        return self._get("excel_service", MonthlyCashflowExcelService)
-
-    def excel_latest(self) -> dict[str, Any] | None:
-        return self._get("excel_latest", lambda: self.excel_service().latest_snapshot())
-
-    def excel_monthly(self) -> dict[str, Any] | None:
-        def build():
-            months = self.excel_service().months()
-            if not months:
-                return None
-            latest = months[0]
-            return self.excel_service().analyze(latest["jalali_year"], latest["jalali_month"])
-        return self._get("excel_monthly", build)
-
-    def opening_cash(self) -> float | None:
-        latest = self.excel_latest()
-        return float(latest.get("liquidity_rial") or 0) if latest else None
-
-    def cash(self) -> dict[str, Any]:
-        from app.services.unified_cashflow_service import UnifiedDailyCashflowService
-        return self._get("cash", lambda: UnifiedDailyCashflowService(allowed_term_days=self.allowed_term_days()).build())
-
     def prediction_service(self):
         from app.services.finance_prediction_service import FinancePredictionService
         return self._get("prediction_service", lambda: FinancePredictionService(
-            allowed_term_days=self.allowed_term_days(), opening_cash=self.opening_cash()))
+            allowed_term_days=self.allowed_term_days()))
 
     def cheque_predictions(self) -> dict[str, Any]:
         """Return-risk prediction of every open received cheque (dashboard cheque list reads it)."""
@@ -189,18 +164,6 @@ class AgentRunContext:
             karamad = get_company_payment_orders_karamad(limit=20000, since=since)["rows"]
             return rahkaran + karamad
         return self._get("company_payments", build)
-
-    def b2b(self) -> list[dict[str, Any]]:
-        def build():
-            from app.services.treasury_service import (
-                get_customer_b2b_remittances, get_customer_b2b_remittances_karamad)
-            rows = list(get_customer_b2b_remittances(limit=20000).get("rows") or [])
-            try:
-                rows += get_customer_b2b_remittances_karamad(limit=20000).get("rows") or []
-            except Exception:  # noqa: BLE001 — Rahkaran alone is still a valid report
-                pass
-            return rows
-        return self._get("b2b", build)
 
     # --------------------------------------------------------- distribution
     def distribution_overview(self) -> dict[str, Any]:

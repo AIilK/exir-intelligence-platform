@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -37,10 +38,12 @@ CONFIG = ROOT / "config.json"
 ENV_FILE = ROOT / ".env"
 DIST = ROOT / "frontend" / "dist"
 DEFAULT_SQL = {"branch_like": "هیبرید", "refresh_minutes": 30, "history_months": 12, "history_from": "1404/01",
-               "history_refresh_hours": 24, "live_seconds": 5}
+               "history_refresh_hours": 24, "live_seconds": 15}
 DEFAULT_CONFIG = {"wd_elapsed": None, "wd_total": None, "sql": DEFAULT_SQL, "host": "127.0.0.1", "port": 8000}
 
 app = FastAPI(title="Sales Dashboard")
+# پاسخ‌های JSON بزرگ (جدول‌های فروش، ماتریس‌ها) فشرده روی شبکه می‌روند
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # ورود و سطح دسترسی ماژول‌ها: همان کاربران بک‌اند مالی (exir_auth.py)
 import exir_auth  # noqa: E402
@@ -115,6 +118,17 @@ def sql_worker():
             time.sleep(15)
 
 
+# لایو فقط وقتی کسی داشبورد را باز دارد: هر صفحه باز هر چند ثانیه /api/stamp را می‌خواند. اگر ۲ دقیقه هیچ
+# مرورگری نخواند (شب، تعطیلی)، بررسی‌های لایو SQL متوقف می‌شوند؛ با اولین بازدید دوباره، اولین بررسی امضا
+# همه تغییرات این فاصله را می‌گیرد. بروزرسانی دوره‌ای (sql_worker) سر جایش است.
+VIEWER_IDLE_SECONDS = 120
+_last_viewer = [time.time()]
+
+
+def viewers_idle() -> bool:
+    return time.time() - _last_viewer[0] > VIEWER_IDLE_SECONDS
+
+
 def live_worker():
     """لایو: هر live_seconds ثانیه روزهای تغییرکرده را پیدا و فقط همان‌ها را دوباره می‌خواند (sql_source.live_step).
     جدا از sql_worker، تا خواندن چنددقیقه‌ای یک ماه کامل، داده لحظه‌ای را معطل نکند. live_seconds = 0 یعنی خاموش."""
@@ -123,6 +137,9 @@ def live_worker():
         wait = float(cfg.get("live_seconds") or 0)
         if wait <= 0:
             time.sleep(30)
+            continue
+        if viewers_idle():
+            time.sleep(2)
             continue
         try:
             changed = STORE.live_step(cfg)
@@ -156,6 +173,9 @@ def rk_live_worker():
         wait = float(RK.settings(read_config())["live_seconds"] or 0)
         if wait <= 0 or not RK.configured(ENV_FILE):
             time.sleep(30)
+            continue
+        if viewers_idle():
+            time.sleep(2)
             continue
         for src in (FACTORY, RK_SALES, RK_EXPORT, RK_REMIT):
             try:
@@ -297,6 +317,7 @@ def sources():
 
 @app.get("/api/stamp")
 def stamp():
+    _last_viewer[0] = time.time()
     # live: آخرین بررسی لایو تازه و بدون خطا (حداکثر ۳ برابر فاصله بررسی، دست‌کم ۳۰ ثانیه)
     wait = float(sql_cfg(read_config()).get("live_seconds") or 0)
     live = wait > 0 and not STATE.get("live_error") and time.time() - STORE.live_checked <= max(30.0, 3 * wait)

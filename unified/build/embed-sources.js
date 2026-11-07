@@ -1,6 +1,6 @@
 // Vite plugin: small load-time adjustments so the two original dashboards can be
 // mounted inside the unified shell WITHOUT editing their source folders.
-//  - finance: API calls go through this dev server's proxy instead of http://host:8000,
+//  - finance: (API calls are already relative /api/v1 in the source and go through the proxy.)
 //    The root <Page> itself accepts a controlled `view` / `onViewChange` (the unified sidebar picks the page);
 //    here we only check that signature is still there.
 //  - sales: charts always use the dark palette, tuned to the finance navy surfaces.
@@ -19,8 +19,6 @@ function replaceOrThrow(code, file, from, to, { all = false } = {}) {
   }
   return all ? code.split(from).join(to) : code.replace(from, to)
 }
-
-const FIN_ABS_API = /`http:\/\/\$\{[^`}]*\}:8000\/api\/v1/g
 
 // one shared portal host; display: contents (unified.css) so the scope's page background never shows
 const FIN_PORTAL_ROOT = `
@@ -46,10 +44,6 @@ export default function embedSources({ financeApp, salesSrc }) {
       const file = norm(id.split('?')[0])
       if (file.startsWith(fin) && /\.(tsx?|jsx?)$/.test(file)) {
         let out = code
-        if (FIN_ABS_API.test(out)) {
-          FIN_ABS_API.lastIndex = 0
-          out = out.replace(FIN_ABS_API, '`/api/v1')
-        }
         // drawers / peek panels / chatbot portal into document.body, outside .fin-scope where the
         // finance CSS lives; give them a .fin-scope container of their own instead
         if (out.includes(', document.body)') && /\bcreatePortal\b/.test(out)) {
@@ -59,9 +53,6 @@ export default function embedSources({ financeApp, salesSrc }) {
           if (!/export default function Page\(props: \{ view\?: View; onViewChange\?:/.test(out)) {
             throw new Error(`[unified] finance Page no longer accepts { view, onViewChange } in ${id}`)
           }
-          // the manager report is shown on the unified manager page (not on the finance summary)
-          if (!/\nfunction ManagerPanel\(/.test(out)) throw new Error(`[unified] ManagerPanel not found in ${id}`)
-          out += '\nexport { ManagerPanel };\n'
         }
         return out === code ? null : { code: out, map: null }
       }
