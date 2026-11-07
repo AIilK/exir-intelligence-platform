@@ -12,9 +12,8 @@ import { Stat, peekRows } from "./executive-overview";
 import "./executive-overview.css";
 import "./manager-overview.css";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const FIN = () => `http://${apiHost()}:8000/api/v1/finance`;
-const LIQ = () => `http://${apiHost()}:8000/api/v1/liquidity`;
+const FIN = () => `/api/v1/finance`;
+const LIQ = () => `/api/v1/liquidity`;
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number | null | undefined = 0) => nf.format(v || 0);

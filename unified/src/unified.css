@@ -466,3 +466,6 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
 .xr-table tbody tr.on td { background: #2dd4bf1f; }
 .xr-table tfoot td { position: sticky; bottom: 0; background: var(--u-surface-3); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .xr-table-card, .xr-table tbody tr { animation: none; } }
+
+/* صفحه‌ای که هنوز فایلش دانلود نشده (React.lazy در main.jsx) */
+.u-page-loading { padding: 48px 24px; text-align: center; opacity: .6; font-size: 14px; }

@@ -1,43 +1,25 @@
 @echo off
+chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
 echo ============================================
-echo  1) بستن هر سرور قدیمی که روی پورت 8000 (بک‌اند) یا 3000 (فرانت) روشنه
+echo  1) بستن سرورهای قدیمی: 8010 (مالی)، 8000 (فروش)، 5180 (داشبورد یکپارچه)، 3000 (فرانت مالی)
 echo ============================================
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING') do (
-    echo در حال بستن پردازش قدیمی بک‌اند (PID %%p)...
-    taskkill /F /PID %%p >nul 2>&1
-)
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr :3000 ^| findstr LISTENING') do (
-    echo در حال بستن پردازش قدیمی فرانت (PID %%p)...
-    taskkill /F /PID %%p >nul 2>&1
+for %%P in (8010 8000 5180 3000) do (
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr /R /C:":%%P .*LISTENING"') do (
+        echo بستن پردازش قدیمی روی پورت %%P ^(PID %%p^)...
+        taskkill /F /PID %%p >nul 2>&1
+    )
 )
 timeout /t 2 >nul
 
 echo ============================================
-echo  2) ساخت نسخه Production جدید فرانت (کد قدیمی کش‌شده رو دور می‌ریزه)
+echo  2) پاک کردن build قبلی داشبورد (کد قدیمی کش‌شده دور ریخته می‌شود)
 echo ============================================
-cd /d "%~dp0frontend"
-if not exist node_modules npm install
-rmdir /s /q dist 2>nul
-npm run build
-if errorlevel 1 (
-    echo ساخت نسخه Production با خطا مواجه شد. لطفاً پیام بالا رو بفرستید.
-    pause
-    exit /b 1
-)
+rmdir /s /q "%~dp0unified\dist" 2>nul
 
 echo ============================================
-echo  3) روشن کردن بک‌اند (پنجره جدید)
+echo  3) روشن کردن همه سرویس‌ها
 echo ============================================
-cd /d "%~dp0backend"
-start "Exir Backend" cmd /k "if not exist .venv\Scripts\python.exe python -m venv .venv && call .venv\Scripts\activate && python -m pip install -r requirements-v21.txt && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
-
-echo ============================================
-echo  4) روشن کردن فرانت Production (همین پنجره)
-echo ============================================
-cd /d "%~dp0frontend"
-npm run start -- --host 0.0.0.0
-
-pause
+call "%~dp0unified\RUN_UNIFIED.bat"

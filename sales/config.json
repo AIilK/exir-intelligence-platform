@@ -7,7 +7,7 @@
     "history_months": 12,
     "history_from": "1404/01",
     "history_refresh_hours": 24,
-    "live_seconds": 5
+    "live_seconds": 15
   },
   "host": "0.0.0.0",
   "port": 8000,

@@ -17,7 +17,7 @@ echo http://%COMPUTERNAME%:3000/reconciliation
 if defined EXIR_LAN_IP echo http://%EXIR_LAN_IP%:3000/reconciliation
 echo.
 echo فقط آدرس بالا را به اپراتور مغایرت‌گیری بدهید.
-echo Backend از طریق Proxy داخلی فرانت فراخوانی می‌شود و پورت 8000 نیاز به اشتراک‌گذاری ندارد.
+echo Backend (پورت 8010) از طریق Proxy داخلی فرانت فراخوانی می‌شود و نیاز به اشتراک‌گذاری ندارد.
 echo.
 
 start "Exir Finance Backend" "%ComSpec%" /k call "%~dp0RUN_BACKEND.bat"

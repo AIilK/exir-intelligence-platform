@@ -160,6 +160,18 @@ def index() -> dict[str, dict]:
         return built
 
 
+def peek_index() -> dict[str, dict] | None:
+    """مثل index() ولی هرگز منتظر نمی‌ماند: اگر نمایه هنوز ساخته نشده None برمی‌گرداند و ساختش را در پس‌زمینه شروع می‌کند.
+    برای مسیر پاسخ‌دهی HTTP که نباید چند ثانیه منتظر کوئری‌های راهکاران/کارآمد بماند."""
+    with _lock:
+        data, at = _index["data"], _index["at"]
+    if data is not None and time.time() - at < CACHE_SECONDS:
+        return data
+    if _building.acquire(blocking=False):
+        threading.Thread(target=_refresh, daemon=True).start()
+    return data
+
+
 def _refresh() -> None:
     try:
         built = _build()
@@ -216,8 +228,9 @@ def _is_cheque(row: dict) -> bool:
             and "registered_by" not in row)
 
 
-def annotate(payload: Any) -> int:
-    """همه ردیف‌های چک داخل payload را در جا کامل می‌کند؛ تعداد ردیف‌های کامل‌شده را برمی‌گرداند."""
+def annotate(payload: Any, wait: bool = True) -> int:
+    """همه ردیف‌های چک داخل payload را در جا کامل می‌کند؛ تعداد ردیف‌های کامل‌شده را برمی‌گرداند.
+    wait=False: اگر نمایه هنوز آماده نیست، ردیف‌ها دست‌نخورده می‌مانند (درخواست منتظر ساخت نمایه نمی‌ماند)."""
     idx = None
     count = 0
     stack = [payload]
@@ -225,7 +238,10 @@ def annotate(payload: Any) -> int:
         node = stack.pop()
         if isinstance(node, dict):
             if _is_cheque(node):
-                idx = idx or index()
+                if idx is None:
+                    idx = index() if wait else peek_index()
+                    if idx is None:
+                        return 0
                 hit = lookup(node, idx)
                 node.update(hit or {"registered_at": None, "registered_at_jalali": None, "registered_by": None})
                 count += 1 if hit else 0

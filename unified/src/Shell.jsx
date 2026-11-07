@@ -151,10 +151,12 @@ function ShellPet() {
 function useSalesLive() {
   const [live, setLive] = useState(null)
   useEffect(() => {
-    const check = () => fetchJson('/api/stamp').then((s) => setLive(!!s.live)).catch(() => setLive(false))
+    // تب پنهان نمی‌پرسد؛ پس اگر هیچ تب بازی نباشد، بک‌اند فروش بررسی‌های لایو SQL را متوقف می‌کند (viewers_idle)
+    const check = () => { if (!document.hidden) fetchJson('/api/stamp').then((s) => setLive(!!s.live)).catch(() => setLive(false)) }
     check()
     const id = setInterval(check, 10000)
-    return () => clearInterval(id)
+    document.addEventListener('visibilitychange', check)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', check) }
   }, [])
   return live
 }

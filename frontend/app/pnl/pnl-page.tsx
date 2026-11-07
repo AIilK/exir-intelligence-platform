@@ -22,8 +22,7 @@ type Period = { key: string; label: string; from: string; to: string; complete: 
 type Source = "live" | "excel";
 type Unit = "mrial" | "btoman";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const API = () => `http://${apiHost()}:8000/api/v1/finance/pnl`;
+const API = () => `/api/v1/finance/pnl`;
 const CHANNELS = [["all", "تجمیعی"], ["hybrid", "هیبرید"], ["b2b", "B2B"], ["export", "صادرات"]] as const;
 type ChannelKey = (typeof CHANNELS)[number][0];
 const nf0 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });

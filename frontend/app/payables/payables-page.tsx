@@ -5,8 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { flashChatTarget, useChatLink } from "../chatbot/chat-link";
 import "./payables.css";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const API = () => `http://${apiHost()}:8000/api/v1/finance`;
+const API = () => `/api/v1/finance`;
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const fa = (v: number | null | undefined = 0) => nf.format(v || 0);
 const toman = (rial: number | null | undefined) => nf.format(Math.round(Number(rial || 0) / 10));

@@ -18,7 +18,6 @@ type Detail = {
 };
 type SortKey = "amount" | "days" | "customer" | "due";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number | null | undefined) => nf.format(v || 0);
@@ -51,7 +50,7 @@ export default function ChequeStatusDrawer({ kind, onClose, onOpenPage, initial 
     setSort({ key: initial?.sort || "amount", desc: initial?.sort !== "customer" });
     if (data[kind]) return;
     let active = true;
-    fetch(`http://${apiHost()}:8000/api/v1/liquidity/received-cheques/status/${kind}`)
+    fetch(`/api/v1/liquidity/received-cheques/status/${kind}`)
       .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw Error(j.detail || `خطای ${r.status}`); return j; })
       .then((j) => setData((d) => ({ ...d, [kind]: j })))
       .catch((e) => active && setError(e instanceof Error ? e.message : "خطا"));

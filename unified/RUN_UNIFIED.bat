@@ -23,7 +23,7 @@ echo Starting finance backend...
 start "Finance API" /min /d "%FINANCE_BACKEND%" cmd /k python -m uvicorn app.main:app --host 127.0.0.1 --port 8010
 :finance_done
 
-rem ---- unified dashboard (port 5180): production build, much faster to open than the dev server
+rem ---- unified dashboard (port 5180): production build served by server.mjs (compressed, cached), not the dev server
 if exist node_modules goto :installed
 echo Installing frontend packages...
 call npm install --no-audit --no-fund
@@ -54,7 +54,7 @@ set /a WAITED+=3
 goto :wait_api
 :api_up
 start "" http://localhost:5180
-call npx vite preview
+node server.mjs
 goto :eof
 
 :err

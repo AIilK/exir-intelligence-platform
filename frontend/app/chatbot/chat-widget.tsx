@@ -9,8 +9,7 @@ import ChequeStatusDrawer, { type ChequeStatusInitial, type ChequeStatusKind } f
 import { sendChatLink } from "./chat-link";
 import "./chatbot.css";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
-const API = () => `http://${apiHost()}:8000/api/v1/chatbot`;
+const API = () => `/api/v1/chatbot`;
 
 type Show = { panel: ChequeStatusKind } & ChequeStatusInitial;
 type Link = { view: string; source?: "rahkaran" | "karamad"; search?: string; ref?: string; tab?: string; year?: number; month?: number; label?: string };

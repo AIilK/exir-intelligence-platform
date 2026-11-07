@@ -25,7 +25,7 @@ type SeriesPoint = { at: string; value: number | null };
 type AgentDetail = { latest: AgentRun | null; series: Record<string, SeriesPoint[]>; history: unknown[]; name: string; page: string };
 type CatalogEntry = { agent_key: string; page: string; name: string; role: string; view?: string | null; latest?: AgentRun | null };
 
-const API = () => `http://${typeof window !== "undefined" ? window.location.hostname : "127.0.0.1"}:8000/api/v1/finance`;
+const API = () => `/api/v1/finance`;
 async function api(path: string, options?: RequestInit) {
   const r = await fetch(`${API()}${path}`, options);
   const j = await r.json().catch(() => ({}));

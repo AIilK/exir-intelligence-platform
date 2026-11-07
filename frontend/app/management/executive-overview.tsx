@@ -10,7 +10,6 @@ import { PeekContext, PeekPanel, usePeek, type Peek } from "./peek-panel";
 import { ChartCard, DivergingRows, FlowCompare, MonthBars, NetWeeks, PALETTE, StackBar } from "./mini-charts";
 import "./executive-overview.css";
 
-const apiHost = () => (typeof window !== "undefined" ? window.location.hostname : "127.0.0.1");
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number | null | undefined = 0) => nf.format(v || 0);
@@ -29,7 +28,7 @@ async function getJson(url: string) {
   if (!r.ok) throw Error(j.detail || `خطای ${r.status}`);
   return j;
 }
-const LIQ = () => `http://${apiHost()}:8000/api/v1/liquidity`;
+const LIQ = () => `/api/v1/liquidity`;
 
 // رنگ‌ها: دسته‌ای ثابت (اعتبارسنجی‌شده روی سطح تیره #0f1d2a): دریافتی/قطعی، پرداختی/اتکا، بدبینانه.
 const C_RECEIVED = "#0d9488", C_ISSUED = "#d97706", C_THIRD = "#8b5cf6";
@@ -284,7 +283,7 @@ function PayablesBlock({ open }: { open: (view: View) => void }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    getJson(`http://${apiHost()}:8000/api/v1/finance/payables`).then(setData).catch((e) => setError(e instanceof Error ? e.message : "خطا"));
+    getJson(`/api/v1/finance/payables`).then(setData).catch((e) => setError(e instanceof Error ? e.message : "خطا"));
   }, []);
   const m = data?.modules;
   const top = useMemo(() => {
@@ -510,7 +509,7 @@ function DistributionBlock({ open }: { open: (view: View) => void }) {
   const [today, setToday] = useState<any>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    const api = `http://${apiHost()}:8000/api/v1/finance`;
+    const api = `/api/v1/finance`;
     getJson(`${api}/distribution/monthly?year=${ym.year}&month=${ym.month}`).then(setMonth).catch((e) => setError(e instanceof Error ? e.message : "خطا"));
     getJson(`${api}/distribution`).then(setToday).catch(() => setToday({}));
   }, [ym.year, ym.month]);
