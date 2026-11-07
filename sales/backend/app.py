@@ -509,11 +509,52 @@ def team(req: Request):
             "supervisors": A.records(sup[[x for x in BASE_COLS if x in sup]])}
 
 
+def _roster_supervisors(month: str, sales: pd.DataFrame) -> dict[str, str]:
+    """seller_key ← سرپرست از «لیست ویزیتور و سرپرست» همان ماه در صفحه پورسانت (ماه بی‌فهرست = فهرست آخرین ماه قبل).
+    ویزیتور با شعبه + کد فروشنده پیدا می‌شود؛ نام سرپرست فهرست به نام همان سرپرست در فاکتورهای شعبه برگردانده می‌شود
+    (مثلاً «سعید عاشورپور» ← «عاشورپور») تا جمع سرپرست یکی شود. ویزیتور بیرون از فهرست یا بی‌سرپرست = سرپرست فاکتور."""
+    listed = {(K.bkey(v.get("branch")), K.norm(v.get("code"))): K.clean_name(v.get("supervisor"))
+              for v in COMM.get(month).get("visitors") or [] if v.get("code") and K.clean_name(v.get("supervisor"))}
+    if not listed or not len(sales):
+        return {}
+    pairs = sales[["seller_key", "branch", "seller_code", "supervisor"]].drop_duplicates()
+    known: dict[str, set[str]] = {}
+    for b, s in zip(pairs["branch"], pairs["supervisor"]):
+        if isinstance(s, str) and s.strip():
+            known.setdefault(K.bkey(b), set()).add(s)
+
+    def to_db(branch: str, name: str) -> str:
+        names = known.get(branch, set())
+        hit = [s for s in names if K.norm(s) == name] or [s for s in names if K.norm(s) in name or name in K.norm(s)]
+        return hit[0] if len(hit) == 1 else name
+
+    out = {}
+    for key, b, code in zip(pairs["seller_key"], pairs["branch"], pairs["seller_code"]):
+        sup = listed.get((K.bkey(b), K.norm(code)))
+        if sup:
+            out[str(key)] = to_db(K.bkey(b), sup)
+    return out
+
+
+def _with_supervisors(df: pd.DataFrame | None, sups: dict[str, str]) -> pd.DataFrame | None:
+    if df is None or not len(df) or not sups or "seller_key" not in df or "supervisor" not in df:
+        return df
+    df = df.copy()
+    listed = df["seller_key"].astype(str).map(sups)
+    df["supervisor"] = listed.where(listed.notna(), df["supervisor"].astype(object))
+    return df
+
+
 @app.get("/api/report/people")
 def report_people(req: Request):
     """ماژول «گزارش اکسل» (بک‌اند مالی): عملکرد ویزیتور، سرپرست و شعبه در بازه با همه فیلترهای داشبورد.
-    تخفیف حجمی/نقدی/مدیریتی به نسبت ناخالص فروش؛ تحقق هر شعبه همان «تحقق و پورسانت»؛ ویزیت ثبت‌شده = اسناد درخواست."""
+    تخفیف حجمی/نقدی/مدیریتی به نسبت ناخالص فروش؛ تحقق هر شعبه همان «تحقق و پورسانت»؛ ویزیت ثبت‌شده = اسناد درخواست.
+    سرپرست هر ویزیتور = سرپرستش در «لیست ویزیتور و سرپرست» ماه پایان بازه (صفحه پورسانت)، وگرنه سرپرست فاکتور."""
     tx, rq, c, f = frames(req)
+    end = f.get("date_to") or STATE["data"]["meta"].get("today") or ""
+    allx = STATE["data"]["sales"]
+    sup_of = _roster_supervisors(end[:7], allx) if len(end) >= 7 else {}
+    tx, rq = _with_supervisors(tx, sup_of), _with_supervisors(rq, sup_of)
     sale = tx[~tx["is_return"]]
     cols = BASE_COLS + ["qty", "req_docs", "city", "branch", "supervisor", "seller_code"]
 
@@ -545,12 +586,10 @@ def report_people(req: Request):
            .sort_values(["seller_key", "net"], ascending=[True, False]).groupby("seller_key").head(40))
     # فهرست ویزیتورهای هر سرپرست در ۳ ماه منتهی به پایان بازه (آخرین سرپرست و شعبه هر ویزیتور)، تا ویزیتور بدون فروش
     # در همین بازه هم در اکسل سرپرست بیاید
-    end = f.get("date_to") or STATE["data"]["meta"].get("today") or ""
     y, m = (int(end[:4]), int(end[5:7])) if len(end) >= 7 else (0, 0)
     y0, m0 = (y, m - 2) if m > 2 else (y - 1, m + 10)
     since = f"{y0}/{m0:02d}/01"
-    allx = STATE["data"]["sales"]
-    recent = allx[(allx["date"] >= since) & (allx["date"] <= end)].sort_values("date")
+    recent = _with_supervisors(allx[(allx["date"] >= since) & (allx["date"] <= end)], sup_of).sort_values("date")
     roster = recent.groupby("seller_key", observed=True).agg(label=("seller", "last"), supervisor=("supervisor", "last"),
                                                             branch=("branch", "last"), seller_code=("seller_code", "last"),
                                                             last_date=("date", "max")).reset_index().rename(columns={"seller_key": "key"})

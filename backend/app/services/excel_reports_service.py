@@ -6,7 +6,7 @@
   و درصد تحقق شعبه (همان «تحقق و پورسانت»)؛ با ارزش افزوده (قابل پرداخت)، مثل گزارش توزیع.
 - مالی (کارآمد): مانده حساب مشتریان و چک برگشتی هر ویزیتور (visitor_finance)، مانده هر شعبه (sales-network)
   و فاکتورهای توزیع‌شده/نشده هر هیبرید در ماه‌های بازه (توزیع بار).
-مبالغ به تومان. انتخاب زنجیره‌ای شهر › سرپرست › ویزیتور (و شعبه)؛ هر برگه هم فیلتر خود اکسل دارد.
+مبالغ به ریال. انتخاب زنجیره‌ای هیبرید › سرپرست › ویزیتور (شهر هم پشتیبانی می‌شود)؛ هر برگه هم فیلتر خود اکسل دارد.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ def _norm(s: Any) -> str:
     return " ".join(str(s or "").replace("ي", "ی").replace("ك", "ک").replace("‌", " ").split())
 
 
-def _toman(rial: Any) -> float | None:
+def _rial(rial: Any) -> float | None:
     try:
-        return round(float(rial) / 10)
+        return round(float(rial))
     except (TypeError, ValueError):
         return None
 
@@ -97,7 +97,7 @@ PCT = "pct"
 
 def _col(title: str, key: str, fmt: str = "money") -> Col:
     if fmt == "money":
-        return title, lambda r: _toman(r.get(key)), fmt
+        return title, lambda r: _rial(r.get(key)), fmt
     return title, lambda r: r.get(key), fmt
 
 
@@ -270,14 +270,14 @@ class Book:
                   f"{v.get('label')} — {v.get('branch') or ''} — سرپرست {v.get('supervisor') or '—'} — {v.get('city') or ''}"
                   + (f" — بدون فروش در این بازه (آخرین فروش {v.get('last_date')})" if v.get("idle") else ""),
                   [(t, get(v), kind) for t, get, kind in VISITOR_COLS[5:]],
-                  [{"headers": ["کد کالا", "کالا", "تعداد", "فروش خالص (تومان)"], "money": (3, 4),
-                    "rows": [[r.get("product_code"), r.get("product"), r.get("qty"), _toman(r.get("net"))] for r in skus]},
-                   {"title": "مانده مطالبات به تفکیک مشتری", "headers": ["کد مشتری", "مشتری", "مانده (تومان)"], "money": (3,), "color": "7F6000",
-                    "rows": [[d.get("customer_code"), d.get("customer_name"), _toman(d.get("amount_rial"))] for d in v.get("debtor_list") or []]},
-                   {"title": "چک‌های برگشتی", "headers": ["کد مشتری", "مشتری", "سریال", "سررسید", "وضعیت", "مبلغ (تومان)"], "money": (6,),
+                  [{"headers": ["کد کالا", "کالا", "تعداد", "فروش خالص (ریال)"], "money": (3, 4),
+                    "rows": [[r.get("product_code"), r.get("product"), r.get("qty"), _rial(r.get("net"))] for r in skus]},
+                   {"title": "مانده مطالبات به تفکیک مشتری", "headers": ["کد مشتری", "مشتری", "مانده (ریال)"], "money": (3,), "color": "7F6000",
+                    "rows": [[d.get("customer_code"), d.get("customer_name"), _rial(d.get("amount_rial"))] for d in v.get("debtor_list") or []]},
+                   {"title": "چک‌های برگشتی", "headers": ["کد مشتری", "مشتری", "سریال", "سررسید", "وضعیت", "مبلغ (ریال)"], "money": (6,),
                     "color": "7F6000",
                     "rows": [[c.get("customer_code"), c.get("customer_name"), c.get("serial"), c.get("due_date_jalali"), c.get("status"),
-                              _toman(c.get("amount_rial"))] for c in v.get("cheque_list") or []]}],
+                              _rial(c.get("amount_rial"))] for c in v.get("cheque_list") or []]}],
                   reserved=title is not None)
 
     def guide(self, lines: list[str]):
@@ -297,10 +297,10 @@ class Book:
 
 
 def _guide(kind: str, date_from: str, date_to: str, filters: dict[str, str | None], extra: list[str]) -> list[str]:
-    applied = " › ".join(f"{k}: {v}" for k, v in (("شهر", filters.get("city")), ("سرپرست", filters.get("supervisor")),
-                                                  ("ویزیتور", filters.get("visitor")), ("شعبه", filters.get("branch"))) if v) or "همه"
+    applied = " › ".join(f"{k}: {v}" for k, v in (("هیبرید", filters.get("branch")), ("شهر", filters.get("city")), ("سرپرست", filters.get("supervisor")),
+                                                  ("ویزیتور", filters.get("visitor"))) if v) or "همه"
     return [f"گزارش {KINDS[kind]} — {date_from} تا {date_to}", f"انتخاب: {applied}", "",
-            "مبالغ به تومان و با ارزش افزوده (قابل پرداخت)، همان عدد داشبورد فروش.",
+            "مبالغ به ریال و با ارزش افزوده (قابل پرداخت)، همان عدد داشبورد فروش.",
             "ویزیت ثبت‌شده = تعداد اسناد درخواست ثبت‌شده در بازه (کارآمد جدول جداگانه‌ای برای ویزیت بدون سفارش ندارد).",
             "مشتری خریدار = مشتری با فروش خالص مثبت در بازه. تعداد SKU = کالاهای متمایز فروخته‌شده.",
             "میانگین فروش روزانه = فروش خالص ÷ روزهای کاری سپری‌شده؛ پیش‌بینی پایان ماه فقط برای ماه جاری.",
@@ -358,7 +358,7 @@ def _team_skus(products: list[dict], visitors: list[dict], limit: int = 40) -> l
             a = agg.setdefault(str(r.get("product_code")), [r.get("product_code"), r.get("product"), 0.0, 0.0])
             a[2] += float(r.get("qty") or 0)
             a[3] += float(r.get("net") or 0)
-    return [[c, n, q, _toman(v)] for c, n, q, v in sorted(agg.values(), key=lambda a: -a[3])[:limit]]
+    return [[c, n, q, _rial(v)] for c, n, q, v in sorted(agg.values(), key=lambda a: -a[3])[:limit]]
 
 
 def _supervisor_cards(book: "Book", sups: list[dict], team: dict[str, list[dict]], products: list[dict]) -> bool:
@@ -376,19 +376,19 @@ def _supervisor_cards(book: "Book", sups: list[dict], team: dict[str, list[dict]
                   [{"title": "ویزیتورهای این سرپرست (روی نام بزنید تا کارتش باز شود)",
                     "headers": ["ویزیتور", "فروش خالص", "فروش ناخالص", "مشتری خریدار", "تعداد SKU", "ویزیت ثبت‌شده",
                                 "میانگین فروش روزانه", "مانده حساب مشتریان", "چک برگشتی (مبلغ)"], "money": (2, 3, 4, 5, 6, 7, 8, 9),
-                    "rows": [[(f"{v.get('label')} (بدون فروش در این بازه)" if v.get("idle") else v.get("label"), sheet_names[k]), _toman(v.get("net")), _toman(v.get("gross")), v.get("customers"), v.get("sku"),
-                              v.get("req_docs"), _toman(v.get("daily_avg")), _toman(v.get("ar_rial")), _toman(v.get("ret_cheque_rial"))]
+                    "rows": [[(f"{v.get('label')} (بدون فروش در این بازه)" if v.get("idle") else v.get("label"), sheet_names[k]), _rial(v.get("net")), _rial(v.get("gross")), v.get("customers"), v.get("sku"),
+                              v.get("req_docs"), _rial(v.get("daily_avg")), _rial(v.get("ar_rial")), _rial(v.get("ret_cheque_rial"))]
                              for k, v in enumerate(crew)]},
-                   {"title": "کالاهای پرفروش تیم", "headers": ["کد کالا", "کالا", "تعداد", "فروش خالص (تومان)"], "money": (3, 4),
+                   {"title": "کالاهای پرفروش تیم", "headers": ["کد کالا", "کالا", "تعداد", "فروش خالص (ریال)"], "money": (3, 4),
                     "rows": _team_skus(products, crew)},
-                   {"title": "مانده مطالبات به تفکیک مشتری", "headers": ["ویزیتور", "کد مشتری", "مشتری", "مانده (تومان)"], "money": (4,),
+                   {"title": "مانده مطالبات به تفکیک مشتری", "headers": ["ویزیتور", "کد مشتری", "مشتری", "مانده (ریال)"], "money": (4,),
                     "color": "7F6000",
-                    "rows": sorted(([v.get("label"), d.get("customer_code"), d.get("customer_name"), _toman(d.get("amount_rial"))]
+                    "rows": sorted(([v.get("label"), d.get("customer_code"), d.get("customer_name"), _rial(d.get("amount_rial"))]
                                     for v in crew for d in v.get("debtor_list") or []), key=lambda r: -(r[3] or 0))},
-                   {"title": "چک‌های برگشتی", "headers": ["ویزیتور", "کد مشتری", "مشتری", "سریال", "سررسید", "وضعیت", "مبلغ (تومان)"],
+                   {"title": "چک‌های برگشتی", "headers": ["ویزیتور", "کد مشتری", "مشتری", "سریال", "سررسید", "وضعیت", "مبلغ (ریال)"],
                     "money": (7,), "color": "7F6000",
                     "rows": [[v.get("label"), c.get("customer_code"), c.get("customer_name"), c.get("serial"), c.get("due_date_jalali"),
-                              c.get("status"), _toman(c.get("amount_rial"))] for v in crew for c in v.get("cheque_list") or []]}])
+                              c.get("status"), _rial(c.get("amount_rial"))] for v in crew for c in v.get("cheque_list") or []]}])
         for k, v in enumerate(crew):
             book.visitor_card(v, [r for r in products if str(r.get("key")) == str(v["key"])], title=sheet_names[k])
         made += 1 + len(crew)
@@ -420,9 +420,9 @@ def build(kind: str, date_from: str | None = None, date_to: str | None = None, c
     p = data["people"]
     sellers = sorted(p["sellers"], key=lambda r: -float(r.get("net") or 0))
     filters = {"city": city, "supervisor": supervisor, "visitor": visitor, "branch": branch}
-    # شهر فقط برای پیدا کردن سرپرست است: با انتخاب سرپرست، همه ویزیتورهایش در هر شهری (مثل صفحه)
-    scope = [v for v in sellers if (supervisor or _same(v.get("city"), city)) and _same(v.get("supervisor"), supervisor)
-             and _same(v.get("label") or v.get("key"), visitor) and _same(v.get("branch"), branch)]
+    # هیبرید (و شهر) فقط برای پیدا کردن سرپرست است: با انتخاب سرپرست، همه ویزیتورهایش در هر هیبریدی (مثل صفحه)
+    scope = [v for v in sellers if (supervisor or (_same(v.get("city"), city) and _same(v.get("branch"), branch)))
+             and _same(v.get("supervisor"), supervisor) and _same(v.get("label") or v.get("key"), visitor)]
     narrowed = any(filters.values())
     book = Book()
 
@@ -445,7 +445,7 @@ def build(kind: str, date_from: str | None = None, date_to: str | None = None, c
         cards = _visitor_sheets(book, products, rows)
         book.guide(_guide(kind, date_from, date_to, filters,
                           ["برای هر ویزیتور یک برگه کارت با همه شاخص‌ها و کالاهای پرفروشش ساخته شده است." if cards else
-                           f"تعداد ویزیتورها بیش از {MAX_PERSON_SHEETS} است؛ برگه جداگانه هر ویزیتور ساخته نشد (شهر یا سرپرست را محدود کنید)."]))
+                           f"تعداد ویزیتورها بیش از {MAX_PERSON_SHEETS} است؛ برگه جداگانه هر ویزیتور ساخته نشد (هیبرید یا سرپرست را محدود کنید)."]))
 
     elif kind == "supervisors":
         # سرپرستانِ انتخاب (شهر › سرپرست › ویزیتور)، ولی تیم هر سرپرست = همه ویزیتورهایش در هر شهری که باشند،
@@ -462,7 +462,7 @@ def build(kind: str, date_from: str | None = None, date_to: str | None = None, c
         products = p.get("seller_products") or []
         cards = _supervisor_cards(book, sups, team, products)
         book.sheet("سرپرست‌ها", SUPERVISOR_COLS, sups,
-                   f"عملکرد سرپرست‌ها {date_from} تا {date_to} (فروش کل سرپرست؛ مانده و برگشتی = جمع ویزیتورهای انتخاب‌شده)")
+                   f"عملکرد سرپرست‌ها {date_from} تا {date_to} (همه اعداد = جمع ویزیتورهای زیرمجموعه هر سرپرست)")
         members = [v for s in sups for v in team.get(_norm(s.get("label") or s.get("key")), [])]
         book.sheet("ویزیتورهای سرپرستان", VISITOR_COLS, members)
         book.sheet("ریز SKU ویزیتورها", SKU_COLS, _skus(products, members), "۴۰ کالای پرفروش هر ویزیتور در بازه")
@@ -472,18 +472,21 @@ def build(kind: str, date_from: str | None = None, date_to: str | None = None, c
                            "به‌علاوه ویزیتورهایی که در ۳ ماه اخیر زیر او فروخته‌اند و در این بازه فروشی ندارند (با فروش صفر).",
                            "برگه اول: کارت سرپرست (همه شاخص‌ها، ویزیتورهایش با لینک به کارت هرکدام، کالاهای پرفروش تیم، "
                            "مانده مطالبات و چک‌های برگشتی به تفکیک مشتری)؛ بعد کارت همه ویزیتورهای همان سرپرست، و در آخر جدول‌های کل."]
-                          + ([] if cards else [f"به‌خاطر تعداد زیاد، کارت‌ها فقط برای {MAX_CARD_SHEETS} برگه اول ساخته شد؛ سرپرست یا شهر را محدود کنید."])))
+                          + ([] if cards else [f"به‌خاطر تعداد زیاد، کارت‌ها فقط برای {MAX_CARD_SHEETS} برگه اول ساخته شد؛ هیبرید یا سرپرست را محدود کنید."])))
 
     else:
         dist = _distribution(date_from, date_to)
+        # اکسل هیبرید همیشه کل شعبه است: هیبریدهای انتخاب (حتی با انتخاب یک سرپرست یا ویزیتور) با همه ویزیتورهایشان
+        picked = {_norm(v.get("branch")) for v in scope}
+        pool = [v for v in sellers if not narrowed or _norm(v.get("branch")) in picked]
         crew: dict[str, list[dict]] = {}
-        for v in scope:
+        for v in pool:
             crew.setdefault(_norm(v.get("branch")), []).append(v)
         hybs = [dict(b) for b in p["branches"] if "هیبرید" in _norm(b.get("label") or b.get("key"))
                 and (not narrowed or _norm(b.get("label") or b.get("key")) in crew)]
         sup_by_branch: dict[str, list[dict]] = {}
         for s in p["supervisors"]:
-            mine = [v for v in scope if _norm(v.get("supervisor")) == _norm(s.get("label") or s.get("key"))]
+            mine = [v for v in pool if _norm(v.get("supervisor")) == _norm(s.get("label") or s.get("key"))]
             if mine or not narrowed:
                 sup_by_branch.setdefault(_norm(s.get("branch")), []).append(dict(s, **_sum_visitors(mine)))
         for b in hybs:
@@ -501,16 +504,31 @@ def build(kind: str, date_from: str | None = None, date_to: str | None = None, c
         book.sheet("ریز SKU ویزیتورها", SKU_COLS, _skus(p.get("seller_products") or [], crew_all), "۴۰ کالای پرفروش هر ویزیتور در بازه")
         _customer_sheets(book, crew_all)
         for b in hybs[:MAX_PERSON_SHEETS]:
+            # کارت هر هیبرید: شاخص‌های کل شعبه، همه سرپرستانش (جمع زیرمجموعه هرکدام) و همه ویزیتورهایش
             k = _norm(b.get("label") or b.get("key"))
-            book.sheet(str(b.get("label") or b.get("key")).replace("هیبرید", "").strip() or "هیبرید", VISITOR_COLS, crew.get(k, []),
-                       f"{b.get('label')} — رتبه تحقق {int(b['ach_rank']) if b.get('ach_rank') else '—'} — تحقق {round(float(b.get('branch_ach') or 0) * 100, 1)}٪"
-                       f" — توزیع‌نشده {int(b.get('undistributed_count') or 0)} فاکتور")
+            team = crew.get(k, [])
+            bsups = sorted(sup_by_branch.get(k, []), key=lambda r: -float(r.get("net") or 0))
+            book.card(str(b.get("label") or b.get("key")).replace("هیبرید", "").strip() or "هیبرید",
+                      f"{b.get('label')} — {len(bsups)} سرپرست، {len(team)} ویزیتور — رتبه تحقق {int(b['ach_rank']) if b.get('ach_rank') else '—'}",
+                      [(t, get(b), kind) for i, (t, get, kind) in enumerate(HYBRID_COLS) if i not in (1, 2)],
+                      [{"title": "سرپرستان این هیبرید (اعداد هر سرپرست = جمع ویزیتورهای زیرمجموعه‌اش)",
+                        "headers": ["سرپرست", "تعداد ویزیتور", "فروش خالص", "فروش ناخالص", "برگشت از فروش", "مشتری خریدار",
+                                    "ویزیت ثبت‌شده", "مانده حساب مشتریان", "چک برگشتی (مبلغ)"], "money": (3, 4, 5, 8, 9),
+                        "rows": [[s.get("label") or s.get("key"), len([v for v in team if _norm(v.get("supervisor")) == _norm(s.get("label") or s.get("key"))]),
+                                  _rial(s.get("net")), _rial(s.get("gross")), _rial(s.get("returns_net")), s.get("customers"), s.get("req_docs"),
+                                  _rial(s.get("ar_rial")), _rial(s.get("ret_cheque_rial"))] for s in bsups]},
+                       {"title": "ویزیتورهای این هیبرید", "color": "375623",
+                        "headers": ["ویزیتور", "سرپرست", "فروش خالص", "فروش ناخالص", "مشتری خریدار", "تعداد SKU", "ویزیت ثبت‌شده",
+                                    "مانده حساب مشتریان", "چک برگشتی (مبلغ)"], "money": (3, 4, 8, 9),
+                        "rows": [[v.get("label"), v.get("supervisor"), _rial(v.get("net")), _rial(v.get("gross")), v.get("customers"), v.get("sku"),
+                                  v.get("req_docs"), _rial(v.get("ar_rial")), _rial(v.get("ret_cheque_rial"))] for v in team]}])
         book.guide(_guide(kind, date_from, date_to, filters,
                           ["فاکتور توزیع‌شده/نشده = جمع ماه‌های بازه از «توزیع بار» (توزیع‌نشده = بدون حواله خروج، برگشتی‌ها کم شده).",
                            "مانده حساب و بستانکاری شعبه = وضعیت امروز همه مشتریان شعبه در کارآمد.",
-                           f"برای هر هیبرید (حداکثر {MAX_PERSON_SHEETS}) یک برگه با ریز ویزیتورهایش ساخته شده است."]))
+                           f"برای هر هیبرید (حداکثر {MAX_PERSON_SHEETS}) یک برگه با ریز ویزیتورهایش ساخته شده است.",
+                           "اکسل هیبرید اطلاعات کل شعبه است: با انتخاب یک سرپرست یا ویزیتور هم همه سرپرستان و ویزیتورهای همان هیبرید می‌آیند."]))
 
-    tag = re.sub(r'[\/:*?"<>|]+', " ", "-".join(x for x in (city, supervisor, visitor, branch) if x)).strip()
+    tag = re.sub(r'[\/:*?"<>|]+', " ", "-".join(x for x in (branch, city, supervisor, visitor) if x)).strip()
     fname = f"گزارش-{KINDS[kind]}-{date_from.replace('/', '-')}-تا-{date_to.replace('/', '-')}{('-' + tag) if tag else ''}.xlsx"
     return book.bytes(), fname
 

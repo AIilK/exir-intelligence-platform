@@ -466,3 +466,12 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
 .xr-table tbody tr.on td { background: #2dd4bf1f; }
 .xr-table tfoot td { position: sticky; bottom: 0; background: var(--u-surface-3); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .xr-table-card, .xr-table tbody tr { animation: none; } }
+
+.xr-team { margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--u-border-2); border-radius: 12px; background: var(--u-surface-2); font-size: 12.5px; }
+.xr-team > b { display: block; margin-bottom: 6px; }
+.xr-team ol { margin: 0; padding-inline-start: 20px; max-height: 210px; overflow: auto; }
+.xr-team li { padding: 2px 0; }
+.xr-team li span { display: inline-block; min-width: 0; overflow-wrap: anywhere; }
+.xr-team li small { color: var(--u-muted); margin-inline-start: 8px; white-space: nowrap; }
+.xr-team p { margin: 8px 0 0; color: var(--u-muted); }
+.xr-team p b { color: var(--u-text); }
