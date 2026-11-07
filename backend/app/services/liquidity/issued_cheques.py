@@ -37,6 +37,7 @@ from sqlalchemy import text
 from app.services.liquidity.bank_balances import PERSONAL_PATTERNS, account_numbers
 from app.services.liquidity.cash_movements import CHANNEL_LABELS, CHANNEL_SYSTEMS, SYSTEM_CHANNEL, SalesChannel
 from app.utils.jalali import format_jalali_date
+from app.utils.swr_cache import swr_get
 
 CACHE_TTL_SECONDS = 300
 HYBRID_SETTLEMENT_SL = "3112"
@@ -185,28 +186,12 @@ class IssuedChequeService:
         return {number for title in titles for number in account_numbers(title)}
 
     def _load_named(self, name: str, loader: Callable[[], Any], refresh: bool) -> Any:
-        key = (name, self.today)
-        now = time.monotonic()
-        with _cache_lock:
-            hit = _cache.get(key)
-            if hit and not refresh and now - hit[0] < self.cache_ttl_seconds:
-                return hit[1]
-        value = loader()
-        with _cache_lock:
-            _cache[key] = (now, value)
-        return value
+        return swr_get(_cache, _cache_lock, (name, self.today), self.cache_ttl_seconds, loader,
+                       refresh=refresh, clock=time.monotonic)
 
     def _load(self, system: str, refresh: bool) -> list[dict[str, Any]]:
-        key = (system, self.today)
-        now = time.monotonic()
-        with _cache_lock:
-            hit = _cache.get(key)
-            if hit and not refresh and now - hit[0] < self.cache_ttl_seconds:
-                return hit[1]
-        rows = self.fetchers[system]()
-        with _cache_lock:
-            _cache[key] = (now, rows)
-        return rows
+        return swr_get(_cache, _cache_lock, (system, self.today), self.cache_ttl_seconds,
+                       self.fetchers[system], refresh=refresh, clock=time.monotonic)
 
     def _normalize(self, system: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cheques: list[dict[str, Any]] = []

@@ -33,6 +33,7 @@ from app.services.customer_cheque_behavior_engine import CustomerChequeBehaviorE
 from app.services.liquidity.account_map import is_hybrid_counterpart
 from app.services.liquidity.cash_movements import CHANNEL_LABELS, CHANNEL_SYSTEMS, SYSTEM_CHANNEL, SalesChannel
 from app.utils.jalali import format_jalali_date
+from app.utils.swr_cache import swr_get
 
 CACHE_TTL_SECONDS = 300
 ALLOWED_TERM_DAYS = 90
@@ -167,36 +168,9 @@ class ReceivedChequeService:
 
     def _cached(self, name: str, loader: Callable[[], Any], refresh: bool) -> Any:
         """کش ۵ دقیقه‌ای؛ بعد از انقضا همان داده قبلی فوراً برمی‌گردد و نسخه تازه در پس‌زمینه ساخته می‌شود
-        (پیش‌بینی چک‌های راهکاران حدود یک دقیقه طول می‌کشد و کاربر نباید منتظرش بماند)."""
-        key = (name, self.today)
-        now = time.monotonic()
-        with _cache_lock:
-            hit = _cache.get(key)
-            if hit and not refresh:
-                if now - hit[0] < self.cache_ttl_seconds:
-                    return hit[1]
-                if key not in _refreshing:
-                    _refreshing.add(key)
-                    threading.Thread(target=self._refresh, args=(key, loader), daemon=True).start()
-                return hit[1]
-        value = loader()
-        with _cache_lock:
-            _cache[key] = (now, value)
-        return value
-
-    @staticmethod
-    def _refresh(key: tuple[str, date], loader: Callable[[], Any]) -> None:
-        try:
-            value = loader()
-            with _cache_lock:
-                _cache[key] = (time.monotonic(), value)
-        except Exception:  # noqa: BLE001 — داده قبلی می‌ماند
-            pass
-        finally:
-            with _cache_lock:
-                _refreshing.discard(key)
-
-    # -- Rahkaran -------------------------------------------------------------
+        (پیش‌بینی چک‌های راهکاران حدود ۲۰ ثانیه طول می‌کشد و کاربر نباید منتظرش بماند)."""
+        return swr_get(_cache, _cache_lock, (name, self.today), self.cache_ttl_seconds, loader,
+                       refresh=refresh, clock=time.monotonic)
 
     def _rahkaran(self, refresh: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         predictions = self._cached("rahkaran", self.fetchers["rahkaran"], refresh)

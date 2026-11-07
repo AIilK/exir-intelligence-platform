@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from fastapi.responses import FileResponse, Response
@@ -548,13 +548,21 @@ def distribution_overview():
         raise HTTPException(status_code=500, detail=f"دریافت اطلاعات توزیع بار با خطا مواجه شد: {exc}") from exc
 
 
+# فهرست‌های سنگین گزارش ماه که نمای مدیر لازم ندارد (حدود ۹۰٪ حجم پاسخ)
+DISTRIBUTION_DETAIL_KEYS = ("customers", "undistributed", "collection_control")
+
+
 @router.get("/distribution/monthly", summary="توزیع و وصول فاکتورهای یک ماه هیبریدها (مثل گزارش واحد مالی)")
-def distribution_monthly(year: int, month: int):
+def distribution_monthly(year: int, month: int, view: str = Query("full", pattern="^(full|summary)$")):
+    """view=summary: فقط جمع‌ها، فروش شرکت و ردیف هر هیبرید (برای نمای مدیر)، بدون فهرست مشتریان و فاکتورها."""
     from app.services.karamad_distribution_service import KaramadDistributionService
     if not (1 <= month <= 12):
         raise HTTPException(status_code=400, detail="ماه نامعتبر است.")
     try:
-        return KaramadDistributionService().monthly(year, month)
+        data = KaramadDistributionService().monthly(year, month)
+        if view == "summary":
+            return {k: v for k, v in data.items() if k not in DISTRIBUTION_DETAIL_KEYS}
+        return data
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"دریافت گزارش توزیع و وصول با خطا مواجه شد: {exc}") from exc
 
@@ -1032,8 +1040,13 @@ def process_health(refresh: bool = Query(default=False, description="دوبار�
 
 
 @router.get("/manager-combined", summary="سهم راهکاران در شاخص‌های نمای مدیر (فروش ماه و مطالبات) برای جمع با کارآمد")
-def manager_combined(year: int, month: int = Query(ge=1, le=12)):
-    from app.services import manager_combined_service
+def manager_combined(request: Request, year: int, month: int = Query(ge=1, le=12)):
+    from app.auth.guard import INTERNAL_HEADER
+    from app.services import manager_combined_service, manager_view_warmer
+
+    # فقط نمای مدیر این آدرس را می‌خواند: یعنی کسی صفحه را باز کرده و داده‌اش باید گرم بماند
+    if not request.headers.get(INTERNAL_HEADER):
+        manager_view_warmer.touch()
 
     return manager_combined_service.overview(year, month)
 

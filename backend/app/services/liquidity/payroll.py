@@ -24,6 +24,7 @@ from typing import Any, Callable
 from sqlalchemy import text
 
 from app.utils.jalali import _gregorian_to_jalali, _jalali_to_gregorian, format_jalali_date
+from app.utils.swr_cache import swr_get
 
 FACTOR_NET_PAY = 63                 # NetPay — خالص پرداختی
 FACTOR_EMPLOYEE_INSURANCE = 46      # EmployeeMainInsurance — بیمه تامین اجتماعی سهم کارمند
@@ -251,16 +252,8 @@ class PayrollService:
         self.cache_ttl_seconds = cache_ttl_seconds
 
     def _cached(self, name: str, loader: Callable[[], Any], refresh: bool) -> Any:
-        key = (name, self.today)
-        now = time.monotonic()
-        with _cache_lock:
-            hit = _cache.get(key)
-            if hit and not refresh and now - hit[0] < self.cache_ttl_seconds:
-                return hit[1]
-        value = loader()
-        with _cache_lock:
-            _cache[key] = (now, value)
-        return value
+        return swr_get(_cache, _cache_lock, (name, self.today), self.cache_ttl_seconds, loader,
+                       refresh=refresh, clock=time.monotonic)
 
     # -- monthly figures ------------------------------------------------------
 

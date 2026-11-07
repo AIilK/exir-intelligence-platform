@@ -6,14 +6,10 @@
 
 from __future__ import annotations
 
-import json
 import threading
 import time
-import urllib.parse
-import urllib.request
 from typing import Any, Callable
 
-API = "http://127.0.0.1:8000/api/v1"
 CACHE_SECONDS = 120
 _cache: dict[str, tuple[float, Any]] = {}
 _lock = threading.Lock()
@@ -24,11 +20,10 @@ def _get(path: str, timeout: int = 120) -> Any:
         hit = _cache.get(path)
         if hit and time.time() - hit[0] < CACHE_SECONDS:
             return hit[1]
-    from app.auth.guard import INTERNAL_HEADER, INTERNAL_TOKEN
+    from app.utils.internal_api import internal_get
 
-    req = urllib.request.Request(f"{API}{path}", headers={INTERNAL_HEADER: INTERNAL_TOKEN})
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (local API only)
-        data = json.loads(r.read().decode("utf-8"))
+    # همین پروسه (بدون شبکه): قبلاً http://127.0.0.1:8000 بود که پورت بک‌اند فروش است، نه مالی
+    data = internal_get(path)
     with _lock:
         _cache[path] = (time.time(), data)
     return data

@@ -290,9 +290,9 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
   const cur: YM = { year: now.year, month: now.month };
   const prev = shift(cur, -1), prev2 = shift(cur, -2);
   const salesOk = has("management", "sales", "distribution");
-  const mCur = useLoad(salesOk ? `${FIN()}/distribution/monthly?year=${cur.year}&month=${cur.month}` : null);
-  const mPrev = useLoad(salesOk ? `${FIN()}/distribution/monthly?year=${prev.year}&month=${prev.month}` : null);
-  const mPrev2 = useLoad(salesOk ? `${FIN()}/distribution/monthly?year=${prev2.year}&month=${prev2.month}` : null);
+  const mCur = useLoad(salesOk ? `${FIN()}/distribution/monthly?year=${cur.year}&month=${cur.month}&view=summary` : null);
+  const mPrev = useLoad(salesOk ? `${FIN()}/distribution/monthly?year=${prev.year}&month=${prev.month}&view=summary` : null);
+  const mPrev2 = useLoad(salesOk ? `${FIN()}/distribution/monthly?year=${prev2.year}&month=${prev2.month}&view=summary` : null);
   const network = useLoad(has("sales", "customers") ? `${FIN()}/sales-network` : null);
   const liq = useLoad(has("management", "liquidity") ? `${LIQ()}/summary?horizon_days=30` : null, (j) => j.data);
   const chequesOk = has("management", "cheques", "collections");
