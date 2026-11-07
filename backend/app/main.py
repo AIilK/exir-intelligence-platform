@@ -33,6 +33,14 @@ async def lifespan(app: FastAPI):
     chatbot_warm_up()  # نمایه جستجوی چت‌بات و پرتفوی مشتریان از همان اول آماده باشد
     from app.services import manager_view_warmer
     manager_view_warmer.start()  # همه داده نمای مدیر از همان اول ساخته و تا وقتی کسی صفحه را می‌بیند گرم نگه داشته شود
+    from app.core.config import settings
+    if settings.hybrid_risk_weekly_enabled:
+        def _hybrid_risk_catch_up():
+            import time
+            from app.services import hybrid_risk_service
+            time.sleep(180)  # بعد از آماده‌سازی نمای مدیر، تا هم‌زمان روی دیتابیس فشار نیاورند
+            hybrid_risk_service.ensure_recent()
+        threading.Thread(target=_hybrid_risk_catch_up, name="hybrid-risk-catch-up", daemon=True).start()
     yield
     stop_customer_scheduler()
 

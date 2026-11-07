@@ -2,7 +2,6 @@ from app.agents.finance_decision_agents import FinanceManagerDecisionAgent
 
 
 def test_manager_uses_unified_future_and_overdue_cheques_separately(monkeypatch):
-    monkeypatch.setattr('app.agents.finance_decision_agents.settings.openai_api_key', '')
     agents = {
         'collection': {'analysis': {'prediction': {'end_of_month': {'open_exposure': 999}}}},
         'cashflow': {'analysis': {'prediction': {'next_7_days': {'net_change': 0}, 'end_of_month': {}}}},

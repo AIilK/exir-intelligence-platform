@@ -8,12 +8,14 @@ import { PageHead, Card, Pending, Kpi, Bar, Money } from '../ui.jsx'
 import HybridTable, { hybridPath } from '../HybridTable.jsx'
 import { YearChart } from '../fileTabs.jsx'
 import PageAlarms from '../PageAlarms.jsx'
+import { useHybridRisk, HybridRiskCard } from '../hybridRisk.jsx'
 
 export default function HybridList() {
   const S = useSalesSet()
   const { P, Y } = S
   const { vat } = useApp()
   const network = useJson(NETWORK_URL)
+  const risk = useHybridRisk()
   const monthly = useJson(`/api/monthly?vat=${vat ? 1 : 0}`)
   const [q, setQ] = useState('')
   const rows = useMemo(() => (network.data && S.cur.data
@@ -62,6 +64,8 @@ export default function HybridList() {
       </section>
 
       <PageAlarms modules={['salesCustomers', 'salesHybrid', 'sales']} title="پرونده هیبریدها" />
+
+      <HybridRiskCard risk={risk} />
 
       <div className="u-grid-main">
         <YearChart state={monthly} months={months} Y={Y} title="فروش ماهانه هیبریدها" action={<Link to="/sales">داشبورد فروش ←</Link>} />

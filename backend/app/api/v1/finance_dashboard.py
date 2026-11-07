@@ -7,7 +7,6 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 
-
 router = APIRouter(prefix="/finance", tags=["finance-intelligence"])
 
 class AlertUpdate(BaseModel):
@@ -160,8 +159,6 @@ async def replace_karamad_received_cheques(file: UploadFile = File(...)):
             temporary.unlink()
 
 
-
-
 @router.post("/karamad-manual/issued-cheques/replace", summary="جایگزینی چک‌های پرداختی ثبت‌شده کارآمد")
 async def replace_karamad_issued_cheques(file: UploadFile = File(...)):
     from app.services.karamad_manual_import_service import KaramadManualImportService
@@ -253,20 +250,6 @@ def customer_automation_latest():
     if payload is None:
         return {"status": "empty", "message": "هنوز اجرای موفق ذخیره‌شده‌ای وجود ندارد."}
     return payload
-
-@router.get("/customer-agent/status", summary="وضعیت Customer Behavior Agent")
-def customer_agent_status():
-    from app.core.config import settings
-    from app.services.customer_automation_service import CustomerAutomationStore
-    latest = CustomerAutomationStore().recent_runs(limit=1)
-    return {
-        "status": "ready" if settings.customer_behavior_agent_enabled else "disabled",
-        "agent_name": "Customer Behavior Agent",
-        "llm_configured": bool(settings.openai_api_key),
-        "model": settings.customer_behavior_agent_model or settings.openai_model,
-        "fallback_available": True,
-        "last_run": latest[0] if latest else None,
-    }
 
 
 @router.get(
@@ -409,6 +392,21 @@ def customer_file_karamad(dl_refs: str = Query(..., min_length=1, max_length=200
         return CustomerFileService().karamad([int(x) for x in dl_refs.split(",")])
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"دریافت فاکتورهای مشتری از کارآمد با خطا مواجه شد: {exc}") from exc
+
+
+@router.get("/sales-network/risk", summary="گزارش هفتگی ریسک هیبریدها: امتیاز، سطح، دلیل و تغییر نسبت به هفته و ماه قبل")
+def hybrid_risk():
+    from app.services import hybrid_risk_service
+
+    return hybrid_risk_service.latest()
+
+
+@router.post("/sales-network/risk/refresh", summary="ساخت دوباره گزارش ریسک هیبریدها (در پس‌زمینه، چند دقیقه)")
+def hybrid_risk_refresh():
+    from app.services import hybrid_risk_service
+
+    started = hybrid_risk_service.build_in_background("manual")
+    return {"status": "building", "started": started}
 
 
 @router.get("/sales-network", summary="شبکه فروش کارآمد: هیبرید من‌ها به تفکیک شعبه")

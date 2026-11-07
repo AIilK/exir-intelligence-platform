@@ -10,7 +10,6 @@ from typing import Any
 from app.core.config import settings
 from app.services.customer_intelligence_service import CustomerIntelligenceService
 from app.services.representative_intelligence_service import RepresentativeIntelligenceService
-from app.agents.customer_behavior_agent import CustomerBehaviorAgent
 
 
 class CustomerAutomationStore:
@@ -99,11 +98,8 @@ class CustomerAutomationService:
         try:
             dashboard = CustomerIntelligenceService().dashboard(limit=1000)
             representatives = RepresentativeIntelligenceService().aggregate(dashboard["customers"])
-            agent_result = CustomerBehaviorAgent().analyze(dashboard, trigger=trigger)
             payload = {
                 **dashboard,
-                "human_analysis": agent_result["analysis"],
-                "agent": agent_result,
                 "representative_intelligence": representatives,
                 "run_id": run_id,
                 "trigger": trigger,

@@ -47,11 +47,13 @@ class Settings(BaseSettings):
     customer_intelligence_scheduler_enabled: bool = True
     customer_intelligence_daily_hour: int = 7
     customer_intelligence_daily_minute: int = 0
+    # گزارش هفتگی ریسک هیبریدها (app/services/hybrid_risk_service.py): شنبه ساعت ۷:۳۰ صبح
+    hybrid_risk_weekly_enabled: bool = True
+    hybrid_risk_weekly_day: str = "sat"
+    hybrid_risk_weekly_hour: int = 7
+    hybrid_risk_weekly_minute: int = 30
     customer_intelligence_history_db: str = "./customer_intelligence_history.db"
     customer_representative_mapping_file: str = "./data/customer_representative_mapping.csv"
-    customer_behavior_agent_enabled: bool = True
-    customer_behavior_agent_model: str = ""
-    customer_behavior_agent_max_customers: int = 25
     # Four recurring KarAmand exports. The folder and its four subfolders are
     # created automatically on Backend startup/first scan.
     karamad_excel_inbox: str = "KaramadInbox"

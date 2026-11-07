@@ -469,3 +469,8 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
 
 /* صفحه‌ای که هنوز فایلش دانلود نشده (React.lazy در main.jsx) */
 .u-page-loading { padding: 48px 24px; text-align: center; opacity: .6; font-size: 14px; }
+
+/* گزارش هفتگی ریسک هیبریدها (hybridRisk.jsx) */
+.u-reasons { margin: 0; padding-inline-start: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--u-text); font-size: 13px; line-height: 1.8; }
+.u-list-row.u-risk-row { grid-template-columns: minmax(110px, 1fr) minmax(120px, 1.4fr) auto minmax(0, 2.6fr); }
+.u-risk-row > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--u-text-2); }
