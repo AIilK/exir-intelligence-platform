@@ -1,83 +1,13 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (management).
 import ExecutiveOverview, { type ChequeBucket } from "../management/executive-overview";
-import { Heading, Status } from "./widgets";
-import { JALALI_MONTH_NAMES, chequeDueJalali, cname, currentJalali, daysToDue, fa, fullToman, money, openInsight, risk, textOf } from "./shared";
-import type { Alert, Analysis, CashDay, Cheque, Customer, InsightRecord, TreasuryCheque, View } from "./types";
-
-export function FutureCashflowExecutive({
-  cash,
-  openAgent,
-  compact = false,
-}: {
-  cash?: any;
-  openAgent: (key: string) => void;
-  compact?: boolean;
-}) {
-  const timeline = (cash?.timeline || []) as CashDay[];
-  const inflow = timeline.reduce((sum, row) => sum + Number(row.projected_inflow || 0), 0);
-  const outflow = timeline.reduce((sum, row) => sum + Number(row.projected_outflow || 0), 0);
-  const net = inflow - outflow;
-  const days = Number(cash?.forecast_days || timeline.length || 0);
-  const cards = [
-    {
-      key: "collection",
-      label: "ورودی احتمالی آینده",
-      value: inflow,
-      tone: "inflow",
-      note: "چک‌ها و مطالبات قابل وصول + ورودی‌های برنامه‌ریزی‌شده",
-      detail: "جزئیات در Agent وصول و مطالبات",
-    },
-    {
-      key: "cheque_payment",
-      label: "خروجی قطعی و احتمالی آینده",
-      value: outflow,
-      tone: "outflow",
-      note: "چک‌های پرداختی + تعهدات پرداخت + ذخیره حقوق",
-      detail: "جزئیات در Agent پرداخت و تعهدات",
-    },
-    {
-      key: "cashflow",
-      label: "خالص نقدینگی آینده",
-      value: net,
-      tone: net >= 0 ? "net-positive" : "net-negative",
-      note: "ورودی احتمالی آینده منهای خروجی قطعی و احتمالی",
-      detail: "جزئیات در Cash Flow Agent",
-    },
-  ];
-  return (
-    <article className={`fd-panel future-cashflow-executive ${compact ? "compact" : ""}`}>
-      <div className="future-cashflow-head">
-        <div>
-          <small>چشم‌انداز نقدینگی</small>
-          <h2>تصویر تمیز آینده مالی</h2>
-          <p>{days ? `جمع پیش‌بینی ${fa(days)} روز آینده؛ برای ریز محاسبات روی هر کارت کلیک کن.` : "برای ریز محاسبات روی هر کارت کلیک کن."}</p>
-        </div>
-        <span className={net >= 0 ? "positive" : "negative"}>{net >= 0 ? "خالص مثبت" : "فشار نقدینگی"}</span>
-      </div>
-      <div className="future-cashflow-cards">
-        {cards.map((card) => (
-          <button key={card.label} type="button" className={`future-cashflow-card ${card.tone}`} onClick={() => openAgent(card.key)}>
-            <small>{card.label}</small>
-            <strong>{money(Math.abs(card.value))} <em>تومان</em></strong>
-            {card.key === "cashflow" && <b>{card.value >= 0 ? "+ مثبت" : "− منفی"}</b>}
-            <p>{card.note}</p>
-            <span>{card.detail} ←</span>
-          </button>
-        ))}
-      </div>
-      <div className="future-cashflow-rule">
-        <span>قاعده گزارش</span>
-        <p>انتقال بانک‌به‌بانک و تنخواه در خالص شرکت اثر صفر دارند؛ داده آینده چک پرداختی کارآمد فقط به اندازه ثبت‌های موجود قابل اتکاست.</p>
-      </div>
-    </article>
-  );
-}
+import { Status } from "./widgets";
+import { JALALI_MONTH_NAMES, chequeDueJalali, currentJalali, daysToDue, fa, fullToman, openInsight, textOf } from "./shared";
+import type { Alert, Analysis, Cheque, Customer, InsightRecord, TreasuryCheque, View } from "./types";
 
 export function Management({
   manager,
   customers,
   cheques,
-  cash,
   alerts,
   received,
   issued,
@@ -89,7 +19,6 @@ export function Management({
   manager?: Analysis;
   customers: Customer[];
   cheques: Cheque[];
-  cash?: any;
   alerts: Alert[];
   received: TreasuryCheque[];
   issued: TreasuryCheque[];
@@ -162,95 +91,6 @@ export function Management({
     </>
   );
 }
-export function ExecutiveCharts({
-  customers,
-  cheques,
-  cash,
-}: {
-  customers: Customer[];
-  cheques: Cheque[];
-  cash?: any;
-}) {
-  const riskRows = [
-      {
-        label: "بحرانی",
-        value: customers.filter((c) => risk(c) === "critical").length,
-        tone: "red",
-      },
-      {
-        label: "نیازمند توجه",
-        value: customers.filter((c) => risk(c) === "danger").length,
-        tone: "amber",
-      },
-      {
-        label: "مناسب",
-        value: customers.filter((c) => risk(c) === "safe").length,
-        tone: "green",
-      },
-    ],
-    top = customers.slice(0, 6).map((c) => ({
-      label: cname(c),
-      value: c.open_exposure || 0,
-      tone:
-        risk(c) === "critical"
-          ? "red"
-          : risk(c) === "danger"
-            ? "amber"
-            : "teal",
-    })),
-    due = [
-      {
-        label: "سررسید گذشته",
-        value: cheques.filter((c) => (daysToDue(c) ?? 1) < 0).length,
-        tone: "red",
-      },
-      {
-        label: "تا ۳۰ روز",
-        value: cheques.filter((c) => {
-          const d = daysToDue(c);
-          return d !== undefined && d >= 0 && d <= 30;
-        }).length,
-        tone: "amber",
-      },
-      {
-        label: "۳۱ تا ۹۰ روز",
-        value: cheques.filter((c) => {
-          const d = daysToDue(c);
-          return d !== undefined && d > 30 && d <= 90;
-        }).length,
-        tone: "teal",
-      },
-      {
-        label: "بیش از ۹۰ روز",
-        value: cheques.filter((c) => (c.term_days || 0) > 90).length,
-        tone: "violet",
-      },
-    ],
-    days = (cash?.timeline || []).slice(0, 10) as CashDay[];
-  return (
-    <section className="executive-charts">
-      <article className="fd-panel visual-card">
-        <Heading h="توزیع ریسک مشتریان" p="تعداد مشتری در هر سطح ریسک" />
-        <DonutChart rows={riskRows} />
-      </article>
-      <article className="fd-panel visual-card">
-        <Heading h="بزرگ‌ترین چک‌های باز" p="۶ مشتری اول؛ مبلغ به تومان" />
-        <HorizontalBars rows={top} moneyMode />
-      </article>
-      <article className="fd-panel visual-card">
-        <Heading h="وضعیت زمانی چک‌ها" p="کنترل سیاست سررسید ۹۰ روزه" />
-        <VerticalBars rows={due} />
-      </article>
-      <article className="fd-panel visual-card cash-bars-card">
-        <Heading
-          h="ورودی و خروجی ۱۰ روز آینده"
-          p="سبز: ورودی، قرمز: خروجی؛ تومان"
-        />
-        <CashBars days={days} />
-      </article>
-    </section>
-  );
-}
 export type ChartRow = {
   label: string;
   value: number;
@@ -258,61 +98,6 @@ export type ChartRow = {
   format?: "money" | "number";
   records?: InsightRecord[];
 };
-export function HorizontalBars({
-  rows,
-  moneyMode = false,
-}: {
-  rows: ChartRow[];
-  moneyMode?: boolean;
-}) {
-  const max = Math.max(...rows.map((x) => x.value), 1),
-    total = rows.reduce((s, x) => s + x.value, 0) || 1;
-  return (
-    <div className="h-bars">
-      {rows.length ? (
-        rows.map((x, i) => (
-          <button
-            type="button"
-            className="h-bar drillable"
-            key={i}
-            onClick={() =>
-              openInsight({
-                title: x.label,
-                subtitle: "جزئیات میله انتخاب‌شده",
-                tone: x.tone,
-                stats: [
-                  {
-                    label: "مقدار",
-                    value: moneyMode ? `${money(x.value)} تومان` : fa(x.value),
-                  },
-                  {
-                    label: "سهم از نمودار",
-                    value: `${fa((x.value / total) * 100)}٪`,
-                  },
-                  {
-                    label: "بیشترین مقدار نمودار",
-                    value: moneyMode ? `${money(max)} تومان` : fa(max),
-                  },
-                ],
-              })
-            }
-          >
-            <span title={x.label}>{x.label}</span>
-            <div>
-              <i
-                className={x.tone}
-                style={{ width: `${Math.max(4, (x.value / max) * 100)}%` }}
-              />
-            </div>
-            <b>{moneyMode ? money(x.value) : fa(x.value)}</b>
-          </button>
-        ))
-      ) : (
-        <div className="chart-empty">داده‌ای برای نمایش نیست.</div>
-      )}
-    </div>
-  );
-}
 export function VerticalBars({ rows }: { rows: ChartRow[] }) {
   const max = Math.max(...rows.map((x) => x.value), 1),
     total = rows.reduce((s, x) => s + x.value, 0) || 1;
@@ -354,100 +139,6 @@ export function VerticalBars({ rows }: { rows: ChartRow[] }) {
           <small>{x.label}</small>
         </button>
       ))}
-    </div>
-  );
-}
-export function DonutChart({ rows }: { rows: ChartRow[] }) {
-  const total = rows.reduce((s, x) => s + x.value, 0) || 1,
-    critical = rows[0]?.value || 0,
-    danger = rows[1]?.value || 0,
-    p1 = (critical / total) * 100,
-    p2 = (danger / total) * 100;
-  return (
-    <div className="risk-donut-wrap">
-      <button
-        type="button"
-        className="risk-donut drillable"
-        onClick={() =>
-          openInsight({
-            title: "توزیع ریسک مشتریان",
-            subtitle: "جمع کل مشتریان موجود در نمودار",
-            stats: rows.map((x) => ({
-              label: x.label,
-              value: `${fa(x.value)} مشتری — ${fa((x.value / total) * 100)}٪`,
-            })),
-          })
-        }
-        style={{
-          background: `conic-gradient(#ef4444 0 ${p1}%,#f59e0b ${p1}% ${p1 + p2}%,#10b981 ${p1 + p2}% 100%)`,
-        }}
-      >
-        <span>
-          <b>{fa(total)}</b>
-          <small>مشتری</small>
-        </span>
-      </button>
-      <div className="chart-legend">
-        {rows.map((x, i) => (
-          <button
-            type="button"
-            className="drillable"
-            key={i}
-            onClick={() =>
-              openInsight({
-                title: x.label,
-                tone: x.tone,
-                stats: [
-                  { label: "تعداد مشتری", value: fa(x.value) },
-                  {
-                    label: "سهم از کل",
-                    value: `${fa((x.value / total) * 100)}٪`,
-                  },
-                ],
-              })
-            }
-          >
-            <i className={x.tone} />
-            <span>{x.label}</span>
-            <b>{fa(x.value)}</b>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-export function CashBars({ days }: { days: CashDay[] }) {
-  const max = Math.max(
-    ...days.flatMap((d) => [d.projected_inflow || 0, d.projected_outflow || 0]),
-    1,
-  );
-  return (
-    <div className="cash-bars">
-      {days.length ? (
-        days.map((d, i) => (
-          <div key={i}>
-            <div className="cash-bar-pair">
-              <i
-                className="in"
-                style={{
-                  height: `${Math.max(3, ((d.projected_inflow || 0) / max) * 100)}%`,
-                }}
-                title={`ورودی ${money(d.projected_inflow || 0)} تومان`}
-              />
-              <i
-                className="out"
-                style={{
-                  height: `${Math.max(3, ((d.projected_outflow || 0) / max) * 100)}%`,
-                }}
-                title={`خروجی ${money(d.projected_outflow || 0)} تومان`}
-              />
-            </div>
-            <small>{d.date_jalali || String(d.date || "").slice(5)}</small>
-          </div>
-        ))
-      ) : (
-        <div className="chart-empty">پیش‌بینی نقدینگی هنوز آماده نیست.</div>
-      )}
     </div>
   );
 }

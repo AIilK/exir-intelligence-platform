@@ -50,8 +50,6 @@ from app.services.treasury_service import (
     get_latest_payments,
     get_company_payment_orders,
     get_company_payment_orders_karamad,
-    get_customer_b2b_remittances,
-    get_customer_b2b_remittances_karamad,
     get_latest_received_cheques,
     get_open_issued_cheques,
     get_open_received_cheques,
@@ -62,7 +60,6 @@ from app.services.treasury_service import (
     search_accounts,
 )
 from app.services.treasury_insight_service import (
-    get_cashflow_scenarios,
     get_cheque_risk_dashboard,
     get_customer_financial_profile,
     get_daily_treasury_briefing,
@@ -228,34 +225,6 @@ def treasury_financial_intelligence(request: FinancialQueryRequest):
         ) from exc
 
 
-@router.get(
-    "/forecast/cashflow",
-    summary="سناریوهای توضیح‌پذیر جریان نقد",
-)
-def treasury_cashflow_forecast(
-    days: int = Query(default=30, ge=1, le=180),
-    opening_cash: str | None = Query(default=None),
-    history_days: int = Query(default=90, ge=30, le=730),
-):
-    try:
-        return get_cashflow_scenarios(
-            days=days,
-            opening_cash=opening_cash,
-            history_days=history_days,
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        logger.exception("Cashflow scenario forecast failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="ساخت سناریوی جریان نقد با خطا مواجه شد.",
-        ) from exc
-
-
 async def _process_reconciliation_upload(
     file: UploadFile,
     **options,
@@ -370,33 +339,6 @@ def company_payment_orders(
             result["errors"].append("دریافت پرداخت‌های کارآمد ناموفق بود؛ فقط راهکاران نمایش داده شده است.")
     result["rows"].sort(key=lambda row: str(row.get("order_date") or ""), reverse=True)
     return result
-
-
-@router.get("/customer-b2b-remittances", summary="حواله‌ها و واریزهای B2B مشتریان")
-def customer_b2b_remittances(
-    limit: int = Query(default=20000, ge=1, le=20000),
-    counterpart_ref: int | None = Query(default=None, ge=1),
-    source: str = Query(default="rahkaran", pattern="^(rahkaran|karamad|all)$"),
-):
-    try:
-        if source == "rahkaran":
-            return get_customer_b2b_remittances(limit=limit, counterpart_ref=counterpart_ref)
-        if source == "karamad":
-            return get_customer_b2b_remittances_karamad(limit=limit, counterpart_ref=counterpart_ref)
-        rahkaran = get_customer_b2b_remittances(limit=limit, counterpart_ref=counterpart_ref)
-        karamad = get_customer_b2b_remittances_karamad(limit=limit, counterpart_ref=counterpart_ref)
-        merged_rows = rahkaran.get("rows", []) + karamad.get("rows", [])
-        merged_rows.sort(key=lambda x: (x.get("deposit_date_jalali") or "", str(x.get("receipt_deposit_id") or "")), reverse=True)
-        return {
-            "status": "success", "source": "Rahkaran + Karamad", "rows": merged_rows,
-            "summary": {
-                key: (rahkaran["summary"].get(key, 0) or 0) + (karamad["summary"].get(key, 0) or 0)
-                for key in rahkaran["summary"]
-            },
-        }
-    except Exception as exc:
-        logger.exception("Customer B2B remittances endpoint failed")
-        raise HTTPException(status_code=500, detail="دریافت حواله‌های B2B مشتریان با خطا مواجه شد.") from exc
 
 
 @router.get("/payments/latest")

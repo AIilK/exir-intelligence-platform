@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.services.finance_operations_service import FinanceAgentOrchestrator, FinanceOperationsStore
+from app.services.finance_operations_service import FinanceOperationsStore
 
 router=APIRouter(prefix="/finance",tags=["finance-agents-and-operations"])
 
@@ -32,11 +32,6 @@ class PromiseCreate(BaseModel):
     promise_date:str
     status:str="pending"
     note:str|None=None
-
-class ScenarioRequest(BaseModel):
-    collection_rate_percent:float=Field(default=75,ge=0,le=100)
-    payment_delay_days:int=Field(default=0,ge=0,le=30)
-    opening_cash:float|None=Field(default=None,ge=0)
 
 class PoliciesUpdate(BaseModel):
     values:dict[str,Any]
@@ -87,11 +82,6 @@ def policies():return {"status":"success","values":FinanceOperationsStore().poli
 
 @router.put("/policies",summary="ویرایش قوانین بدون تغییر کد")
 def update_policies(body:PoliciesUpdate):return {"status":"success","values":FinanceOperationsStore().update_policies(body.values)}
-
-@router.post("/cashflow/scenario",summary="شبیه‌ساز سناریوی نقدینگی")
-def cashflow_scenario(body:ScenarioRequest):
-    try:return FinanceAgentOrchestrator().scenario(body.collection_rate_percent/100,body.payment_delay_days,body.opening_cash)
-    except Exception as exc:raise HTTPException(500,detail=f"محاسبه سناریو با خطا مواجه شد: {exc}") from exc
 
 @router.get("/agent-reports/history",summary="تاریخچه گزارش‌های روزانه Agentها")
 def report_history(limit:int=Query(default=30,ge=1,le=365)):return {"status":"success","reports":FinanceOperationsStore().reports(limit)}

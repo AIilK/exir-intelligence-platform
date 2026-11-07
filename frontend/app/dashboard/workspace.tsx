@@ -1,7 +1,6 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (workspace).
 import { useState } from "react";
 import { Heading, K, Risk, Status } from "./widgets";
-import { CashChart, CashTable } from "./customer-profile";
 import { fa, money, request } from "./shared";
 import type { Alert, Rep } from "./types";
 
@@ -51,104 +50,6 @@ export function Representatives({
           </article>
         ))}
       </div>
-    </>
-  );
-}
-export function Simulator({
-  result,
-  setResult,
-}: {
-  result: any;
-  setResult: (x: any) => void;
-}) {
-  const [rate, setRate] = useState(75),
-    [delay, setDelay] = useState(0),
-    [opening, setOpening] = useState("");
-  const run = async () =>
-    setResult(
-      await request("/cashflow/scenario", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          collection_rate_percent: rate,
-          payment_delay_days: delay,
-          opening_cash: opening ? Number(opening) * 10 : null,
-        }),
-      }),
-    );
-  return (
-    <>
-      <article className="fd-panel">
-        <Heading
-          h="اگر چه اتفاقی بیفتد؟"
-          p="نرخ وصول، جابه‌جایی پرداخت و موجودی افتتاحیه را تغییر دهید."
-        />
-        <div className="scenario-controls">
-          <label>
-            نرخ وصول چک‌ها <b>{fa(rate)}٪</b>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={rate}
-              onChange={(e) => setRate(Number(e.target.value))}
-            />
-          </label>
-          <label>
-            تعویق پرداخت‌ها <b>{fa(delay)} روز</b>
-            <input
-              type="range"
-              min="0"
-              max="30"
-              value={delay}
-              onChange={(e) => setDelay(Number(e.target.value))}
-            />
-          </label>
-          <label>
-            موجودی افتتاحیه (تومان)
-            <input
-              inputMode="numeric"
-              placeholder="مثلاً ۵۰۰٬۰۰۰٬۰۰۰"
-              value={opening}
-              onChange={(e) => setOpening(e.target.value)}
-            />
-          </label>
-          <button onClick={run}>محاسبه سناریو</button>
-        </div>
-      </article>
-      {result && (
-        <>
-          <div className="fd-kpis">
-            <K
-              t="نرخ وصول سناریو"
-              v={`${fa(result.inputs?.collection_rate_percent)}٪`}
-              n="ورودی انتخابی"
-              c="teal"
-            />
-            <K
-              t="اولین کسری"
-              v={result.first_shortage_date || "ندارد"}
-              n="با موجودی ثبت‌شده"
-              c="red"
-            />
-            <K
-              t="بدترین مانده"
-              v={
-                result.worst_projected_cash == null
-                  ? "نامشخص"
-                  : money(result.worst_projected_cash)
-              }
-              n="تومان"
-              c="amber"
-            />
-          </div>
-          <article className="fd-panel">
-            <CashChart days={result.timeline || []} />
-            <CashTable days={result.timeline || []} />
-            <div className="scenario-advice">✦ {result.management_advice}</div>
-          </article>
-        </>
-      )}
     </>
   );
 }

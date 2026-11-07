@@ -120,23 +120,3 @@ class FinanceOperationsStore:
 
     def notifications(self, limit=100):
         with self.connect() as db:return [dict(r) for r in db.execute("SELECT * FROM notification_outbox ORDER BY created_at DESC LIMIT ?",(limit,))]
-
-
-class FinanceAgentOrchestrator:
-    """فقط سناریوساز نقدینگی؛ گزارش Agentها را PageAgentOrchestrator (قواعد الارم + Agent مدیر) می‌سازد."""
-    def __init__(self): self.store=FinanceOperationsStore()
-
-    def scenario(self, collection_rate: float=.75, payment_delay_days: int=0, opening_cash: float|None=None):
-        from app.services.finance_prediction_service import FinancePredictionService
-        base=FinancePredictionService(opening_cash=opening_cash).cash_shortage_forecast(); source=base.get("timeline") or []
-        issued=[float(x.get("issued_cheques_due") or 0)+float(x.get("approved_unexecuted_payment_orders_due") or 0) for x in source]; running=0.0; timeline=[]; first=None; worst=None
-        for i,row in enumerate(source):
-            gross_received=float(row.get("weighted_received_cheques") or 0)/.75 if .75 else 0
-            shifted=issued[i-payment_delay_days] if i>=payment_delay_days else 0
-            inflow=float(row.get("historical_average_operating_inflow") or 0)+gross_received*collection_rate
-            outflow=float(row.get("historical_average_operating_outflow") or 0)+shifted
-            net=inflow-outflow; running+=net; cash=None if opening_cash is None else opening_cash+running
-            if cash is not None and cash<0 and first is None: first=row.get("date_jalali") or row.get("date")
-            if cash is not None: worst=cash if worst is None else min(worst,cash)
-            timeline.append({"date":row.get("date"),"date_jalali":row.get("date_jalali"),"projected_inflow":round(inflow,2),"projected_outflow":round(outflow,2),"daily_net_change":round(net,2),"cumulative_net_change":round(running,2),"projected_cash":None if cash is None else round(cash,2),"cash_shortage":cash is not None and cash<0})
-        return {"status":"success","inputs":{"collection_rate_percent":collection_rate*100,"payment_delay_days":payment_delay_days,"opening_cash":opening_cash},"first_shortage_date":first,"worst_projected_cash":worst,"timeline":timeline,"management_advice":"اگر روز منفی باقی مانده است، وصول مشتریان اولویت‌دار را جلو انداخته و پرداخت‌های غیرضروری را با تأیید مدیر مالی جابه‌جا کنید."}

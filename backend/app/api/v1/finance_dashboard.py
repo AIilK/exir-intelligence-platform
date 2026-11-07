@@ -6,7 +6,6 @@ from tempfile import NamedTemporaryFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from app.services.finance_dashboard_service import FinanceDashboardService
 
 
 router = APIRouter(prefix="/finance", tags=["finance-intelligence"])
@@ -38,79 +37,6 @@ def _refresh_finance_agents_after_karamad_import(result: dict) -> dict:
             "error": f"{type(exc).__name__}: {str(exc)[:240]}",
         }
     return result
-
-
-@router.post("/cashflow-excel/upload", summary="بارگذاری روزانه Cash Flow و تحلیل خودکار ماه شمسی")
-async def upload_daily_cashflow_excel(file: UploadFile = File(...)):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    filename = Path(file.filename or "").name
-    if not filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=422, detail="فقط فایل Excel با پسوند xlsx مجاز است.")
-    temporary: Path | None = None
-    try:
-        content = await file.read()
-        if len(content) > 25 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="حجم فایل نباید بیشتر از ۲۵ مگابایت باشد.")
-        with NamedTemporaryFile(delete=False, suffix=".xlsx") as handle:
-            handle.write(content)
-            temporary = Path(handle.name)
-        return MonthlyCashflowExcelService().save_upload(temporary, filename)
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"پردازش فایل Cash Flow با خطا مواجه شد: {exc}") from exc
-    finally:
-        if temporary and temporary.exists():
-            temporary.unlink()
-
-
-@router.get("/cashflow-excel/months", summary="ماه‌های دارای فایل Cash Flow")
-def cashflow_excel_months():
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    return {"status": "success", "months": MonthlyCashflowExcelService().months()}
-
-
-@router.get("/cashflow-excel/folder/status", summary="وضعیت پوشه خودکار Cash Flow")
-def cashflow_excel_folder_status():
-    from app.services.cashflow_folder_import_service import CashflowFolderImportService
-    return CashflowFolderImportService().status()
-
-
-@router.post("/cashflow-excel/folder/scan", summary="بررسی فوری پوشه خودکار Cash Flow")
-def cashflow_excel_folder_scan():
-    from app.services.cashflow_folder_import_service import CashflowFolderImportService
-    try:
-        return CashflowFolderImportService().scan()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"بررسی پوشه Cash Flow با خطا مواجه شد: {exc}") from exc
-
-
-@router.get("/cashflow-excel/analysis", summary="تحلیل Cash Flow از ابتدای ماه شمسی انتخاب‌شده")
-def cashflow_excel_analysis(
-    jalali_year: int = Query(..., ge=1300, le=1500),
-    jalali_month: int = Query(..., ge=1, le=12),
-):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    return MonthlyCashflowExcelService().analyze(jalali_year, jalali_month)
-
-@router.get("/cashflow-excel/files/{jalali_year}/{jalali_month}/{stored_file}/preview", summary="نمایش شیت‌های فایل Cash Flow")
-def cashflow_excel_preview(jalali_year: int, jalali_month: int, stored_file: str):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    try:
-        return MonthlyCashflowExcelService().workbook_preview(jalali_year, jalali_month, stored_file)
-    except (ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-@router.get("/cashflow-excel/files/{jalali_year}/{jalali_month}/{stored_file}/download", summary="دانلود فایل اصلی Cash Flow")
-def cashflow_excel_download(jalali_year: int, jalali_month: int, stored_file: str):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    try:
-        path = MonthlyCashflowExcelService().stored_workbook(jalali_year, jalali_month, stored_file)
-        return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=stored_file.split("__", 1)[-1])
-    except (ValueError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/karamad-payment-transfers/upload", summary="ورود حواله‌های پرداختی کارآمد از Excel")
@@ -791,48 +717,6 @@ def customer_intelligence_detail(
 
 
 @router.get(
-    "/dashboard",
-    summary="داشبورد هوشمند مالی از SQL Server شرکت",
-)
-def finance_dashboard(
-    allowed_term_days: int = Query(default=90, ge=1, le=365),
-    history_days: int = Query(default=365, ge=30, le=730),
-    forecast_days: int = Query(default=30, ge=1, le=180),
-    opening_cash: float | None = Query(
-        default=None,
-        ge=0,
-        description="اختیاری؛ اگر مانده نقد قطعی موجود است برای سناریوی نقدینگی استفاده می‌شود.",
-    ),
-):
-    try:
-        return FinanceDashboardService(
-            allowed_term_days=allowed_term_days,
-            history_days=history_days,
-            forecast_days=forecast_days,
-            opening_cash=opening_cash,
-        ).build_dashboard()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"ساخت داشبورد مالی از SQL Server با خطا مواجه شد: {exc}",
-        ) from exc
-
-
-@router.get(
-    "/dashboard/health",
-    summary="بررسی اتصال منبع SQL داشبورد مالی",
-)
-def finance_dashboard_health():
-    try:
-        return FinanceDashboardService().health()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"SQL Server dashboard source is unavailable: {exc}",
-        ) from exc
-
-
-@router.get(
     "/predictions/customers",
     summary="پیش‌بینی وصول، دیرکرد و ریسک برگشت به تفکیک مشتری",
 )
@@ -913,62 +797,6 @@ def cheque_return_predictions(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"پیش‌بینی ریسک برگشت چک با خطا مواجه شد: {exc}",
         ) from exc
-
-
-@router.get(
-    "/predictions/cash-shortage",
-    summary="پیش‌بینی روزانه فشار/کسری نقدینگی",
-)
-def cash_shortage_prediction(
-    history_days: int = Query(default=365, ge=30, le=730),
-    forecast_days: int = Query(default=30, ge=1, le=180),
-    opening_cash: float | None = Query(default=None, ge=0),
-):
-    from app.services.finance_prediction_service import FinancePredictionService
-
-    try:
-        return FinancePredictionService(
-            history_days=history_days,
-            forecast_days=forecast_days,
-            opening_cash=opening_cash,
-        ).cash_shortage_forecast()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"پیش‌بینی کسری نقدینگی با خطا مواجه شد: {exc}",
-        ) from exc
-
-
-@router.get(
-    "/cashflow/unified",
-    summary="Cash Flow واحد: موجودی Excel و خط زمان SQL",
-)
-def unified_cashflow(
-    history_days: int = Query(default=365, ge=30, le=730),
-    forecast_days: int = Query(default=30, ge=7, le=180),
-    allowed_term_days: int = Query(default=90, ge=1, le=365),
-):
-    from app.services.unified_cashflow_service import UnifiedDailyCashflowService
-    try:
-        return UnifiedDailyCashflowService(
-            history_days=history_days,
-            forecast_days=forecast_days,
-            allowed_term_days=allowed_term_days,
-        ).build()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"ساخت Cash Flow واحد با خطا مواجه شد: {exc}",
-        ) from exc
-
-
-@router.get(
-    "/cashflow/history",
-    summary="مقایسه چند ماه Cash Flow واقعی Excel",
-)
-def cashflow_history(months: int = Query(default=6, ge=2, le=24)):
-    from app.services.monthly_cashflow_excel_service import MonthlyCashflowExcelService
-    return MonthlyCashflowExcelService().historical_comparison(months_limit=months)
 
 
 @router.get(

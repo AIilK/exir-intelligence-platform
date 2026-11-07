@@ -7,16 +7,13 @@ import "./enterprise.css";
 import "./operations.css";
 import "./cheque-remaining.css";
 import "./visual-dashboard.css";
-import "./monthly-excel.css";
 import "./agent.css";
 import "./readability-fix.css";
 import "./customer-reliability.css";
 import "./agents-v171.css";
 import "./font-size-v36.css";
 import "./drilldown.css";
-import "./folder-automation.css";
 import "./reliance-explanation.css";
-import "./excel-viewer.css";
 import "./command-center-3d.css";
 import "./cash-bank-movements.css";
 import "./ui-polish-v69.css";
@@ -41,18 +38,16 @@ import Pet from "./pet/pet";
 import "./theme/theme.css";
 import { description, label } from "./dashboard/widgets";
 import { CashBankMovements } from "./dashboard/cash-bank-movements";
-import { Cashflow } from "./dashboard/cashflow";
 import { ChequeHub, ChequeSourcePage } from "./dashboard/cheques";
 import { Collections } from "./dashboard/collections";
 import { CustomerProfile } from "./dashboard/customer-profile";
 import { Customers } from "./dashboard/customers";
 import { DistributionPage } from "./dashboard/distribution";
 import { Management } from "./dashboard/management";
-import { MonthlyExcelAutomation } from "./dashboard/monthly-excel";
-import { B2BCustomerRemittances, CompanyPaymentOrders } from "./dashboard/payments";
+import { CompanyPaymentOrders } from "./dashboard/payments";
 import { InsightCenter, cname, fa, menu, request, treasuryRequest } from "./dashboard/shared";
 import type { Alert, Case, Customer, Pack, TreasuryCheque, View } from "./dashboard/types";
-import { Alerts, History, Performance, Representatives, Settings, Simulator } from "./dashboard/workspace";
+import { Alerts, History, Performance, Representatives, Settings } from "./dashboard/workspace";
 
 export default function Page(props: { view?: View; onViewChange?: (v: View) => void } = {}) {
   const { profile, can, hasModule, logout } = useAuth();
@@ -68,11 +63,9 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [selected, setSelected] = useState<Customer | null>(null),
-    [scenario, setScenario] = useState<any>(null),
     [received, setReceived] = useState<TreasuryCheque[]>([]),
     [issued, setIssued] = useState<TreasuryCheque[]>([]),
-    [treasuryError, setTreasuryError] = useState(""),
-    [chequeQuality, setChequeQuality] = useState<any>(null);
+    [treasuryError, setTreasuryError] = useState("");
   // رفتن به صفحه فقط اگر در ماژول‌های کاربر باشد (لینک چت‌بات، الارم و کارت‌ها هم از همین می‌گذرند).
   const view: View = props.view ?? innerView;
   const { onViewChange } = props;
@@ -142,18 +135,15 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
     return () => cleanups.forEach((fn) => fn());
   }, [view, pack, selected]);
   const refreshTreasuryCheques = useCallback(async () => {
-    const [r, i, q] = await Promise.allSettled([
+    const [r, i] = await Promise.allSettled([
       treasuryRequest("/cheques/received/open?period=all"),
       treasuryRequest("/cheques/issued/open"),
-      treasuryRequest("/cheques/status-quality"),
     ]);
     const errors: string[] = [];
     if (r.status === "fulfilled") setReceived(r.value.cheques || []);
     else errors.push(`چک دریافتی: ${r.reason?.message || "خطای نامشخص"}`);
     if (i.status === "fulfilled") setIssued(i.value.cheques || []);
     else errors.push(`چک پرداختی: ${i.reason?.message || "خطای نامشخص"}`);
-    if (q.status === "fulfilled") setChequeQuality(q.value);
-    else errors.push(`وضعیت قطعی: ${q.reason?.message || "خطای نامشخص"}`);
     setTreasuryError(errors.join(" | "));
   }, []);
   useEffect(() => { void refreshTreasuryCheques(); }, [refreshTreasuryCheques]);
@@ -198,7 +188,6 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
     [pack],
   );
   const cheques = pack?.data?.cheques?.cheques || [],
-    cash = pack?.data?.cashflow,
     reps = pack?.data?.representatives?.representatives || [],
     manager = pack?.management_summary?.analysis;
   return (
@@ -270,7 +259,6 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
             manager={manager}
             customers={customers}
             cheques={cheques}
-            cash={cash}
             alerts={alerts}
             received={received.length ? received : cheques}
             issued={issued}
@@ -304,9 +292,6 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
           <ChequeSourcePage kind="issued" rows={issued}
             error={treasuryError} back={() => setView("cheques")} onUpdated={refreshAfterKaramadUpdate} />
         )}
-        {view === "cashflow" && (
-          <Cashflow cash={cash} openAgent={() => setView("alerts")} />
-        )}
         {view === "liquidity" && <LiquidityPage />}
         {view === "inventoryPricing" && <InventoryPricingPage />}
         {view === "purchaseDocs" && <PurchaseDocsPage />}
@@ -320,11 +305,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
           <CashBankMovements />
         )}
         {view === "companyPayments" && <CompanyPaymentOrders />}
-        {view === "b2bRemittances" && <B2BCustomerRemittances />}
         {view === "distribution" && <DistributionPage />}
-        {view === "monthlyExcel" && (
-          <MonthlyExcelAutomation chequeQuality={chequeQuality} />
-        )}
         {view === "collections" && (
           <Collections
             cases={cases}
@@ -337,11 +318,6 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
             reps={reps}
             unmapped={pack?.data?.representatives?.unmapped_customer_count}
           />
-        )}
-        {view === "simulator" && (
-          <>
-            <Simulator result={scenario} setResult={setScenario} />
-          </>
         )}
         {view === "alerts" && <>
           <AlarmCenter onGo={(v) => setView(v as View)} moduleTitles={moduleTitles} />

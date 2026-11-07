@@ -4,7 +4,7 @@ import { RegCell, chequeNo } from "../cheque-reg";
 import { Heading, K, Risk } from "./widgets";
 import { CustomerSqlAudit } from "./cheques";
 import { cname, daysToDue, fa, fullToman, money, request, risk, textOf } from "./shared";
-import type { CashDay, Customer, CustomerAudit } from "./types";
+import type { Customer, CustomerAudit } from "./types";
 
 export function LegacyCustomerProfile({
   c,
@@ -164,111 +164,6 @@ export function LegacyCustomerProfile({
           ایجاد پرونده وصول برای این مشتری
         </button> : null}
       </article>
-    </div>
-  );
-}
-export function CashChart({ days }: { days: CashDay[] }) {
-  let shown = days.filter(
-      (_, i) => i % Math.max(1, Math.ceil(days.length / 15)) === 0,
-    ),
-    vals = shown.map((x) => x.projected_cash ?? x.cumulative_net_change ?? 0),
-    min = Math.min(...vals, 0),
-    max = Math.max(...vals, 1),
-    range = max - min || 1,
-    pts = vals
-      .map(
-        (v, i) =>
-          `${20 + (i * 560) / Math.max(vals.length - 1, 1)},${175 - ((v - min) / range) * 135}`,
-      )
-      .join(" ");
-  return days.length ? (
-    <svg className="cash-chart" viewBox="0 0 600 210">
-      <line
-        x1="20"
-        y1={175 - ((0 - min) / range) * 135}
-        x2="580"
-        y2={175 - ((0 - min) / range) * 135}
-      />
-      <polyline points={pts} />
-      {vals.map((v, i) => (
-        <circle
-          key={i}
-          cx={20 + (i * 560) / Math.max(vals.length - 1, 1)}
-          cy={175 - ((v - min) / range) * 135}
-          r="4"
-          className={v < 0 ? "neg" : ""}
-        />
-      ))}
-    </svg>
-  ) : (
-    <div className="fd-empty">داده نقدینگی هنوز دریافت نشده است.</div>
-  );
-}
-export function CashFlowCompositionChart({ summary }: { summary: any }) {
-  const rows = [
-    { label: "وصول چک", value: Number(summary.reliable_received_cheques_rial || 0), tone: "#19a974" },
-    { label: "چک پرداختی", value: Number(summary.issued_cheques_rial || 0), tone: "#f59e0b" },
-    { label: "حقوق", value: Number(summary.salary_reserve_rial || 0), tone: "#ef4444" },
-  ];
-  const max = Math.max(...rows.map((row) => row.value), 1);
-  return (
-    <section className="cash-composition-chart">
-      <b>ترکیب مهم‌ترین ورودی و خروجی‌های بازه</b>
-      {rows.map((row) => <div key={row.label}>
-        <span>{row.label}</span>
-        <i><em style={{ width: `${(row.value / max) * 100}%`, background: row.tone }} /></i>
-        <strong>{money(row.value)} تومان</strong>
-      </div>)}
-    </section>
-  );
-}
-export function CashTable({ days }: { days: CashDay[] }) {
-  return (
-    <div className="cash-table-wrap">
-      <table className="cash-table">
-        <thead>
-          <tr>
-            <th>تاریخ</th>
-            <th>چک دریافتی ≥۸۵٪</th>
-            <th>چک پرداختی</th>
-            <th>حقوق</th>
-            <th>خالص روز</th>
-            <th>مانده</th>
-            <th>وضعیت</th>
-          </tr>
-        </thead>
-        <tbody>
-          {days.map((d, i) => {
-            let n = d.daily_net_change || 0,
-              s = d.cash_shortage ? "critical" : n < 0 ? "pressure" : "good";
-            return (
-              <tr key={d.date || i} className={s}>
-                <td>
-                  <b>{d.date_jalali || d.date}</b>
-                </td>
-                <td className="positive">+ {money(d.reliable_received_cheques || 0)}</td>
-                <td className="negative">− {money(d.issued_cheques_due || 0)}</td>
-                <td className="negative">− {money(d.salary_reserve || 0)}</td>
-                <td className={n < 0 ? "negative" : "positive"}>{money(n)}</td>
-                <td>
-                  {d.projected_cash == null
-                    ? "تعریف نشده"
-                    : money(d.projected_cash)}
-                </td>
-                <td>
-                  <span className={`cash-status ${s}`}>
-                    {s === "critical"
-                      ? "کسری"
-                      : s === "pressure"
-                        ? "فشار نقدی"
-                        : "مناسب"}
-                  </span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
     </div>
   );
 }

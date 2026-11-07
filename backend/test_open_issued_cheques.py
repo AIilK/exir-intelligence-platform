@@ -146,15 +146,6 @@ def test_duration_change_status_document_is_posted_whatever_its_header_text():
     assert _issued_posting_status(11, "پرداخت 40% پ ف 601") == (False, "باز / سند نخورده")
 
 
-def test_cashflow_forecast_excludes_duration_change_posted_cheques():
-    from pathlib import Path
-
-    source = (Path(__file__).parent / "app" / "services" / "finance_prediction_service.py").read_text(encoding="utf-8")
-    issued = source[source.index("issued_query = text("):source.index("received_query = text(")]
-    assert "RPA3.[DurationChangePayableNote] AS dcp" in issued
-    assert "dc.[ApproveState] = 3" in issued
-
-
 def test_issued_queries_exclude_shareholder_counterpart(monkeypatch):
     # Shareholder cheques often read «پرداخت به جاری شرکا ...», so the description filter
     # alone let them through; the «سهامداران» counterpart must be excluded as well.
@@ -169,12 +160,3 @@ def test_issued_queries_exclude_shareholder_counterpart(monkeypatch):
     assert len(engine.queries) == 3
     for sql in engine.queries:
         assert "ISNULL(counterpart.[Code], N'') <> N'950031'" in sql
-
-
-def test_cashflow_forecast_excludes_shareholder_cheques():
-    from pathlib import Path
-
-    source = (Path(__file__).parent / "app" / "services" / "finance_prediction_service.py").read_text(encoding="utf-8")
-    issued = source[source.index("issued_query = text("):source.index("received_query = text(")]
-    assert "shareholder.[Code] = :shareholders_dl_code" in issued
-    assert '"shareholders_dl_code": SHAREHOLDERS_DL_CODE' in source

@@ -4,14 +4,14 @@ import { useAuth } from '@finance/auth/auth.tsx'
 
 // Views of the finance command center (dashboard-client.tsx `View` type).
 const VIEWS = new Set([
-  'overview', 'management', 'sales', 'users', 'customers', 'cheques', 'receivedCheques', 'issuedCheques', 'cashflow', 'liquidity',
+  'overview', 'management', 'sales', 'users', 'customers', 'cheques', 'receivedCheques', 'issuedCheques', 'liquidity',
   'inventoryPricing', 'purchaseDocs', 'payables', 'pnl',
-  'cashBank', 'companyPayments', 'b2bRemittances', 'monthlyExcel', 'collections', 'distribution',
-  'representatives', 'simulator', 'alerts', 'history', 'performance', 'settings',
+  'cashBank', 'companyPayments', 'collections', 'distribution',
+  'representatives', 'alerts', 'history', 'performance', 'settings',
 ])
 
 // customer-facing finance pages → the combined files that put the same customers next to their sales
-const CUSTOMER_VIEWS = new Set(['customers', 'receivedCheques', 'collections', 'b2bRemittances', 'representatives', 'distribution'])
+const CUSTOMER_VIEWS = new Set(['customers', 'receivedCheques', 'collections', 'representatives', 'distribution'])
 
 /** The original finance dashboard, unchanged, with its own sidebar hidden and its page picked by the URL. */
 export default function FinanceView() {

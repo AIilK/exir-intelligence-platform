@@ -44,7 +44,7 @@ class PageAgentOrchestrator:
             sales = {"status": "error", "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
         # داده‌ای که صفحات فعلی از آخرین گزارش می‌خوانند (فهرست مشتریان، نقدینگی، چک‌ها، نمایندگان).
         data: dict[str, Any] = {}
-        for key, getter in (("customer", context.customer), ("cashflow", context.cash),
+        for key, getter in (("customer", context.customer),
                             ("cheques", context.cheque_predictions), ("representatives", context.representatives),
                             ("collections", context.collections), ("cheque_portfolio", context.cheque_portfolio)):
             try:

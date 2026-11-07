@@ -1752,68 +1752,6 @@ def _b2b_remittance_category(description: Any) -> tuple[str, bool]:
     return "سایر دریافت بانکی", False
 
 
-def get_customer_b2b_remittances_karamad(
-    limit: int = 20000,
-    counterpart_ref: int | None = None,
-) -> dict[str, Any]:
-    """واریزهای بانکی مشتریان کارآمد (dbo.tblDraftD)، با همون طبقه‌بندی متنی B2B راهکاران.
-
-    فقط ردیف‌های ورودی («حواله دریافتی») که طرف‌حسابشون واقعاً یک مشتری است
-    (dl_class_ref = 9 «مشتریان» در tblDLClass) به‌عنوان دریافت B2B در نظر گرفته
-    می‌شود — سایر طرف‌حساب‌ها (بانک، پرسنل، تامین‌کننده و ...) حتی اگر ورودی
-    باشند، اینجا نمی‌آیند.
-    """
-    from app.services.karamad_live_cash_draft_service import KaramadLiveCashDraftService
-    from datetime import date
-
-    safe_limit = max(1, min(int(limit), 200000))
-    data = KaramadLiveCashDraftService().report(
-        start=date(2000, 1, 1), end=date.today(), limit=safe_limit,
-    )
-    rows: list[dict[str, Any]] = []
-    for m in data.get("movements", []):
-        if m.get("channel") != "draft" or m.get("direction") != "inflow":
-            continue
-        if m.get("dl_class_ref") != 9:
-            continue
-        if counterpart_ref is not None and m.get("dl_ref") != counterpart_ref:
-            continue
-        description = m.get("description") or m.get("purpose") or m.get("behalf") or ""
-        category, eligible = _b2b_remittance_category(description)
-        rows.append({
-            "receipt_deposit_id": f"karamad:{m.get('document_id')}", "receipt_id": m.get("document_id"),
-            "receipt_number": m.get("document_number"), "receipt_date": m.get("document_date"),
-            "deposit_number": m.get("document_number"), "deposit_date": m.get("document_date"),
-            "deposit_date_jalali": m.get("document_date_jalali"),
-            "approve_date": m.get("document_date"), "approve_state": 3 if m.get("confirmed") else 2,
-            "approve_state_label": "تأیید نهایی" if m.get("confirmed") else "تأییدشده",
-            "receipt_type": None, "item_type": None,
-            "counterpart_ref": m.get("dl_ref"), "customer_code": None,
-            "customer_name": m.get("level4_name") or m.get("counterpart_name"), "amount_rial": m.get("amount_rial"),
-            "currency_amount": None, "bank_account_ref": m.get("bank_ref"),
-            "bank_ref": m.get("bank_ref"), "bank_branch_code": None,
-            "bank_branch_name": m.get("bank_name"), "branch_ref": m.get("branch_ref"),
-            "fiscal_year_ref": None, "description": description,
-            "category": category, "is_b2b_customer_payment": eligible,
-            "is_returned_cheque_settlement": category == "تسویه چک برگشتی", "source": "کارآمد",
-        })
-
-    eligible_rows = [x for x in rows if x["is_b2b_customer_payment"]]
-    direct_rows = [x for x in eligible_rows if not x["is_returned_cheque_settlement"]]
-    returned_rows = [x for x in eligible_rows if x["is_returned_cheque_settlement"]]
-    return {
-        "status": "success", "live": True, "source": "Karamad Live SQL / dbo.tblDraftD",
-        "rows": rows,
-        "summary": {
-            "all_bank_deposit_count": len(rows),
-            "b2b_count": len(eligible_rows),
-            "b2b_amount_rial": sum(float(x["amount_rial"] or 0) for x in eligible_rows),
-            "direct_count": len(direct_rows),
-            "direct_amount_rial": sum(float(x["amount_rial"] or 0) for x in direct_rows),
-            "returned_cheque_settlement_count": len(returned_rows),
-            "returned_cheque_settlement_amount_rial": sum(float(x["amount_rial"] or 0) for x in returned_rows),
-        },
-    }
 
 
 def get_customer_b2b_remittances(

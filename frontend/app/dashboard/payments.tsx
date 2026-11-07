@@ -1,63 +1,7 @@
 // بخشی از داشبورد مالی که از dashboard-client.tsx جدا شده است (payments).
 import { useEffect, useState } from "react";
-import { Heading, K } from "./widgets";
+import { K } from "./widgets";
 import { fa, fullToman, treasuryRequest } from "./shared";
-
-export function B2BCustomerRemittances() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("B2B");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [source, setSource] = useState("rahkaran");
-  useEffect(() => {
-    setLoading(true);
-    treasuryRequest(`/customer-b2b-remittances?limit=20000&source=${source}`)
-      .then(setData).catch((e) => setError(e instanceof Error ? e.message : "خطا در دریافت حواله‌های B2B"))
-      .finally(() => setLoading(false));
-  }, [source]);
-  const rows = data?.rows || [];
-  const q = search.trim().toLowerCase();
-  const viewRows = rows.filter((x:any) => {
-    const d = String(x.deposit_date || "").slice(0,10);
-    const text = `${x.customer_name || ""} ${x.customer_code || ""} ${x.receipt_number || ""} ${x.deposit_number || ""} ${x.description || ""}`.toLowerCase();
-    const catOk = category === "همه" ? true : category === "B2B" ? x.is_b2b_customer_payment : x.category === category;
-    return (!q || text.includes(q)) && catOk && (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
-  });
-  const total = viewRows.reduce((a:number,x:any)=>a+Number(x.amount_rial||0),0);
-  const customers = new Set(viewRows.filter((x:any)=>x.is_b2b_customer_payment).map((x:any)=>x.counterpart_ref)).size;
-  const direct = viewRows.filter((x:any)=>x.is_b2b_customer_payment && !x.is_returned_cheque_settlement);
-  const returned = viewRows.filter((x:any)=>x.is_returned_cheque_settlement);
-  const categories = Array.from(new Set(rows.map((x:any)=>x.category).filter(Boolean))) as string[];
-  if (loading) return <article className="fd-panel b2b-page"><p>در حال دریافت حواله‌های مشتریان B2B…</p></article>;
-  return <article className="fd-panel b2b-page">
-    <Heading h="حواله‌ها و واریزهای مشتریان B2B" p={`دریافت‌های بانکی ${source === "rahkaran" ? "راهکاران" : source === "karamad" ? "کارآمد" : "راهکاران و کارآمد"}؛ انتقال داخلی، بازگشت پرداخت و نقد کردن چک از پرداخت واقعی B2B جدا شده‌اند.`} />
-    {error && <div className="profile-warning">{error}</div>}
-    <div className="modal-metrics b2b-kpis">
-      <K t="تعداد تراکنش" v={fa(viewRows.length)} n="ReceiptDeposit" c="blue" />
-      <K t="مبلغ بازه" v={fullToman(total)} n="تومان" c="teal" />
-      <K t="مشتریان B2B" v={fa(customers)} n="طرف حساب" c="blue" />
-      <K t="واریز مستقیم" v={fa(direct.length)} n={fullToman(direct.reduce((a:number,x:any)=>a+Number(x.amount_rial||0),0)) + " تومان"} c="teal" />
-      <K t="تسویه چک برگشتی" v={fa(returned.length)} n={fullToman(returned.reduce((a:number,x:any)=>a+Number(x.amount_rial||0),0)) + " تومان"} c="amber" />
-    </div>
-    <div className="b2b-toolbar">
-      <select value={source} onChange={e=>setSource(e.target.value)} aria-label="منبع داده" title="منبع داده">
-        <option value="rahkaran">راهکاران</option>
-        <option value="karamad">کارآمد</option>
-        <option value="all">هر دو</option>
-      </select>
-      <input placeholder="جستجو مشتری، رسید، حواله یا شرح…" value={search} onChange={e=>setSearch(e.target.value)} />
-      <select value={category} onChange={e=>setCategory(e.target.value)}><option value="B2B">فقط پرداخت‌های B2B</option><option value="همه">همه دریافت‌های بانکی</option>{categories.map(x=><option key={x} value={x}>{x}</option>)}</select>
-      <label>از <input type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} /></label>
-      <label>تا <input type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} /></label>
-    </div>
-    <div className="b2b-table-wrap"><table><thead><tr><th>تاریخ</th><th>مشتری</th><th>شماره رسید</th><th>شماره حواله</th><th>مبلغ (تومان)</th><th>بانک/شعبه</th><th>وضعیت</th><th>نوع</th><th>شرح</th></tr></thead><tbody>
-      {viewRows.map((x:any)=><tr key={x.receipt_deposit_id} className={!x.is_b2b_customer_payment ? "non-b2b" : ""}><td>{x.deposit_date_jalali || String(x.deposit_date||"").slice(0,10)}</td><td><b>{x.customer_name || "—"}</b><small>{x.customer_code || ""}</small></td><td>{x.receipt_number || "—"}</td><td>{x.deposit_number || "—"}</td><td>{fullToman(Number(x.amount_rial||0))}</td><td>{x.bank_branch_name || `حساب ${x.bank_account_ref || "—"}`}</td><td>{x.approve_state_label}</td><td><span className="b2b-category">{x.category}</span></td><td className="b2b-desc">{x.description || "—"}</td></tr>)}
-    </tbody></table></div>
-  </article>;
-}
 
 export function CompanyPaymentOrders() {
   const [data, setData] = useState<any>(null);

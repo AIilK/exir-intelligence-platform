@@ -16,7 +16,7 @@ MODULES: dict[str, dict[str, Any]] = {
         "title": "خلاصه مدیریتی مالی",
         "views": ["overview", "management", "history"],
         # خلاصه مالی همه بلوک‌هایش را نشان می‌دهد؛ پس الارم همان بخش‌ها را هم می‌گیرد.
-        "alarm_agents": ["management", "received_cheques", "issued_cheques", "payables", "liquidity", "cashflow", "distribution"],
+        "alarm_agents": ["management", "received_cheques", "issued_cheques", "payables", "liquidity", "distribution"],
         "chat_tools": ["cheques_overview", "cheque_status_list", "liquidity_forecast", "payables_overview", "distribution_month"],
     },
     "sales": {
@@ -83,14 +83,14 @@ MODULES: dict[str, dict[str, Any]] = {
     },
     "cashBank": {
         "title": "نقد و حواله",
-        "views": ["cashBank", "monthlyExcel"],
-        "alarm_agents": ["cash_bank_movement", "daily_cash_excel"],
+        "views": ["cashBank"],
+        "alarm_agents": ["cash_bank_movement"],
         "chat_tools": [],
     },
     "companyPayments": {
         "title": "حواله‌های پرداختی شرکت",
-        "views": ["companyPayments", "b2bRemittances"],
-        "alarm_agents": ["company_payments", "b2b_remittances"],
+        "views": ["companyPayments"],
+        "alarm_agents": ["company_payments"],
         "chat_tools": [],
     },
     "payables": {
@@ -101,8 +101,8 @@ MODULES: dict[str, dict[str, Any]] = {
     },
     "liquidity": {
         "title": "نقدینگی",
-        "views": ["liquidity", "cashflow", "simulator"],
-        "alarm_agents": ["liquidity", "cashflow"],
+        "views": ["liquidity"],
+        "alarm_agents": ["liquidity"],
         "chat_tools": ["liquidity_forecast"],
     },
     "pnl": {
@@ -192,7 +192,6 @@ API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/finance/karamad-payment-transfers", ("cashBank", "companyPayments")),
     ("/api/v1/treasury/cash-bank", ("cashBank", "management")),
     ("/api/v1/treasury/payment-orders", ("companyPayments",)),
-    ("/api/v1/treasury/customer-b2b-remittances", ("companyPayments",)),
     ("/api/v1/liquidity/summary", ("liquidity", "management")),
     ("/api/v1/liquidity/financing", ("liquidity", "management")),
     ("/api/v1/liquidity/payroll", ("liquidity", "management")),

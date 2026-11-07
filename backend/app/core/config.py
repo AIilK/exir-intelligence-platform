@@ -54,12 +54,6 @@ class Settings(BaseSettings):
     customer_behavior_agent_enabled: bool = True
     customer_behavior_agent_model: str = ""
     customer_behavior_agent_max_customers: int = 25
-    cashflow_excel_inbox: str = "C:/Users/Ai.WWW/Desktop/Exir_Finance_Agent_Command_Center_V12/Inbox"
-    cashflow_excel_archive: str = "C:/Users/Ai.WWW/Desktop/Exir_Finance_Agent_Command_Center_V12/Archive"
-    cashflow_excel_state_file: str = "./data/cashflow_excel/folder_import_state.json"
-    cashflow_excel_scan_enabled: bool = True
-    cashflow_excel_scan_minutes: int = 15
-    cashflow_excel_min_file_age_seconds: int = 30
     # Four recurring KarAmand exports. The folder and its four subfolders are
     # created automatically on Backend startup/first scan.
     karamad_excel_inbox: str = "KaramadInbox"
