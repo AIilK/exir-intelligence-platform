@@ -15,11 +15,14 @@ import Detail from './pages/Detail.jsx'
 import DataSource from './pages/DataSource.jsx'
 import Plan from './pages/Plan.jsx'
 import Commission from './pages/Commission.jsx'
+import Contest from './pages/Contest.jsx'
 import Inventory from './pages/Inventory.jsx'
 import Rahkaran from './pages/Rahkaran.jsx'
 import { CustomerBrand, TotalReport } from './pages/RahkaranReports.jsx'
 import Export from './pages/Export.jsx'
 import RahkaranCompare from './pages/RahkaranCompare.jsx'
+import Reorder from './pages/Reorder.jsx'
+import RahkaranCommission from './pages/RahkaranCommission.jsx'
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppProvider>
@@ -34,12 +37,15 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="analysis" element={<Analysis />} />
             <Route path="plan" element={<Plan />} />
             <Route path="commission" element={<Commission />} />
+            <Route path="contest" element={<Contest />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="rahkaran" element={<Rahkaran />} />
             <Route path="rahkaran/customer-brand" element={<CustomerBrand />} />
             <Route path="rahkaran/total-report" element={<TotalReport />} />
             <Route path="rahkaran/compare" element={<RahkaranCompare />} />
+            <Route path="rahkaran/reorder" element={<Reorder />} />
             <Route path="rahkaran/export" element={<Export />} />
+            <Route path="rahkaran/commission" element={<RahkaranCommission />} />
             <Route path="detail/:dim/:key" element={<Detail />} />
             <Route path="data" element={<DataSource />} />
             <Route path="*" element={<Overview />} />

@@ -43,8 +43,11 @@ const DataSource = () => import('@sales/pages/DataSource.jsx')
 const Rahkaran = () => import('@sales/pages/Rahkaran.jsx')
 const RahkaranReports = () => import('@sales/pages/RahkaranReports.jsx')
 const RahkaranCompare = () => import('@sales/pages/RahkaranCompare.jsx')
+const Reorder = () => import('@sales/pages/Reorder.jsx')
 const Export = () => import('@sales/pages/Export.jsx')
+const RahkaranCommission = () => import('@sales/pages/RahkaranCommission.jsx')
 const Commission = () => import('@sales/pages/Commission.jsx')
+const Contest = () => import('@sales/pages/Contest.jsx')
 
 // ورود و سطح دسترسی (بک‌اند مالی /api/v1/auth): بدون ورود هیچ صفحه‌ای باز نمی‌شود.
 installAuthFetch()
@@ -74,11 +77,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(
               <Route path="analysis" element={page(Analysis)} />
               <Route path="inventory" element={page(Inventory)} />
               <Route path="commission" element={page(Commission)} />
+              <Route path="contest" element={page(Contest)} />
               <Route path="rahkaran" element={page(Rahkaran)} />
               <Route path="rahkaran/customer-brand" element={page(RahkaranReports, 'CustomerBrand')} />
               <Route path="rahkaran/total-report" element={page(RahkaranReports, 'TotalReport')} />
               <Route path="rahkaran/compare" element={page(RahkaranCompare)} />
+              <Route path="rahkaran/reorder" element={page(Reorder)} />
               <Route path="rahkaran/export" element={page(Export)} />
+              <Route path="rahkaran/commission" element={page(RahkaranCommission)} />
               <Route path="detail/:dim/:key" element={page(Detail)} />
               <Route path="data" element={page(DataSource)} />
             </Route>

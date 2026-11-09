@@ -79,6 +79,20 @@ GROUPS = [
 ]
 GROUP_KEYS = [g["key"] for g in GROUPS if not g.get("info")]  # گروه‌هایی که تارگت می‌گیرند
 TYPES = {"commission": "پورسانتی", "employed": "استخدامی"}
+# فروشندگان شعبه زنجیره‌ای کارآمد: خودکار (بدون فهرست) در جدول پورسانت می‌آیند؛ هنوز دستورالعمل ندارند،
+# پس فروش، تخفیف مدیریتی و مطالبات نمایش داده می‌شود و پورسانت خالی است (اعلام کاربر؛ اینترنتی نه). type = "channel".
+CHANNEL_BRANCHES = {"زنجیره ای": "زنجیره‌ای"}
+
+
+def channel_visitors(sales: pd.DataFrame, month: str) -> list[dict]:
+    """فروشندگان شعبه زنجیره‌ای که در این ماه فاکتور یا برگشتی دارند."""
+    m = sales[sales["date"].str.startswith(month) & sales["branch"].map(bkey).isin(CHANNEL_BRANCHES)]
+    out = []
+    for r in m.drop_duplicates("seller_key").itertuples():
+        b = bkey(r.branch)
+        out.append({"id": f"{b}|{r.seller_code}", "branch": b, "supervisor": "", "code": str(r.seller_code),
+                    "name": clean_name(r.seller), "type": "channel", "auto": True, "note": ""})
+    return out
 
 
 # ---------------------------------------------------------------- دستورالعمل هر ماه
@@ -591,6 +605,18 @@ def _report_metrics(fs: pd.DataFrame, rq: pd.DataFrame | None, by: list[str]) ->
     return g.fillna(0)
 
 
+def _return_split(df: pd.DataFrame, by: str) -> pd.DataFrame | None:
+    """مبلغ خالص برگشتی‌ها به تفکیک by (مثبت): ret_dist = برگشت از توزیع (فاکتور فروش مرجع «خروجی» دارد)؛
+    ret_sale = برگشت از فروش (بقیه، از جمله برگشتی بدون فاکتور مرجع).
+    None یعنی تفکیک معلوم نیست: داده از فایل اکسل یا کش قدیمی ماه است، نه از خوانش تازه SQL."""
+    if "dist_return" not in df or df["dist_return"].isna().any():
+        return None
+    r = df[df["is_return"]]
+    dist = r["dist_return"].astype(bool)
+    return pd.DataFrame({"ret_sale": -r[~dist].groupby(by, observed=True)["net"].sum(),
+                         "ret_dist": -r[dist].groupby(by, observed=True)["net"].sum()}).fillna(0.0)
+
+
 def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, month: str,
             wd_elapsed: float, wd_total: float, pace: float | None) -> dict:
     """sales / requests: همه سطرها (بدون ارزش افزوده)؛ pace = کل روز کاری ÷ روز کاری سپری‌شده (فقط ماه جاری).
@@ -601,6 +627,7 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
     # شعبه‌های حذف‌شده از پورسانت (excluded_branches) نه در ویزیتورها، نه در شعبه‌ها و نه در فروشندگان بی‌فهرست می‌آیند
     excl = {bkey(b) for b in plan.get("excluded_branches") or []}
     visitors = [v for v in plan.get("visitors", []) if bkey(v["branch"]) not in excl]
+    visitors += [v for v in channel_visitors(sales, month) if v["id"] not in {x["id"] for x in visitors}]
     targets = plan.get("targets", {})
     if excl:
         sales = sales[~sales["branch"].map(bkey).isin(excl)]
@@ -625,6 +652,7 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
     sales_only = mine[~mine["is_return"]]
     agg["sales_net"] = sales_only.groupby("seller_key")["net"].sum()
     agg["returns_net"] = -mine[mine["is_return"]].groupby("seller_key")["net"].sum()
+    rets = _return_split(mine, "seller_key")
     # فاکتور عمده: فاکتور فروشی که مبلغ ناخالصش (جمع قبل تخفیف) بیش از ۷۰۰ میلیون تومان است (اعلام کاربر).
     # wholesale = فروش خالص همان فاکتورها (برای نرخ جدا در ماه‌هایی که دستورالعمل قاعده‌اش را دارد)
     inv = sales_only.assign(mgmt=sales_only["mgmt_disc"] if "mgmt_disc" in sales_only else 0.0) \
@@ -701,10 +729,13 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
         row = {"id": v["id"], "branch": v["branch"], "supervisor": v.get("supervisor") or "", "code": v.get("code") or "",
                "name": v["name"], "phone": v.get("phone") or "", "phone_from": v.get("phone_from") or "",
                "karamad_name": v.get("karamad_name") or "",
-               "type": v["type"], "type_label": TYPES[v["type"]], "note": v.get("note") or "",
+               "type": v["type"], "type_label": TYPES.get(v["type"]) or CHANNEL_BRANCHES.get(bkey(v["branch"]), ""),
+               "note": v.get("note") or "", "auto": bool(v.get("auto")),
                "ruleset": ruleset_of(v["branch"], R), "seller_key": k, "match": mt["how"] if mt else None,
                "net": net, "sales_net": float(a["sales_net"]) if a is not None else 0.0,
                "returns_net": float(a["returns_net"]) if a is not None else 0.0,
+               "ret_sale": None if rets is None else float(rets["ret_sale"].get(k, 0.0)),
+               "ret_dist": None if rets is None else float(rets["ret_dist"].get(k, 0.0)),
                "wholesale": wholesale, "wholesale_n": int(a["wholesale_n"]) if a is not None else 0,
                "forecast": net * pace if pace else net, "gross_forecast": gross * pace if pace else gross,
                "target_rial": t_rial,
@@ -735,7 +766,10 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
                    mgmt_inv_net_cash=float(a["mgmt_inv_net_cash"]) if a is not None else 0.0,
                    mgmt_inv_share=mgmt_inv / sales_gross if sales_gross > 0 else None,  # سهم این فاکتورها از فروش ناخالص
                    mgmt_rate=mgmt / mgmt_inv if mgmt_inv > 0 else None)               # نرخ تخفیف روی همان فاکتورها
-        if v["type"] == "commission":
+        if v["type"] == "channel":
+            row.update(ruleset="", group_ab="", rate=None, base_rate=None, bonus_rate=0.0, extra_rate=0.0, commission=None,
+                       reserve=0.0, payable=None, special_rate=None, eff_rate=None, status="بدون دستورالعمل")
+        elif v["type"] == "commission":
             _commission_visitor(row, R)
         else:
             _employed_visitor(row, tg, R)
@@ -759,6 +793,7 @@ def _branches(ms: pd.DataFrame, mr: pd.DataFrame | None, rows: list[dict], plan:
         for g, q in groups.items():
             d[g] = d.get(g, 0) + q
     rep = _report_metrics(ms, mr.assign(b=mr["branch"].map(bkey)) if mr is not None else None, ["b"])
+    rets = _return_split(ms, "b")
     bt = plan.get("branch_targets") or {}
     gdef = {g["key"]: g for g in GROUPS}
     out = []
@@ -777,6 +812,8 @@ def _branches(ms: pd.DataFrame, mr: pd.DataFrame | None, rows: list[dict], plan:
                            "ach_day": act_q / (tq * day_share) if act_q is not None and tq else None})
         out.append({"branch": b, "req_net": float(rp["req_net"]), "gross": gross, "xnet": float(rp["xnet"]),
                     "qty": float(rp["qty"]), "customers": int(rp["customers"]),
+                    "ret_sale": None if rets is None else float(rets["ret_sale"].get(b, 0.0)),
+                    "ret_dist": None if rets is None else float(rets["ret_dist"].get(b, 0.0)),
                     "target_rial": t_file, "target_day": t_file * day_share if t_file else None,
                     "ach": gross / (t_file * day_share) if t_file else None, "groups": groups})
     return out
@@ -851,9 +888,12 @@ def _supervisors(plan: dict, rows: list[dict], R: dict) -> list[dict]:
         gfc = sum(r["gross_forecast"] for r in team)
         comm = supervisor_commission(sales, rule, R["sup_rates"], reach=gross)
         target_sum = sum(r["target_rial"] or 0 for r in team)
+        ret_known = all(r["ret_sale"] is not None for r in team)
         out.append({"id": f"{b}|{name}", "name": name, "branch": b, "ruleset": rs, "group_ab": group_ab(rs, R),
                     "visitors": len(team), "gross": gross,
                     "net": net, "net_cash": sum(r["net_cash"] for r in team), "base": sales,
+                    "ret_sale": sum(r["ret_sale"] for r in team) if ret_known else None,
+                    "ret_dist": sum(r["ret_dist"] for r in team) if ret_known else None,
                     "forecast": fc, "t1": rule["t1"] * M if rule else None, "t2": rule["t2"] * M if rule else None,
                     "ach_t1": gross / (rule["t1"] * M) if rule else None, "ach_t2": gross / (rule["t2"] * M) if rule else None,
                     "commission": comm, "forecast_commission": supervisor_commission(fc, rule, R["sup_rates"], reach=gfc),

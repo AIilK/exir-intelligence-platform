@@ -2,6 +2,7 @@
 // خلاصه مدیریتی فروش — هم‌شکل «نمای کلان مالی»: هر کارت = عنوان کوتاه + عدد + یک خط راهنما؛ با کلیک پنل جزئیات کوتاه باز می‌شود.
 // منبع: گزارش ماهانه توزیع و وصول (/finance/distribution/monthly) و شبکه فروش کارآمد (/finance/sales-network).
 // کنار هر بلوک الارم‌های فروش همان بخش (به‌جای Agent).
+import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModuleAlarms } from "../alarms/alarms";
 import { PeekContext, PeekPanel, type Peek } from "../management/peek-panel";
@@ -43,6 +44,9 @@ function todayDay(): number {
 }
 const ymLabel = (m: YM) => `${MONTHS[m.month - 1]} ${nf.format(m.year).replace(/٬/g, "")}`;
 type View = "distribution" | "customers";
+// جای خالی برای بلوک «نیازمند توجه» که داشبورد یکپارچه پر می‌کند (ویزیتورهای کم‌درخواست از داشبورد فروش)؛
+// در داشبورد مالی تنها خالی می‌ماند.
+export const salesSlots: { attention?: React.ComponentType } = {};
 type PeekSpec = Omit<Peek, "onGo" | "title" | "tone" | "unit"> & { title?: string };
 
 export default function SalesOverview({ go }: { go: (view: string) => void }) {
@@ -70,6 +74,7 @@ export default function SalesOverview({ go }: { go: (view: string) => void }) {
       </div>
     </header>
     <MonthBlock months={months} reports={reports} error={error} open={open} go={go} />
+    {salesSlots.attention && <salesSlots.attention />}
     <HybridBlock month={months[2]} report={reports[2]} error={error} open={open} go={go} />
     <NetworkBlock data={network} error={networkError} open={open} go={go} />
     <PeekPanel peek={peek} onClose={closePeek} />

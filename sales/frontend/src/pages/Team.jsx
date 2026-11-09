@@ -111,7 +111,9 @@ export default function Team() {
   if (error) return <ErrorBox error={error} />
   const sellers = data.sellers
   const selling = sellers.filter((s) => s.net > 0)
-  const noSale = sellers.filter((s) => !(s.net > 0))
+  // از مهر ۱۴۰۵: فقط ویزیتورهای «لیست ویزیتور» صفحه پورسانت (roster_filter)؛ بقیه در این فهرست نمی‌آیند
+  const noSale = sellers.filter((s) => !(s.net > 0) && (!data.roster_filter || s.in_roster))
+  const rosterNote = data.roster_filter ? ' فقط ویزیتورهای «لیست ویزیتور» صفحه پورسانت (از مهر ۱۴۰۵) آمده‌اند.' : ''
   // برترین‌ها: کل یا فقط یک دسته شعبه (A / B / سایر)
   const tiered = selling.filter((s) => tier === 'all' || tierOf(meta, s.branch) === tier)
   const present = [...new Set(selling.map((s) => tierOf(meta, s.branch)))]
@@ -138,14 +140,14 @@ export default function Team() {
       <div className="kpis">
         <Kpi label="فروشندگان دارای فروش مثبت" value={selling.length} type="int" sub={`از ${fmtInt(sellers.length)} فروشنده دارای فاکتور یا درخواست`} />
         <Kpi label="فروشندگان بدون فروش خالص" value={noSale.length} type="int"
-          hint="فقط درخواست، یا برگشتی بیشتر از فروش — برای دیدن فهرست کلیک کنید"
+          hint={`فقط درخواست، یا برگشتی بیشتر از فروش.${rosterNote} برای دیدن فهرست کلیک کنید`}
           onClick={noSale.length ? () => setShowNoSale(!showNoSale) : undefined} active={showNoSale} />
         <Kpi label="میانگین فروش هر فروشنده فعال" value={selling.length ? k.net / selling.length : null} />
         <Kpi label="میانگین فاکتور مؤثر هر فروشنده" value={selling.length ? k.invoices / selling.length : null} type="num1" />
       </div>
       {showNoSale && noSale.length > 0 && (
         <Card title="فروشندگان بدون فروش خالص" className="nosale-card"
-          subtitle="فروشندگانی که در بازه انتخاب‌شده فاکتور، برگشتی یا درخواست دارند ولی فروش خالصشان صفر یا منفی است. برای جزئیات و سطرهای فاکتور روی هر ردیف کلیک کنید."
+          subtitle={`فروشندگانی که در بازه انتخاب‌شده فاکتور، برگشتی یا درخواست دارند ولی فروش خالصشان صفر یا منفی است.${rosterNote} برای جزئیات و سطرهای فاکتور روی هر ردیف کلیک کنید.`}
           actions={<button className="btn ghost sm" onClick={() => setShowNoSale(false)}>بستن</button>}>
           <DataTable rows={noSale.map((s) => ({ ...s, reason: noSaleReason(s) }))} columns={noSaleCols} unit={unit}
             pageSize={15} search={noSale.length > 15} exportName="sellers-no-net-sales"

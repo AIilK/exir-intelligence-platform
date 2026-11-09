@@ -110,9 +110,9 @@ export function CustomerBrand() {
   const mfor = (b) => (b === 'Total' ? totalMetrics : metrics)
   const exportXlsx = () => download('Customer Brand',
     [{ label: 'استان', kind: 'text' }, { label: 'کد مشتری', kind: 'text' }, { label: 'نام مشتری', kind: 'text' }, { label: 'برند', kind: 'text' },
-      ...['Total', ...brands].flatMap((b) => mfor(b).map(([k, l]) => ({ label: `${b} - ${l}${k === 'qty' ? '' : ` (${UNITS[unit].label})`}`, kind: k === 'qty' ? 'int' : 'dec' })))],
+      ...['Total', ...brands].flatMap((b) => mfor(b).map(([k, l]) => ({ label: `${b} - ${l}${k === 'qty' ? '' : ' (ریال)'}`, kind: k === 'qty' ? 'int' : 'money' })))],
     rows.map((r) => [r.province, r.code, r.short, r.brand, ...[r, ...brands.map((b) => r.brands[b] || {})].flatMap((v, i) =>
-      (i ? metrics : totalMetrics).map(([k]) => (k === 'qty' ? v[k] || 0 : Math.round(((v[k] || 0) / UNITS[unit].div) * 10) / 10)))]))
+      (i ? metrics : totalMetrics).map(([k]) => (k === 'qty' ? v[k] || 0 : Math.round(v[k] || 0))))]))
   const periodText = data.period === 'YTD' ? 'از ابتدای سال' : monthLabel(data.period)
   return (
     <>
@@ -251,13 +251,13 @@ export function TotalReport() {
     ))),
   ]
   const exportXlsx = () => {
-    const money = (x) => Math.round((x / UNITS[unit].div) * 10) / 10
+    const money = (x) => Math.round(x || 0)  // اکسل همیشه ریال کامل
     const vals = (v) => [...blocks.flatMap(([bk]) => BLOCKS.map(([k]) => (k === 'qty' ? v[bk][k] : money(v[bk][k])))),
       ...data.cats.flatMap((c) => [money(v.cats[c].net), v.cats[c].qty])]
     download('Total report',
       [{ label: 'برند', kind: 'text' }, { label: 'نام مشتری', kind: 'text' },
-        ...blocks.flatMap(([, bl]) => BLOCKS.map(([k, l]) => ({ label: `${bl} - ${l}`, kind: k === 'qty' ? 'int' : 'dec' }))),
-        ...data.cats.flatMap((c) => [{ label: `${c} - فروش ریالی خالص`, kind: 'dec' }, { label: `${c} - فروش تعدادی`, kind: 'int' }])],
+        ...blocks.flatMap(([, bl]) => BLOCKS.map(([k, l]) => ({ label: `${bl} - ${l}${k === 'qty' ? '' : ' (ریال)'}`, kind: k === 'qty' ? 'int' : 'money' }))),
+        ...data.cats.flatMap((c) => [{ label: `${c} - فروش ریالی خالص (ریال)`, kind: 'money' }, { label: `${c} - فروش تعدادی`, kind: 'int' }])],
       [...data.groups.flatMap((g) => [[g.brand, '', ...vals(g)], ...g.rows.map((r) => [g.brand, r.short, ...vals(r)])]),
         ['Total', '', ...vals(data.total)]])
   }

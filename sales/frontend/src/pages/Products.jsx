@@ -5,7 +5,7 @@ import { Kpi, Card, Loading, ErrorBox, DataTable, Tabs } from '../components/ui.
 import { HBar, ParetoChart, Chart, baseOption } from '../components/Chart.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { C } from '../cols.js'
-import { DailyReport } from './Reports.jsx'
+import { GoodsReport } from './Reports.jsx'
 import { fmtMoney, UNITS } from '../lib.jsx'
 import { brandColor } from '../brands.js'
 
@@ -31,27 +31,29 @@ function QtyKpis({ data }) {
   )
 }
 
-function Treemap({ rows, unit, onClick }) {
-  // برند ← گروه کالا؛ هر برند با رنگ سازمانی خودش (brands.js)
+function Treemap({ rows, unit, by = 'net', onClick }) {
+  // برند ← گروه کالا؛ هر برند با رنگ سازمانی خودش (brands.js). by: net (مبلغ) یا qty (تعداد)
+  const val = (r) => Math.max(r[by] ?? 0, 0)
   const brands = [...new Set(rows.map((r) => r.brand))]
-  const tot = (b) => rows.filter((r) => r.brand === b).reduce((a, r) => a + r.net, 0)
+  const tot = (b) => rows.filter((r) => r.brand === b).reduce((a, r) => a + val(r), 0)
   brands.sort((a, b) => tot(b) - tot(a))
+  const fmt = (v) => (by === 'qty' ? `<b>${fmtInt(v)}</b> عدد` : `<b>${fmtMoney(v, unit)}</b> ${UNITS[unit].label}`)
   return (
     <Chart
       height={420}
       onClick={onClick}
       option={(t) => ({
         tooltip: { ...baseOption(t).tooltip, formatter: (p) =>
-          `${p.treePathInfo.slice(1).map((x) => x.name).join(' / ')}<br/><b>${fmtMoney(p.value, unit)}</b> ${UNITS[unit].label}` },
+          `${p.treePathInfo.slice(1).map((x) => x.name).join(' / ')}<br/>${fmt(p.value)}` },
         series: [{
           type: 'treemap', roam: false, nodeClick: false, breadcrumb: { show: false }, left: 0, right: 0, top: 0, bottom: 0,
           label: { show: true, formatter: '{b}', color: '#fff', fontFamily: 'Vazirmatn' },
           upperLabel: { show: true, height: 22, color: '#fff', fontFamily: 'Vazirmatn' },
           itemStyle: { borderColor: t.surface, borderWidth: 2, gapWidth: 2 },
           levels: [{ itemStyle: { borderWidth: 0, gapWidth: 3 } }, { itemStyle: { gapWidth: 2, borderColorSaturation: 0.6 } }],
-          data: brands.map((b) => ({
+          data: brands.filter((b) => tot(b) > 0).map((b) => ({
             name: b, itemStyle: { color: brandColor(b, t) },
-            children: rows.filter((r) => r.brand === b).map((r) => ({ name: r.category, value: r.net })),
+            children: rows.filter((r) => r.brand === b && val(r) > 0).map((r) => ({ name: r.category, value: val(r) })),
           })),
         }],
       })}
@@ -67,6 +69,7 @@ export default function Products() {
   const [topBy, setTopBy] = useState('qty')   // ۱۵ کالای پرفروش: پیش‌فرض بر اساس تعداد
   const [catBy, setCatBy] = useState('qty')   // ۱۵ گروه کالای برتر: پیش‌فرض بر اساس تعداد
   const [brandBy, setBrandBy] = useState('net')   // فروش برندها: مبلغ یا تعداد
+  const [mapBy, setMapBy] = useState('net')   // نمودار بورسی: مبلغ یا تعداد
   const [paretoBy, setParetoBy] = useState('sku')   // پارتو: هر کالا یا هر گروه کالا
   if (loading && !data) return <Loading />
   if (error) return <ErrorBox error={error} />
@@ -84,8 +87,10 @@ export default function Products() {
       <PageHead title="محصولات و گروه‌ها" desc="برندها، گروه‌های کالا و کالاها؛ برای جزئیات روی هر مورد کلیک کنید" />
       <QtyKpis data={data} />
       <div className="grid g2">
-        <Card title="ترکیب فروش: برند ← گروه کالا" className="span2" subtitle="اندازه هر خانه = فروش خالص مثبت؛ کلیک روی گروه، جزئیات آن را باز می‌کند">
-          <Treemap rows={data.brand_category} unit={unit}
+        <Card title="ترکیب فروش: برند ← گروه کالا" className="span2"
+          subtitle={`اندازه هر خانه = ${mapBy === 'qty' ? 'تعداد فروش خالص (عدد، پس از کسر برگشتی)' : 'فروش خالص ریالی مثبت'}؛ کلیک روی گروه، جزئیات آن را باز می‌کند`}
+          actions={<Tabs value={mapBy} onChange={setMapBy} tabs={QTY_NET} />}>
+          <Treemap key={mapBy} rows={data.brand_category} unit={unit} by={mapBy}
             onClick={(p) => p.treePathInfo?.length === 3
               ? nav(detailPath('category', p.name, [['brand', p.treePathInfo[1].name]]))
               : p.treePathInfo?.length === 2 && nav(detailPath('brand', p.name))} />
@@ -119,8 +124,8 @@ export default function Products() {
             : <ParetoChart key="category" curve={data.pareto_cat?.curve || []} classes={data.pareto_cat?.classes || []} what="گروه" />}
         </Card>
         <Card title="گزارش کالا: برند ← گروه ← زیرگروه ← کالا" className="span2"
-          subtitle="میانگین روزانه، روز گزارش، از ابتدای ماه با جمع جزء هر سطح — معادل شیت Goods&Group">
-          <DailyReport dims={['brand', 'category', 'group', 'product']} variant="goods" exportName="goods-report" />
+          subtitle="میانگین روزانه و از ابتدای ماه با جمع جزء هر سطح — معادل شیت Goods&Group">
+          <GoodsReport />
         </Card>
         <Card title="جدول جزئیات" className="span2"
           actions={<Tabs value={level} onChange={setLevel} tabs={[{ value: 'product', label: 'کالا' }, { value: 'group', label: 'زیرگروه' }, { value: 'category', label: 'گروه کالا' }, { value: 'brand', label: 'برند' }]} />}>

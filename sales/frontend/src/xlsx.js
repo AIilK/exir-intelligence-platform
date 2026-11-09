@@ -226,7 +226,7 @@ export function tableSheet(headers, rows, sheetName = 'گزارش', { filterRows
       const k = kindOf(headers[c])
       const o = v && typeof v === 'object' ? v : { v }
       // متن در ستون عددی (مثلاً «جمع کل» یا «—») همان متن می‌ماند
-      const kk = o.f ? (o.k || k) : typeof o.v === 'number' ? k : 'text'
+      const kk = o.f ? (o.k || k) : typeof o.v === 'number' ? (o.k || k) : 'text'
       return { ...o, k: kk, st: o.st || st }
     })
   })

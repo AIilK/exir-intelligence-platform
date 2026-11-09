@@ -40,11 +40,19 @@ function UploadButton({ label, onFile }) {
 }
 
 // ---------------------------------------------------------------- تحقق تارگت تا روز کاری
-const reportCols = (first) => [
+// تفکیک برگشتی با ستون «خروجی» فاکتور فروش مرجع در کارآمد؛ جمع دو ستون = کل برگشتی که از فروش خالص کم شده
+const retCols = (team) => [
+  { key: 'ret_sale', label: team ? 'برگشت از فروش تیم' : 'برگشت از فروش', type: 'money',
+    hint: 'مبلغ خالص برگشتی‌هایی که فاکتور فروش مرجعشان در کارآمد «خروجی» ندارد (برگشتی بدون فاکتور مرجع هم همین‌جاست)' },
+  { key: 'ret_dist', label: team ? 'برگشت از توزیع تیم' : 'برگشت از توزیع', type: 'money',
+    hint: 'مبلغ خالص برگشتی‌هایی که فاکتور فروش مرجعشان در کارآمد «خروجی» دارد' },
+]
+const reportCols = (first, ret = []) => [
   first,
   { key: 'req_net', label: 'ریال خالص درخواست', type: 'money', hint: 'قابل پرداخت − ارزش افزوده درخواست‌ها' },
   { key: 'gross', label: 'ریال ناخالص فاکتور', type: 'money', hint: 'جمع قبل تخفیف فاکتورهای فروش؛ برگشتی‌ها کسر شده‌اند' },
   { key: 'xnet', label: 'ریال خالص فاکتور', type: 'money', hint: 'قابل پرداخت − ارزش افزوده؛ برگشتی‌ها کسر شده‌اند' },
+  ...ret,
   { key: 'qty', label: 'فروش تعدادی فاکتور', type: 'int' },
   { key: 'customers', label: 'مشتری', type: 'int', hint: 'مشتریانی که جمع تعداد خریدشان مثبت است' },
 ]
@@ -56,8 +64,11 @@ const guessBranch = (file, branches) => {
   return hits.sort((x, y) => y.length - x.length)[0] || ''
 }
 
+// ویزیتورهای فهرست (بدون فروشندگان زنجیره‌ای که خودکار در جدول پورسانت می‌آیند)
+const rosterOf = (data) => data.visitors.filter((v) => !v.auto)
+
 function TargetUploads({ data, onSaved, setErr }) {
-  const branches = [...new Set([...data.visitors.map((v) => v.branch.replace(/^هیبریدی /, 'هیبرید ').trim()), ...data.branches.map((b) => b.branch)])].sort()
+  const branches = [...new Set([...rosterOf(data).map((v) => v.branch.replace(/^هیبریدی /, 'هیبرید ').trim()), ...data.branches.map((b) => b.branch)])].sort()
   const [branch, setBranch] = useState('')
   const [msg, setMsg] = useState(null)
   const upVisitors = async (f) => {
@@ -112,11 +123,11 @@ function Achievement({ data, unit, onSaved, setErr }) {
   const cur = data.visitors.find((v) => v.id === sel)
   const curB = data.branches.find((b) => b.branch === selB)
   // جدول شعبه فقط تارگت کل شعبه (فایل «تارگت ناخالص») را دارد؛ خالص درخواست در محاسبه نقشی ندارد
-  const bcols = [...reportCols({ key: 'branch', label: 'شعبه', sticky: true }).filter((c) => c.key !== 'req_net'),
+  const bcols = [...reportCols({ key: 'branch', label: 'شعبه', sticky: true }, retCols()).filter((c) => c.key !== 'req_net'),
     { key: 'target_rial', label: 'تارگت شعبه (فایل ناخالص)', type: 'money' },
     { key: 'target_day', label: 'تارگت شعبه تا روز', type: 'money', hint: 'تارگت ماه ÷ کل روز کاری × روز کاری سپری‌شده' },
     { key: 'ach', label: 'تحقق (تارگت شعبه)', type: 'pct', render: achPill('ach'), hint: 'ریال ناخالص فاکتور ÷ تارگت شعبه تا روز' }]
-  const vcols = [...reportCols({ key: 'name', label: 'ویزیتور', sticky: true }),
+  const vcols = [...reportCols({ key: 'name', label: 'ویزیتور', sticky: true }, retCols()),
     { key: 'target_rial', label: 'تارگت ماه', type: 'money' },
     { key: 'target_day', label: 'تارگت تا روز', type: 'money', hint: 'تارگت ماه ÷ کل روز کاری × روز کاری سپری‌شده' },
     { key: 'ach', label: 'تحقق تارگت', type: 'pct', render: achPill('ach'), hint: 'ریال ناخالص فاکتور ÷ تارگت تا روز' }]
@@ -211,20 +222,17 @@ function GroupTable({ v, rules, unit }) {
 // ---------------------------------------------------------------- جدول پورسانت (مثل فایل پورسانت ماهانه)
 // فقط ستون‌هایی که از داده کارآمد ساخته می‌شوند؛ حقوق و پاداش نمی‌آیند (تصمیم کاربر).
 // مانده بدهی و چک برگشتی از بخش مالی داشبورد یکپارچه (همان اعداد پرونده ویزیتور)؛ اتصال با seller_key.
-// مبالغ این تب همیشه کامل به تومان است (جدول، جمع، توضیح و خروجی اکسل)، مستقل از واحد انتخاب‌شده در داشبورد.
+// مبالغ این تب همیشه کامل به ریال است (جدول، جمع، توضیح و خروجی اکسل)، مستقل از واحد انتخاب‌شده در داشبورد.
 const VISITOR_FINANCE_URL = '/api/v1/finance/sales-network/visitor-finance'
 
-// تایید اعتباری: (مانده بدهی + چک برگشتی) کمتر از ۲۰٪ فروش از ابتدای سال (ناخالص و خالص جدا)
+// تایید اعتباری: (مانده بدهی + چک برگشتی) کمتر از ۲۰٪ فروش خالص از ابتدای سال
 const APPROVAL_LIMIT = 0.2
 const OK = 'تایید', NOT_OK = 'عدم تایید'
-/** ok_gross، ok_net و ok_final را اضافه می‌کند؛ تا مانده بدهی از بخش مالی نیامده همه خالی می‌مانند.
- * ok_final: مثل ok_gross ولی با بدهی نهایی (مانده بدهی − توزیع‌نشده) به‌جای مانده بدهی. */
+/** ok_net را اضافه می‌کند؛ تا مانده بدهی از بخش مالی نیامده خالی می‌ماند. */
 function withApproval(r) {
-  if (!isNum(r.debt)) return { ...r, ok_gross: null, ok_net: null, ok_final: null }
+  if (!isNum(r.debt)) return { ...r, ok_net: null }
   const exposure = (r.debt || 0) + (r.returned || 0)
-  const ok = (base, exp = exposure) => (exp < APPROVAL_LIMIT * (base || 0) ? OK : NOT_OK)
-  const finalExp = (isNum(r.debt_final) ? r.debt_final : (r.debt || 0) - (r.undist || 0)) + (r.returned || 0)
-  return { ...r, ok_gross: ok(r.gross_ytd), ok_net: ok(r.net_ytd), ok_final: ok(r.gross_ytd, finalExp) }
+  return { ...r, ok_net: exposure < APPROVAL_LIMIT * (r.net_ytd || 0) ? OK : NOT_OK }
 }
 const approvalPill = (key) => (r) => (r[key] == null ? ''
   : <span className={`pill ${r[key] === OK ? 'st-green' : 'st-red'}`}>{r[key]}</span>)
@@ -352,6 +360,103 @@ function useVisitorFinance() {
   return state
 }
 
+// ---------------------------------------------------------------- گزارش کلی پورسانت (هیبرید، زنجیره‌ای، B2B)
+const PORTFOLIO_URL = '/api/v1/finance/customer-collection-portfolio?limit=1000'
+
+/** مانده بدهی و چک برگشتی نمایندگان B2B از پرتفوی مطالبات داشبورد مالی (کلید = کد مشتری راهکاران). */
+function usePortfolioMap() {
+  const [state, setState] = useState({ map: null, loading: true, error: null })
+  useEffect(() => {
+    let alive = true
+    fetchJson(PORTFOLIO_URL)
+      .then((d) => alive && setState({ map: new Map((d.customers || []).map((f) => [String(f.counterpart_code), f])), loading: false, error: null }))
+      .catch((e) => alive && setState({ map: null, loading: false, error: e.message }))
+    return () => { alive = false }
+  }, [])
+  return state
+}
+
+/** سه ردیف هیبرید، زنجیره‌ای و نمایندگان B2B برای همان ماه: جمع ستون‌های کلی جدول‌های پورسانت هر بخش. */
+function Summary({ data }) {
+  const fin = useVisitorFinance()
+  const port = usePortfolioMap()
+  const [b2b, setB2b] = useState({ data: null, error: null })
+  useEffect(() => {
+    let alive = true
+    setB2b({ data: null, error: null })
+    fetchJson(`/api/rk_commission?channel=b2b&month=${encodeURIComponent(data.month)}`)
+      .then((d) => alive && setB2b({ data: d, error: null }))
+      .catch((e) => alive && setB2b({ data: null, error: e.message }))
+    return () => { alive = false }
+  }, [data.month])
+  const year = faDigits(data.month.slice(0, 4))
+  const add = (rs, k) => rs.reduce((a, r) => a + (r[k] || 0), 0)
+  const addFin = (rs, get) => {  // تا بخش مالی نیامده خالی
+    const xs = rs.map(get).filter(Boolean)
+    if (!xs.length) return { debt: null, returned: null, returned_n: null }
+    return { debt: add(xs, 'debt'), returned: add(xs, 'returned'), returned_n: add(xs, 'returned_n') }
+  }
+  const visitorFin = (v) => {
+    const x = fin.map?.get(v.seller_key)
+    return x && { debt: x.open_account_receivable_rial, returned: x.returned_cheque_rial, returned_n: x.returned_cheque_count }
+  }
+  const sales = (rs) => ({ gross: add(rs, 'gross'), net: add(rs, 'net'), net_cash: add(rs, 'net_cash'), mgmt_n: add(rs, 'mgmt_n'),
+    gross_ytd: add(rs, 'gross_ytd'), net_ytd: add(rs, 'net_ytd'), people: rs.length })
+  const hyb = data.visitors.filter((v) => v.type !== 'channel')
+  const chain = data.visitors.filter((v) => v.type === 'channel')
+  // ماهی که در داده راهکاران نیست (پیش از سال قبل) را بک‌اند به ماه جاری برمی‌گرداند؛ آن ماه اینجا خالی می‌ماند
+  const b2bOk = b2b.data && b2b.data.month === data.month
+  const b2bRows = b2bOk ? b2b.data.rows : []
+  const rows = [
+    { key: 'hybrid', channel: 'هیبرید', ...sales(hyb), payable: add(hyb, 'payable') + add(data.supervisors, 'payable'), ...addFin(hyb, visitorFin),
+      note: `${fmtInt(hyb.length)} ویزیتور و ${fmtInt(data.supervisors.length)} سرپرست؛ قابل پرداخت = ویزیتورها + سرپرستان` },
+    { key: 'chain', channel: 'زنجیره‌ای', ...sales(chain), payable: chain.some((v) => isNum(v.payable)) ? add(chain, 'payable') : null,
+      ...addFin(chain, visitorFin), note: 'هنوز دستورالعمل پورسانت ندارد' },
+    b2bOk ? {
+      key: 'b2b', channel: 'نمایندگان B2B', ...sales(b2bRows), payable: add(b2bRows, 'payable'),
+      ...addFin(b2bRows, (r) => {
+        const f = port.map?.get(String(r.code))
+        if (!f) return null
+        const cp = f.collection_position || {}
+        return { debt: cp.open_account_receivable_rial ?? f.account_position?.balance_rial ?? 0, returned: cp.returned_account_rial ?? 0,
+          returned_n: f.returned_cheque_count ?? 0 }
+      }),
+      note: `${fmtInt(b2bRows.length)} نماینده؛ فروش از راهکاران (خالص با مالیات)؛ پورسانت ۰٫۲٪ خالص + نقدی`,
+    } : { key: 'b2b', channel: 'نمایندگان B2B', note: b2b.error ? `خوانده نشد: ${b2b.error}` : b2b.data ? 'این ماه در داده فروش راهکاران نیست' : 'در حال خواندن از راهکاران…' },
+  ]
+  const cols = [
+    { key: 'channel', label: 'بخش', sticky: true },
+    { key: 'people', label: 'تعداد فروشنده / نماینده', type: 'int' },
+    { key: 'gross', label: 'فروش ناخالص', type: 'money' },
+    { key: 'net', label: 'فروش خالص', type: 'money', hint: 'پس از کسر برگشتی و تخفیف‌ها؛ هیبرید و زنجیره‌ای بدون ارزش افزوده (کارآمد)، B2B خالص راهکاران (با مالیات)' },
+    { key: 'net_cash', label: 'فروش خالص + درصد نقدی', type: 'money' },
+    { key: 'mgmt_n', label: 'تعداد فاکتور با تخفیف مدیریتی', type: 'int' },
+    { key: 'payable', label: 'قابل پرداخت', type: 'money', hint: 'پورسانت منهای ذخیره؛ هیبرید = ویزیتورها + سرپرستان' },
+    { key: 'gross_ytd', label: `فروش ناخالص از ابتدای ${year}`, type: 'money' },
+    { key: 'net_ytd', label: `فروش خالص از ابتدای ${year}`, type: 'money' },
+    { key: 'debt', label: 'مانده بدهی', type: 'money', hint: 'هیبرید و زنجیره‌ای: مانده مشتریان هر ویزیتور (همان جدول پورسانت)؛ B2B: مانده حساب نماینده از پرتفوی مطالبات' },
+    { key: 'returned', label: 'چک برگشتی', type: 'money', hint: 'مانده چک‌های برگشتی تسویه‌نشده' },
+    { key: 'returned_n', label: 'تعداد چک برگشتی', type: 'int' },
+    { key: 'note', label: 'توضیح' },
+  ]
+  const totals = (rs) => {
+    const t = Object.fromEntries(cols.filter((c) => c.type === 'money' || c.type === 'int').map((c) => [c.key, rs.some((r) => isNum(r[c.key])) ? add(rs, c.key) : null]))
+    return { ...t, key: '__total', channel: 'جمع کل', note: '' }
+  }
+  return (
+    <>
+      <div className="report-tools">
+        <span className="muted small">جمع ستون‌های کلی جدول‌های پورسانت هیبرید، زنجیره‌ای (همین صفحه) و نمایندگان B2B (صفحه «پورسانت نمایندگان و صادرات») برای {monthName(data.month)}.</span>
+        {(fin.loading || port.loading) && <span className="muted small">در حال خواندن مطالبات از بخش مالی…</span>}
+        {fin.error && <span className="muted small">مانده ویزیتورها از بخش مالی خوانده نشد: {fin.error}</span>}
+        {port.error && <span className="muted small">مانده نمایندگان B2B از بخش مالی خوانده نشد: {port.error}</span>}
+      </div>
+      <DataTable rows={rows} columns={cols} unit="rial" search={false} pageSize={10} totals={totals}
+        exportName={`commission-summary-${data.month.replace('/', '-')}`} />
+    </>
+  )
+}
+
 function Sheet({ data }) {
   const unit = 'rial'
   const year = faDigits(data.month.slice(0, 4))
@@ -368,10 +473,10 @@ function Sheet({ data }) {
   const costPct = (r) => (isNum(r.salary) || isNum(r.commission) ? ratio((r.salary || 0) + (r.commission || 0), r.net_cash) : null)
   const costCol = (team) => ({ key: 'cost_pct', label: 'درصد هزینه فروش', type: 'pct', pctDigits: 2, render: (r) => fmtPct(r.cost_pct, 2),
     hint: `(حقوق ثابت + پورسانت محاسبه‌شده) ÷ (فروش خالص + درصد نقدی${team ? ' تیم' : ''})`,
-    xf: (ref) => `IF(N(${ref('net_cash')})<=0,"",(N(${ref('salary')})+N(${ref('commission')}))/N(${ref('net_cash')}))` })
+    xf: (ref) => `IF(OR(N(${ref('net_cash')})<=0,AND(${ref('salary')}="",${ref('commission')}="")),"",(N(${ref('salary')})+N(${ref('commission')}))/N(${ref('net_cash')}))` })
   const visitors = useMemo(() => data.visitors.map((v) => {
     const x = fin.map?.get(v.seller_key)
-    const row = { ...v, cash_disc: (v.net_cash || 0) - (v.net || 0), comm_pct: ratio(v.commission, v.net_cash), cost_pct: costPct(v),
+    const row = { ...v, cash_disc: (v.net_cash || 0) - (v.net || 0), comm_pct: isNum(v.commission) ? ratio(v.commission, v.net_cash) : null, cost_pct: costPct(v),
       mgmt_pct: ratio(v.mgmt_disc, v.gross), wholesale_pct: ratio(v.wholesale_gross, v.gross) }
     // توزیع‌نشده = فاکتورهای بدون حواله خروج (همان تب «توزیع بار»)؛ بدهی نهایی = مانده بدهی − توزیع‌نشده
     return x ? withApproval({ ...row, debt: x.open_account_receivable_rial, debtors: x.debtor_customer_count,
@@ -436,13 +541,9 @@ function Sheet({ data }) {
     { key: 'returned', label: team ? 'چک برگشتی تیم' : 'چک برگشتی', type: 'money',
       hint: `مبلغ چک‌های برگشتی تسویه‌نشده فاکتورهای ${team ? 'تیم' : 'این ویزیتور'} از بخش مالی${fin.from ? ` (سررسید از ${faDigits(fin.from)})` : ''}` },
     { key: 'returned_n', label: 'تعداد چک برگشتی', type: 'int' },
-    { key: 'ok_gross', label: `تایید (${fa(Math.round(APPROVAL_LIMIT * 100))}٪ ناخالص ${year})`, render: approvalPill('ok_gross'),
-      hint: approvalHint('ناخالص', team), xf: approvalXf('gross_ytd') },
+    // تایید فقط بر اساس فروش خالص از ابتدای سال (اعلام کاربر)
     { key: 'ok_net', label: `تایید (${fa(Math.round(APPROVAL_LIMIT * 100))}٪ خالص ${year})`, render: approvalPill('ok_net'),
       hint: approvalHint('خالص', team), xf: approvalXf('net_ytd') },
-    { key: 'ok_final', label: `تایید با بدهی نهایی (${fa(Math.round(APPROVAL_LIMIT * 100))}٪ ناخالص ${year})`, render: approvalPill('ok_final'),
-      hint: `اگر بدهی نهایی${T(team)} (مانده بدهی − توزیع‌نشده) + چک برگشتی${T(team)} کمتر از ${fa(Math.round(APPROVAL_LIMIT * 100))}٪ فروش ناخالص${T(team)} از ابتدای ${year} باشد «تایید»، وگرنه «عدم تایید»`,
-      xf: (ref) => `IF(${ref('debt')}="","",IF(N(${ref('debt_final')})+N(${ref('returned')})<R_APPROVAL*N(${ref('gross_ytd')}),"${OK}","${NOT_OK}"))` },
   ]
   const set = (k) => (e) => { setF({ ...f, [k]: e.target.value, ...(k === 'branch' ? { supervisor: '' } : {}) }); setSel(null); setSelS(null) }
   const vcols = [
@@ -568,7 +669,7 @@ function Sheet({ data }) {
       <div className="filter-bar">
         {select('branch', 'شعبه', opts.branch.map((b) => [b, b]))}
         {select('supervisor', 'سرپرست', opts.supervisor.map((s) => [s, s]))}
-        {who === 'visitors' && select('type', 'نوع', Object.entries(data.types))}
+        {who === 'visitors' && select('type', 'نوع', [...Object.entries(data.types), ['channel', 'زنجیره‌ای']])}
         {select('group', 'گروه', [['A', 'گروه A'], ['B', 'گروه B']])}
         <span className="muted small">روی هر ردیف کلیک کنید تا توضیح محاسبه پورسانت زیر همان ردیف باز شود.</span>
       </div>
@@ -684,11 +785,19 @@ const tierRange = (tiers, i, unit) => {
 
 function VisitorCalc({ v, data, unit }) {
   const r = data.rules
+  if (v.type === 'channel') return (
+    <div><p><b>{v.name}</b> — فروشنده {v.type_label} (شعبه {v.branch} کارآمد؛ خودکار، بیرون از فهرست ویزیتورها).</p>
+      <ul className="small">
+        <li>فروش ناخالص {monthName(data.month)}: {money(v.gross, unit)}؛ فروش خالص {money(v.net, unit)} (فروش {money(v.sales_net, unit)} منهای برگشتی {money(v.returns_net, unit)})؛ فروش خالص + درصد نقدی {money(v.net_cash, unit)}.</li>
+        {v.mgmt_n > 0 && <li>{fa(v.mgmt_n)} فاکتور با تخفیف مدیریتی: ناخالص {money(v.mgmt_inv_gross, unit)}، تخفیف مدیریتی {money(v.mgmt_disc, unit)} (نرخ {fmtPct(v.mgmt_rate, 2)}).</li>}
+        <li><b>هنوز دستورالعمل پورسانت ندارد</b>؛ پورسانت محاسبه نمی‌شود.</li>
+      </ul>
+    </div>)
   const head = <p><b>{v.name}</b> — {v.type_label}، {v.branch}. محاسبه طبق {r.title}.</p>
   const cashBase = r.comm_base === 'net_cash'
   const B = cashBase ? 'فروش خالص + درصد نقدی' : 'فروش خالص'  // نام مبنای پورسانت این ماه
   const netLine = (
-    <li>فروش خالص {monthName(data.month)}: {money(v.net, unit)} (فروش {money(v.sales_net, unit)} منهای برگشتی {money(v.returns_net, unit)}). فروش خالص یعنی بعد از کسر برگشتی و همه تخفیف‌ها، بدون ارزش افزوده.
+    <li>فروش خالص {monthName(data.month)}: {money(v.net, unit)} (فروش {money(v.sales_net, unit)} منهای برگشتی {money(v.returns_net, unit)}{isNum(v.ret_sale) && <>: برگشت از فروش {money(v.ret_sale, unit)} و برگشت از توزیع {money(v.ret_dist, unit)}</>}). فروش خالص یعنی بعد از کسر برگشتی و همه تخفیف‌ها، بدون ارزش افزوده.
       {cashBase && <> تخفیف نقدی به آن برمی‌گردد: <b>فروش خالص + درصد نقدی = {money(v.net_cash, unit)}</b> ← مبنای پورسانت این ماه.</>}
     </li>)
   // «فاکتور ویژه»: عمده و/یا با تخفیف مدیریتی (طبق قاعده همان ماه) که نرخ ثابت پایه می‌گیرد، نه نرخ سطح
@@ -850,7 +959,7 @@ function Targets({ data, onSaved, setErr }) {
     const cur = d[id] ?? data.targets[id] ?? { groups: {} }
     return { ...d, [id]: { ...cur, ...patch, groups: { ...(cur.groups || {}), ...(patch.groups || {}) } } }
   })
-  const rows = data.visitors.filter((v) => (type === 'all' || v.type === type)
+  const rows = rosterOf(data).filter((v) => (type === 'all' || v.type === type)
     && (!q || `${v.name} ${v.branch} ${v.code} ${v.supervisor}`.includes(q.trim())))
   const dirty = Object.keys(draft).length
   const save = async () => {
@@ -858,11 +967,11 @@ function Targets({ data, onSaved, setErr }) {
   }
   const template = () => {
     const headers = [{ label: 'شناسه', kind: 'text' }, { label: 'شعبه', kind: 'text' }, { label: 'سرپرست', kind: 'text' }, { label: 'کد', kind: 'text' },
-      { label: 'نام', kind: 'text' }, { label: 'نوع', kind: 'text' }, { label: 'تارگت ریالی (میلیون تومان)', kind: 'dec' },
+      { label: 'نام', kind: 'text' }, { label: 'نوع', kind: 'text' }, { label: 'تارگت ریالی (ریال)', kind: 'money' },
       ...groups.map((g) => ({ label: `${g} (تعداد)`, kind: 'int' }))]
-    const body = data.visitors.map((v) => {
+    const body = rosterOf(data).map((v) => {
       const t = val(v.id)
-      return [v.id, v.branch, v.supervisor, v.code, v.name, v.type_label, t.rial ? t.rial / TOMAN_M : '', ...groups.map((g) => t.groups?.[g] || '')]
+      return [v.id, v.branch, v.supervisor, v.code, v.name, v.type_label, t.rial ? Math.round(t.rial) : '', ...groups.map((g) => t.groups?.[g] || '')]
     })
     download(buildXlsx(headers, body, `تارگت ${data.month}`), `commission-targets-${data.month.replace('/', '-')}.xlsx`)
   }
@@ -919,15 +1028,15 @@ function Targets({ data, onSaved, setErr }) {
 function Roster({ data, onSaved, setErr }) {
   const [draft, setDraft] = useState(null)
   useEffect(() => { setDraft(null) }, [data.month, data.updated_at])
-  const list = draft ?? data.visitors.map(({ id, branch, supervisor, code, name, phone, phone_from, karamad_name, type, note }) => ({ id, branch, supervisor, code, name, phone, phone_from, karamad_name, type, note }))
-  const byId = Object.fromEntries(data.visitors.map((v) => [v.id, v]))
+  const list = draft ?? rosterOf(data).map(({ id, branch, supervisor, code, name, phone, phone_from, karamad_name, type, note }) => ({ id, branch, supervisor, code, name, phone, phone_from, karamad_name, type, note }))
+  const byId = Object.fromEntries(rosterOf(data).map((v) => [v.id, v]))
   const setType = (id, type) => setDraft(list.map((v) => (v.id === id ? { ...v, type } : v)))
   const save = async () => {
     try { onSaved(await sendJson('/api/commission', 'PUT', { month: data.month, visitors: list })) } catch (e) { setErr(e.message) }
   }
   const upload = async (f) => { try { onSaved(await uploadXlsx(data.month, 'roster', f)) } catch (e) { setErr(e.message) } }
   const enrich = async () => { try { onSaved(await fetchJson(`/api/commission/enrich?month=${encodeURIComponent(data.month)}`, { method: 'POST' })) } catch (e) { setErr(e.message) } }
-  const missing = data.visitors.filter((v) => !v.seller_key)
+  const missing = rosterOf(data).filter((v) => !v.seller_key)
   const log = data.enrich_log || []
   const flag = (id, kind) => log.some((l) => l.id === id && l.kind === kind)
   const noPhone = list.filter((v) => !v.phone)
@@ -1076,13 +1185,14 @@ export default function Commission() {
         </div></div></div>
       )}
       <Card actions={<Tabs value={view} onChange={setView} tabs={[
-        { value: 'achievement', label: 'تحقق تارگت' }, { value: 'sheet', label: 'پورسانت' },
+        { value: 'achievement', label: 'تحقق تارگت' }, { value: 'sheet', label: 'پورسانت' }, { value: 'summary', label: 'گزارش کلی' },
         { value: 'setup', label: 'تارگت و فهرست' }, { value: 'rules', label: 'دستورالعمل' }]} />}
-        title={{ achievement: `عملکرد و تحقق تارگت ${monthName(data.month)}`, sheet: `پورسانت ${monthName(data.month)}`,
+        title={{ achievement: `عملکرد و تحقق تارگت ${monthName(data.month)}`, sheet: `پورسانت ${monthName(data.month)}`, summary: `گزارش کلی پورسانت ${monthName(data.month)}`,
           setup: setup === 'targets' ? `تارگت ${monthName(data.month)}` : 'فهرست ویزیتورها و نوع همکاری', rules: 'قواعد محاسبه' }[view]}
         subtitle={data.updated_at ? `آخرین ذخیره: ${faDigits(data.updated_at)}` : 'برای این ماه هنوز چیزی ذخیره نشده است.'}>
         {view === 'achievement' && <Achievement data={data} unit={unit} onSaved={onSaved} setErr={setErr} />}
         {view === 'sheet' && <Sheet data={data} />}
+        {view === 'summary' && <Summary data={data} />}
         {view === 'setup' && (
           <>
             <div className="report-tools">

@@ -36,7 +36,7 @@ export function Spark({ values, width = 90, height = 22 }) {
   )
 }
 
-// خروجی اکسل: سطح درخت با تورفتگی نام نشان داده می‌شود؛ مبلغ به واحد انتخاب‌شده، درصد با قالب ٪
+// خروجی اکسل: سطح درخت با تورفتگی نام نشان داده می‌شود؛ مبلغ همیشه به ریال کامل، درصد با قالب ٪
 function toXlsx(rows, columns, unit, firstLabel, title) {
   const cols = columns.filter((c) => c.type !== 'spark')
   const whole = unit === 'rial' || unit === 'toman'
@@ -161,7 +161,7 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
     const ordered = []
     const all = (pid) => (children.get(pid) || []).forEach((n) => { ordered.push(n); all(n.id) })
     all('')
-    const blob = toXlsx(total ? [{ ...total, label: 'کل' }, ...ordered] : ordered, columns, unit, firstLabel, exportName || 'report')
+    const blob = toXlsx(total ? [{ ...total, label: 'کل' }, ...ordered] : ordered, columns, 'rial', firstLabel, exportName || 'report')
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `${exportName || 'report'}.xlsx`

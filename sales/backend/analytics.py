@@ -406,7 +406,8 @@ def report_tree(tx, rq, ctx, f, dims, report_day) -> dict:
         return g
 
     src = pd.concat([tx, rq]) if rq is not None else tx
-    out = _tree(dims, src, fn, {"seller": ["supervisor", "seller_code"]})
+    out = _tree(dims, src, fn, {"seller": ["supervisor", "seller_code"],
+                                "product": ["brand", "category", "product_group"]})
     out.update(report_day=report_day, days=days, full_month=full_month)
     return out
 

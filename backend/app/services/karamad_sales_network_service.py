@@ -656,6 +656,10 @@ class KaramadSalesNetworkService:
     def _visitor_finance(self) -> dict[str, Any]:
         with self.engine.connect() as connection:
             branch_ids = sorted(self._hybrids_by_branch(connection))
+            # شعبه زنجیره‌ای هم در جدول پورسانت می‌آید (sales/backend/commission.CHANNEL_BRANCHES)
+            branch_ids += [int(r["ID"]) for r in connection.execute(text(
+                "SELECT [ID] FROM dbo.[tblBranch] WHERE REPLACE(REPLACE([Name], NCHAR(1610), NCHAR(1740)), NCHAR(8204), N' ') = N'زنجیره ای'"
+            )).mappings() if int(r["ID"]) not in branch_ids]
             ids = ",".join(str(int(b)) for b in branch_ids) or "-1"
             visitors = connection.execute(text(
                 f"""

@@ -68,13 +68,19 @@ _MGMT = """(SELECT d.FactorRef, d.RowRef, SUM(d.Price) AS mg FROM dbo.{t} d
    JOIN dbo.tblAccDiscount a ON a.ID = d.DiscountRef WHERE LTRIM(RTRIM(a.Name)) IN (""" + ", ".join(f"N'{n}'" for n in MGMT_NAMES) + """)
    GROUP BY d.FactorRef, d.RowRef)"""
 
+# برگشت از توزیع: ستون «خروجی» فاکتور فروشی که برگشتی به آن ارجاع داده (FactorFRef ← ExitRef ← tblExit.Code) مقدار دارد؛
+# خود برگشتی خروجی ندارد و ExitCode ویو هم برای برگشتی‌ها با خروجی فاکتور مرجع یکی نیست، پس مستقیم از جدول‌ها خوانده می‌شود.
 SALES_SQL = f"""
 SELECT v.PersianDate AS [تاریخ], v.FactorType AS [نوع فاکتور], v.FactorDCode AS [شماره مرجع], {_COLS},
     v.Discount - ISNULL(COALESCE(mf.mg, -mb.mg), 0) AS [تخفیف حجمی],
-    ISNULL(COALESCE(mf.mg, -mb.mg), 0) AS [تخفیف مدیریتی]
+    ISNULL(COALESCE(mf.mg, -mb.mg), 0) AS [تخفیف مدیریتی],
+    CASE WHEN rx.ID IS NULL THEN 0 ELSE 1 END AS [برگشت از توزیع]
 FROM dbo.vwFactorFBLinesFull v
 LEFT JOIN {_MGMT.format(t="tblFactorfDiscount")} mf ON v.FactorType = N'فروش' AND mf.FactorRef = v.ID AND mf.RowRef = v.row
 LEFT JOIN {_MGMT.format(t="tblFactorBDiscount")} mb ON v.FactorType <> N'فروش' AND mb.FactorRef = v.ID AND mb.RowRef = v.row
+LEFT JOIN dbo.tblFactorB rb ON v.FactorType <> N'فروش' AND rb.ID = v.ID
+LEFT JOIN dbo.tblFactorF rf ON rf.ID = rb.FactorFRef
+LEFT JOIN dbo.tblExit rx ON rx.ID = rf.ExitRef AND rx.Code >= 1
 WHERE v.DateE BETWEEN ? AND ? AND v.BranchName LIKE ?"""
 
 REQUESTS_SQL = f"""
@@ -246,6 +252,12 @@ def _categorize(df: pd.DataFrame | None, cmap: dict):
     prod = {k: v[0] for k, v in cmap.get("products", {}).items()}
     cat = df["product_code"].map(prod).fillna(df["product_group"].map(cmap.get("groups", {})))
     df["category"] = cat.fillna(cmap.get("fallback", "سایر")).astype(object)
+    # کالاهای بدون گروه کالا در کارآمد: زیرگروه = «گروه کلی + برند» (مثل «بادی اسپلش پادینا»)، نه «نامشخص»
+    pg = df["product_group"].astype(object)
+    miss = pg.isna() | pg.astype(str).str.strip().isin(["", loader.UNKNOWN])
+    if miss.any() and "brand" in df:
+        pg = pg.where(~miss, df["category"].astype(str) + " " + df["brand"].astype(str))
+        df["product_group"] = pg
 
 
 def _compact(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -394,8 +406,9 @@ class SqlStore:
 
                 def stale(m: dict) -> bool:
                     d = self.data.get(m["month"])
-                    # کش قبل از جدا شدن تخفیف مدیریتی (mgmt): یک بار دوباره خوانده می‌شود
-                    if d is None or d.get("branch_like") != cfg["branch_like"] or not d.get("mgmt"):
+                    # کش قبل از جدا شدن تخفیف مدیریتی (mgmt) و برگشت از توزیع (dist_return): یک بار دوباره خوانده می‌شود؛
+                    # تا آن موقع همان کش قدیمی نمایش داده می‌شود تا داشبورد خالی نماند
+                    if d is None or d.get("branch_like") != cfg["branch_like"] or not d.get("mgmt") or not d.get("dist_return"):
                         return True
                     if m["month"] == cur_m:
                         mins = float(cfg.get("refresh_minutes") or 0)
@@ -441,7 +454,7 @@ class SqlStore:
         sales, requests = _month_frames(_read(cn, _branch_sql(SALES_SQL, len(like)), rng),
                                         _read(cn, _branch_sql(REQUESTS_SQL, len(like)), rng), cmap)
         d = {"version": CACHE_VERSION, "month": m["month"], "info": m, "branch_like": cfg["branch_like"],
-             "fetched": time.time(), "closed": closed, "compact2": True, "mgmt": True, "sales": sales, "requests": requests,
+             "fetched": time.time(), "closed": closed, "compact2": True, "mgmt": True, "dist_return": True, "sales": sales, "requests": requests,
              "sig": sig}
         with self.data_lock:
             self.data[m["month"]] = d

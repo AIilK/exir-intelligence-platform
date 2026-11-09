@@ -76,7 +76,7 @@ function cell(v, type, unit) {
 }
 const NUMERIC = new Set(['money', 'int', 'pct', 'num1'])
 
-// مقدار هر خانه در اکسل: عدد (نه متن)، درصد به‌صورت کسر با قالب ٪، مبلغ به واحد انتخاب‌شده
+// مقدار هر خانه در اکسل: عدد (نه متن)، درصد به‌صورت کسر با قالب ٪، مبلغ به ریال کامل
 function csvValue(v, type, unit) {
   if (v == null || (typeof v === 'number' && !Number.isFinite(v))) return ''
   switch (type) {
@@ -218,7 +218,8 @@ export function DataTable({ rows, columns: allColumns, unit, onRowClick, pageSiz
     setSort((s) => (s?.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }))
 
   const download = () => {
-    const blob = toXlsx(filtered, allColumns, unit || 'million', exportName || 'export', total, exportExtras ? exportExtras() : {})
+    // خروجی اکسل همیشه به ریال کامل است، مستقل از واحد نمایش
+    const blob = toXlsx(filtered, allColumns, 'rial', exportName || 'export', total, exportExtras ? exportExtras() : {})
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `${exportName || 'export'}.xlsx`
@@ -297,7 +298,10 @@ export function DataTable({ rows, columns: allColumns, unit, onRowClick, pageSiz
 const isNeg = (v, type) => NUMERIC.has(type) && typeof v === 'number' && v < 0
 
 // ---------------------------------------------------------------- multi select
-export function MultiSelect({ label, options, value, onChange }) {
+export const NONE = '__none__'   // allMode: هیچ موردی انتخاب نشده (خالی = همه)
+
+/** allMode (مثل فیلتر اکسل): همه پیش‌فرض تیک دارند، «انتخاب همه» و برداشتن تیک هر مورد؛ value خالی = همه، [NONE] = هیچ */
+export function MultiSelect({ label, options, value, onChange, allMode = false }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef(null)
@@ -306,10 +310,27 @@ export function MultiSelect({ label, options, value, onChange }) {
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [])
-  const sel = new Set(value)
+  const all = options.map((o) => o.value)
+  const sel = new Set(allMode && !value.length ? all : value)
   const shown = options.filter((o) => !q || o.label.includes(q) || (o.group || '').includes(q))
-  const toggle = (v) => onChange(sel.has(v) ? value.filter((x) => x !== v) : [...value, v])
-  const summary = value.length === 0 ? 'همه'
+  const setSel = (next) => {
+    const vs = all.filter((v) => next.has(v))
+    onChange(!allMode ? vs : vs.length === all.length ? [] : vs.length ? vs : [NONE])
+  }
+  const toggle = (v) => {
+    if (!allMode) return onChange(sel.has(v) ? value.filter((x) => x !== v) : [...value, v])
+    const n = new Set(sel)
+    n.has(v) ? n.delete(v) : n.add(v)
+    setSel(n)
+  }
+  const shownAll = shown.length > 0 && shown.every((o) => sel.has(o.value))
+  const toggleShown = () => {
+    const n = new Set(sel)
+    shown.forEach((o) => (shownAll ? n.delete(o.value) : n.add(o.value)))
+    setSel(n)
+  }
+  const summary = allMode ? (value.length === 0 ? 'همه' : value[0] === NONE ? 'هیچ' : `${fmtInt(value.length)} از ${fmtInt(all.length)}`)
+    : value.length === 0 ? 'همه'
     : value.length === 1 ? (options.find((o) => o.value === value[0])?.label ?? value[0])
     : `${fmtInt(value.length)} مورد`
   return (
@@ -320,11 +341,17 @@ export function MultiSelect({ label, options, value, onChange }) {
       {open && (
         <div className="ms-pop">
           <input className="input" autoFocus placeholder="جستجو…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <div className="ms-actions">
+          {!allMode && <div className="ms-actions">
             <button className="link" onClick={() => onChange([])}>پاک کردن</button>
             {q && <button className="link" onClick={() => onChange([...new Set([...value, ...shown.map((o) => o.value)])])}>انتخاب نتایج</button>}
-          </div>
+          </div>}
           <div className="ms-list">
+            {allMode && shown.length > 0 && (
+              <label className="ms-opt" style={{ fontWeight: 700, borderBottom: '1px solid var(--border)' }}>
+                <input type="checkbox" checked={shownAll} onChange={toggleShown} />
+                <span>{q ? 'انتخاب همه نتایج' : 'انتخاب همه'}</span>
+              </label>
+            )}
             {shown.map((o) => (
               <label key={o.value} className="ms-opt">
                 <input type="checkbox" checked={sel.has(o.value)} onChange={() => toggle(o.value)} />

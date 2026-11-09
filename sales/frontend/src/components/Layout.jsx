@@ -14,13 +14,16 @@ const NAV = [
   { to: '/analysis', label: 'تحلیل فروش', icon: '◔' },
   { to: '/plan', label: 'برنامه‌ریزی و تارگت', icon: '◇' },
   { to: '/commission', label: 'تحقق و پورسانت', icon: '٪' },
+  { to: '/contest', label: 'مسابقه', icon: '★' },
   { to: '/inventory', label: 'موجودی و سفارش', icon: '▤' },
   { section: 'فروش راهکاران (B2B)' },
   { to: '/rahkaran', label: 'نمایندگان B2B', icon: '◉' },
   { to: '/rahkaran/customer-brand', label: 'مشتری × برند', icon: '▦' },
   { to: '/rahkaran/total-report', label: 'گزارش کل (Total)', icon: '☰' },
   { to: '/rahkaran/compare', label: 'مقایسه', icon: '⇄' },
+  { to: '/rahkaran/reorder', label: 'پیشنهاد سفارش', icon: '⟳' },
   { to: '/rahkaran/export', label: 'فروش صادراتی', icon: '✈' },
+  { to: '/rahkaran/commission', label: 'پورسانت نمایندگان و صادرات', icon: '٪' },
 ]
 
 function FilterBar() {
@@ -82,7 +85,7 @@ export default function Layout() {
   const isData = pathname === '/data'
   // صفحه‌های برنامه‌ریزی و موجودی کنترل‌های خودشان را دارند و فیلترهای سراسری روی آن‌ها اثر ندارند
   const isRahkaran = pathname.startsWith('/rahkaran')  // راهکاران کنترل‌های خودش را دارد و به داده کارآمد وابسته نیست
-  const noFilters = pathname === '/plan' || pathname === '/commission' || pathname === '/inventory' || isRahkaran
+  const noFilters = pathname === '/plan' || pathname === '/commission' || pathname === '/contest' || pathname === '/inventory' || isRahkaran
   const busy = useBusy()
   useEffect(() => { window.scrollTo(0, 0) }, [pathname])
   return (

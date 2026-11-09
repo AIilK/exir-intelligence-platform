@@ -2,13 +2,12 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApi, useApp, detailPath, fmtPct, fmtMoney, UNITS, fmtInt } from '../lib.jsx'
 import { Card, Loading, ErrorBox, DataTable, Tabs, Kpi } from '../components/ui.jsx'
-import { Chart, baseOption, HBar, CompareBars } from '../components/Chart.jsx'
+import { Chart, baseOption, HBar } from '../components/Chart.jsx'
 import { PageHead } from '../components/Layout.jsx'
 
 /** نرخ تخفیف انباشته (حجمی + نقدی + مدیریتی) با درصد کل کنار هر میله. large: نسخه بزرگ نمای کلی */
 export function DiscountBars({ rows, onClick, large = false }) {
   const data = rows.filter((r) => r.gross > 0).slice(0, 15).reverse()
-  const hasMgmt = data.some((r) => r.mgmt)
   const rowH = large ? 36 : 28
   const barW = large ? 22 : 16
   // بازه محور تا کمی بیشتر از بزرگ‌ترین نرخ (گرد به ۵٪)، تا میله‌ها عرض نمودار را پر کنند و برچسب جا شود
@@ -17,7 +16,7 @@ export function DiscountBars({ rows, onClick, large = false }) {
   const parts = [
     { key: 'vol_rate', name: 'تخفیف حجمی', color: 0 },
     { key: 'cash_rate', name: 'تخفیف نقدی', color: 1 },
-    ...(hasMgmt ? [{ key: 'mgmt_rate', name: 'تخفیف مدیریتی', color: 2 }] : []),
+    { key: 'mgmt_rate', name: 'تخفیف مدیریتی', color: 2 },
   ]
   return (
     <Chart
@@ -62,13 +61,14 @@ export default function Analysis() {
     .sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0))
   const ret = { branch: data.ret_branch, category: data.ret_category, group: data.ret_group, product: data.ret_product }[retBy]
   const retDim = retBy
-  const discCols = [{ key: 'key', label: { category: 'گروه کالا', group: 'زیرگروه کالا', branch: 'شعبه' }[discBy] },
-    { key: 'gross', label: 'جمع قبل تخفیف', type: 'money' }, { key: 'vol', label: 'تخفیف حجمی', type: 'money' },
-    { key: 'cash', label: 'تخفیف نقدی', type: 'money' },
-    ...(disc.some((r) => r.mgmt) ? [{ key: 'mgmt', label: 'تخفیف مدیریتی', type: 'money' }] : []),
+  // جدول تخفیفات: همیشه به تفکیک شعبه، با هر سه نوع تخفیف (حجمی، نقدی، مدیریتی)
+  const discBranch = [...(data.disc_branch || [])].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0))
+  const discCols = [{ key: 'key', label: 'شعبه' },
+    { key: 'gross', label: 'جمع قبل تخفیف', type: 'money' },
+    { key: 'vol', label: 'تخفیف حجمی', type: 'money' }, { key: 'cash', label: 'تخفیف نقدی', type: 'money' },
+    { key: 'mgmt', label: 'تخفیف مدیریتی', type: 'money' }, { key: 'disc', label: 'جمع تخفیف', type: 'money' },
     { key: 'vol_rate', label: '٪ حجمی', type: 'pct' }, { key: 'cash_rate', label: '٪ نقدی', type: 'pct' },
-    ...(disc.some((r) => r.mgmt) ? [{ key: 'mgmt_rate', label: '٪ مدیریتی', type: 'pct' }] : []),
-    { key: 'rate', label: '٪ کل', type: 'pct' }]
+    { key: 'mgmt_rate', label: '٪ مدیریتی', type: 'pct' }, { key: 'rate', label: '٪ کل', type: 'pct' }]
   const retCols = [{ key: 'label', label: { branch: 'شعبه', category: 'گروه کالا', group: 'زیرگروه کالا', product: 'کالا' }[retBy] },
     { key: 'returns', label: 'برگشتی خالص', type: 'money' }, { key: 'qty', label: 'تعداد برگشتی', type: 'int' },
     { key: 'rate', label: 'نرخ برگشت', type: 'pct', hint: 'برگشتی ÷ فروش خالص همان مورد' }]
@@ -76,20 +76,20 @@ export default function Analysis() {
   const pay = data.payment.map((p) => ({ ...p, key: p.payment,
     label: p.payment === 'نامشخص' && p.net < 0 ? 'برگشتی (بدون نحوه پرداخت)' : p.payment }))
   const payTot = pay.reduce((a, p) => a + Math.max(p.net, 0), 0)
-  const bands = data.price_bands.map((b) => ({ ...b, label: `${b.key} — ${fmtInt(b.qty)} عدد` }))
   return (
     <>
-      <PageHead title="تحلیل فروش" desc="تخفیفات، برگشت از فروش، نحوه پرداخت، قیمت و وضعیت درخواست‌ها" />
+      <PageHead title="تحلیل فروش" desc="تخفیفات، برگشت از فروش و نحوه پرداخت" />
       <div className="kpis">
         <Kpi label="جمع قبل از تخفیف (فاکتورهای فروش)" value={k.sales_gross} />
-        <Kpi label="نرخ کل تخفیف" value={k.disc_rate} type="pct" sub={`حجمی ${fmtPct(k.vol_disc_rate)} · نقدی ${fmtPct(k.cash_disc_rate)}${k.mgmt_disc_rate ? ` · مدیریتی ${fmtPct(k.mgmt_disc_rate)}` : ''}`} />
+        <Kpi label="نرخ کل تخفیف" value={k.disc_rate} type="pct" sub={`حجمی ${fmtPct(k.vol_disc_rate)} · نقدی ${fmtPct(k.cash_disc_rate)} · مدیریتی ${fmtPct(k.mgmt_disc_rate)}`} />
+        <Kpi label="نرخ تخفیف مدیریتی" value={k.mgmt_disc_rate ?? 0} type="pct" hint="تخفیف مدیریتی ÷ جمع قبل از تخفیف فاکتورهای فروش" />
         <Kpi label="برگشت از فروش" value={k.returns_net} sub={`${fmtInt(k.docs_return)} سند برگشتی`} />
         <Kpi label="نرخ برگشت" value={k.return_rate} type="pct" />
         <Kpi label="ارزش افزوده" value={k.vat} />
         <Kpi label="قابل پرداخت (با ارزش افزوده)" value={k.payable} />
       </div>
       <div className="grid g2">
-        <Card title="نرخ تخفیف" subtitle="سهم تخفیف حجمی و نقدی از جمع قبل از تخفیف — فقط فاکتورهای فروش، بدون فاکتورهای «نمونه کالا»؛ مرتب از بیشترین نرخ"
+        <Card title="نرخ تخفیف" subtitle="سهم تخفیف حجمی، نقدی و مدیریتی از جمع قبل از تخفیف — فقط فاکتورهای فروش، بدون فاکتورهای «نمونه کالا»؛ مرتب از بیشترین نرخ"
           actions={<Tabs value={discBy} onChange={setDiscBy} tabs={[{ value: 'category', label: 'گروه کالا' }, { value: 'group', label: 'زیرگروه' }, { value: 'branch', label: 'شعبه' }]} />}>
           <DiscountBars rows={disc} onClick={(r) => nav(detailPath(discBy, r.key))} />
         </Card>
@@ -97,25 +97,15 @@ export default function Analysis() {
           actions={<Tabs value={retBy} onChange={setRetBy} tabs={[{ value: 'branch', label: 'شعبه' }, { value: 'category', label: 'گروه' }, { value: 'group', label: 'زیرگروه' }, { value: 'product', label: 'کالا' }]} />}>
           <HBar rows={ret.slice(0, 15)} value="returns" unit={unit} colorIndex={7} onClick={(r) => nav(detailPath(retDim, r.key))} />
         </Card>
-        <Card title="جدول تخفیفات" className="span2">
-          <DataTable rows={disc} columns={discCols} unit={unit} pageSize={10} exportName={`discount-${discBy}`}
-            onRowClick={(r) => nav(detailPath(discBy, r.key))} />
+        <Card title="جدول تخفیفات به تفکیک شعبه" className="span2"
+          subtitle="هر سه نوع تخفیف (حجمی، نقدی، مدیریتی) برای همه شعبه‌ها — فقط فاکتورهای فروش، بدون «نمونه کالا»؛ مرتب از بیشترین نرخ کل">
+          <DataTable rows={discBranch} columns={discCols} unit={unit} pageSize={30} exportName="discount-branch"
+            onRowClick={(r) => nav(detailPath('branch', r.key))} />
         </Card>
         <Card title="نحوه پرداخت" subtitle="فروش خالص به تفکیک شرایط پرداخت. برگشتی‌ها در کارآمد نحوه پرداخت ندارند و جدا نمایش داده می‌شوند؛ درصدها فقط از فروش است">
           <HBar rows={pay} unit={unit} />
           <div className="chips">{pay.filter((p) => p.net > 0).map((p) => <span key={p.key} className="chip">{p.label}: {fmtPct(payTot ? p.net / payTot : null)}</span>)}</div>
         </Card>
-        <Card title="فروش بر اساس بازه قیمت مؤثر واحد" subtitle="قیمت مؤثر هر سطر فاکتور = فروش خالص سطر ÷ تعداد آن، به تومان (فقط فاکتورهای فروش). میله = فروش خالص بازه؛ کنار نام بازه تعداد فروخته‌شده آمده است">
-          <HBar rows={[...bands].reverse()} unit={unit} colorIndex={6} />
-        </Card>
-        {data.req_status && (
-          <Card title="وضعیت درخواست‌ها به تفکیک شعبه" className="span2"
-            subtitle="«فاکتورشده» = وضعیت درخواست ۱ ؛ «باز» = وضعیت ۰ (فروش خالص بر مبنای درخواست)">
-            <CompareBars rows={data.req_status.map((r) => ({ ...r, key: r.branch, label: r.branch }))} unit={unit}
-              onClick={(r) => nav(detailPath('branch', r.key))}
-              series={[{ key: 'done', name: 'فاکتورشده', color: 2 }, { key: 'open', name: 'باز / فاکتورنشده', color: 1 }]} />
-          </Card>
-        )}
         <Card title="جدول برگشت از فروش" className="span2">
           <DataTable rows={ret} columns={retCols} unit={unit} pageSize={10} exportName={`returns-${retBy}`}
             onRowClick={(r) => nav(detailPath(retDim, r.key))} />

@@ -4,6 +4,34 @@ import { n0, pct, signedPct, growth, isNum, moneyText, faDigits, mt } from '../d
 import { PageHead, Card, Pending, Kpi, Mt } from '../ui.jsx'
 import { Th, sorter } from '../fileTabs.jsx'
 import { useRahkaranReps, rahkaranPath, REP_RISK } from '../rahkaran.js'
+import { buildXlsx } from '@sales/xlsx.js'
+
+/** خروجی اکسل همه نمایندگان (همان ردیف‌های فیلتر و مرتب‌شده جدول): مبالغ به ریال و کامل، با سطر جمع. */
+function exportReps(rows, yl, pyl) {
+  const num = (v) => (isNum(v) ? v : null)
+  const frac = (v) => (isNum(v) ? v / 100 : null)   // درصدهای ۰ تا ۱۰۰ ← کسر برای قالب درصد اکسل
+  const cols = [
+    ['کد نماینده', 'text', (r) => String(r.code ?? '')], ['نماینده', 'text', (r) => r.name || ''], ['نام کوتاه', 'text', (r) => r.short || ''],
+    ['برند', 'text', (r) => r.brand || ''], ['استان', 'text', (r) => r.province || ''], ['شهر', 'text', (r) => r.city || ''],
+    [`فروش خالص ${yl} (ریال)`, 'money', (r) => num(r.net)], ['تخفیف نقدی (ریال)', 'money', (r) => num(r.cash)],
+    ['خالص + تخفیف نقدی (ریال)', 'money', (r) => num(r.netCash)], [`فروش همین بازه ${pyl} (ریال)`, 'money', (r) => num(r.lyNet)],
+    ['رشد نسبت به پارسال', 'pct', (r) => frac(r.growth)], ['تعداد فاکتور', 'int', (r) => num(r.invoices)],
+    ['آخرین خرید', 'text', (r) => r.lastDate || ''],
+    ['مطالبات (ریال)', 'money', (r) => num(r.debt)], ['دوره وصول (روز)', 'int', (r) => num(r.dso)],
+    ['چک باز (ریال)', 'money', (r) => num(r.openCheques)], ['پوشش چک', 'pct', (r) => frac(r.coverage)],
+    ['سررسید گذشته (ریال)', 'money', (r) => num(r.overdue)], ['برگشتی باز (ریال)', 'money', (r) => num(r.returned)],
+    ['ریسک', 'text', (r) => (r.hasFin ? REP_RISK[r.riskLevel]?.label || '' : 'در داشبورد مالی پیدا نشد')],
+    ['دلایل ریسک', 'text', (r) => (r.riskReasons || []).join(' · ')],
+  ]
+  const data = rows.map((r) => cols.map(([, , f]) => f(r)))
+  const total = cols.map(([, k], i) => (i === 0 ? 'جمع' : k === 'money' ? data.reduce((a, row) => a + (row[i] || 0), 0) : null))
+  const blob = buildXlsx(cols.map(([label, kind]) => ({ label, kind })), [...data, total], 'نمایندگان', { filterRows: data.length, freezeCol: 2 })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = 'rahkaran-reps.xlsx'
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+}
 
 const sum = (rows, k) => rows.reduce((s, r) => s + (isNum(r[k]) && r[k] > 0 ? r[k] : 0), 0)
 
@@ -60,7 +88,11 @@ export default function RahkaranList() {
 
       <Card title={`همه نمایندگان (${n0(shown?.length ?? 0)})`}
         sub="روی عنوان هر ستون بزنید تا مرتب شود · مبالغ به میلیون تومان · فروش از داشبورد فروش (راهکاران)، مطالبات و چک از داشبورد مالی"
-        action={<label className="u-search"><span>جستجو</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="نام، کد، شهر یا استان…" /></label>}>
+        action={<>
+          <label className="u-search"><span>جستجو</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="نام، کد، شهر یا استان…" /></label>
+          <button className="u-btn" disabled={!shown?.length} onClick={() => exportReps(shown, yl, pyl)}
+            title="همه ردیف‌های جدول (با فیلتر برند و جستجو) با مبالغ کامل به ریال">خروجی اکسل</button>
+        </>}>
         {!shown ? <Pending state={sales} label="نمایندگان" height={300} /> : (
           <div className="u-table-wrap">
             <table className="u-table">

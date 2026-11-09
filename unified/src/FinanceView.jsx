@@ -1,6 +1,11 @@
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import FinanceDashboard from '@finance/dashboard-client.tsx'
 import { useAuth } from '@finance/auth/auth.tsx'
+import { salesSlots } from '@finance/sales/sales-overview.tsx'
+import RequestDaysAttention from './requestDays.jsx'
+
+// بلوک «نیازمند توجه» (ویزیتورهای کم‌درخواست) داخل خلاصه مدیریتی فروش، بعد از «فروش ماه»
+salesSlots.attention = RequestDaysAttention
 
 // Views of the finance command center (dashboard-client.tsx `View` type).
 const VIEWS = new Set([

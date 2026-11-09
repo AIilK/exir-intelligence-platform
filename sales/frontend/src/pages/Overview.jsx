@@ -74,33 +74,6 @@ function MonthlyCard() {
   )
 }
 
-/** هشدار ویزیتورهای فهرست پورسانت که در کمتر از ۸۰٪ روز کاری سپری‌شده ماه جاری (تا دیروز) درخواست ثبت کرده‌اند */
-function RequestDaysAlert() {
-  const { data } = useApi('/api/request-days')
-  if (!data?.elapsed) return null
-  const low = data.visitors.filter((v) => v.low).sort((a, b) => a.days - b.days)
-  if (!low.length) return null
-  return (
-    <div className="alerts"><div className="alert warn"><span className="alert-icon" aria-hidden>!</span><div>
-      <b>{fmtInt(low.length)} ویزیتور</b> در کمتر از {fmtPct(data.min_share, 0)} روز کاری ماه جاری درخواست ثبت کرده‌اند
-      {' '}(دست‌کم {faDigits(Math.ceil(data.need - 1e-9))} روز از {faDigits(data.elapsed)} روز کاری سپری‌شده تا دیروز؛ روز دارای درخواست در جمعه هم حساب می‌شود).
-      <details className="alert-more">
-        <summary>فهرست ویزیتورها</summary>
-        <div className="table-scroll"><table>
-          <thead><tr><th>ویزیتور</th><th>شعبه</th><th>سرپرست</th><th className="num">روز دارای درخواست</th><th className="num">سهم از روز کاری</th></tr></thead>
-          <tbody>{low.map((v) => (
-            <tr key={v.id}><td>{v.name}{v.code ? <span className="muted small"> ({faDigits(v.code)})</span> : null}
-              {!v.seller_key && <span className="tag">در داده پیدا نشد</span>}</td>
-              <td>{v.branch}</td><td>{v.supervisor || '—'}</td>
-              <td className="num">{fmtInt(v.days)} از {fmtInt(data.elapsed)}</td>
-              <td className="num"><span className={`pill ${v.share >= 0.5 ? 'st-yellow' : 'st-red'}`}>{fmtPct(v.share, 0)}</span></td></tr>
-          ))}</tbody>
-        </table></div>
-      </details>
-    </div></div></div>
-  )
-}
-
 export default function Overview() {
   const { data, loading, error } = useApi('/api/overview')
   const { unit, filters } = useApp()
@@ -117,7 +90,6 @@ export default function Overview() {
   return (
     <>
       <PageHead title="نمای کلی" desc="شاخص‌های اصلی فروش در محدوده فیلترهای انتخاب‌شده" />
-      <RequestDaysAlert />
       <KpiRow k={k} />
       {chainOnly && <ChainSelloutBlock />}
       {onlineOnly && <ChainSelloutBlock kind="online" />}

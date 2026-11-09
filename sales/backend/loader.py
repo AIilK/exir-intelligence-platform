@@ -46,6 +46,7 @@ COLMAP = {
     "تخفیف حجمی": "vol_disc",
     "تخفیف نقدی": "cash_disc",
     "تخفیف مدیریتی": "mgmt_disc",
+    "برگشت از توزیع": "dist_return",
     "مجموع تخفیفات": "disc",
     "ارزش افزوده": "vat",
     "قابل پرداخت": "payable",
@@ -195,6 +196,9 @@ def finish(sales: pd.DataFrame, requests: pd.DataFrame | None):
     for c in SIGNED:
         sales.loc[ret, c] = -sales.loc[ret, c].abs()
     sales.loc[ret, "net"] = sales.loc[ret, "gross"] - sales.loc[ret, "disc"]
+    # فقط منبع SQL این ستون را دارد (فایل اکسل خروجی فاکتور مرجع را ندارد)
+    if "dist_return" in sales:
+        sales["dist_return"] = ret & (pd.to_numeric(sales["dist_return"], errors="coerce").fillna(0) > 0)
     if requests is not None:
         # خالص درخواست = جمع قبل از تخفیف − فقط پروموشن ماهانه (ستون «تخفیف حجمی»)؛
         # تخفیف نقدی و مدیریتی در مرحله فاکتور اعمال می‌شوند

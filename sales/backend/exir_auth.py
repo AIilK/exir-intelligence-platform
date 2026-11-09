@@ -57,6 +57,8 @@ API_MODULES: list[tuple[str, bool, set[str]]] = [
     ("/api/rk_sales/customer", True, {"salesB2B", "customers"}),
     ("/api/rk_sales", False, {"salesB2B"}),
     ("/api/rk_export", False, {"salesExport"}),
+    # پورسانت نمایندگان و صادرات: دیدن با پورسانت یا همان بخش فروش
+    ("/api/rk_commission", False, {"salesCommission", "salesB2B", "salesExport"}),
     ("/api/plan", False, {"sales"}),
 ]
 

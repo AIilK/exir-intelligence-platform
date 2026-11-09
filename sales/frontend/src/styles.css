@@ -329,6 +329,11 @@ tr.total-row td.tree-label { background: var(--accent-soft); }
 .kpi.st-green .kpi-sub, .kpi.st-yellow .kpi-sub, .kpi.st-red .kpi-sub { color: inherit; opacity: .85; }
 .pill { display: inline-block; min-width: 46px; text-align: center; border-radius: 999px; padding: 0 8px; }
 .pill.st-none { background: var(--surface-2); color: var(--muted); }
+.st-blue { background: var(--accent-soft); color: var(--accent); }
+.reorder-how { line-height: 2; }
+.reorder-how ol { margin: 0; padding-inline-start: 22px; }
+.reorder-how ul { margin: 4px 0; padding-inline-start: 18px; }
+.reorder-how .pill { min-width: 0; }
 .plan-bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-end; margin-bottom: 14px; }
 .plan-bar select { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; }
 .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }

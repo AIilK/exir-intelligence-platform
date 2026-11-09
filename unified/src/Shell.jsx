@@ -21,6 +21,7 @@ const GROUPS = [
       { to: '/analysis', label: 'تحلیل فروش', icon: '◔' },
       { to: '/inventory', label: 'موجودی و سفارش', icon: '▤' },
       { to: '/commission', label: 'تحقق و پورسانت', icon: '٪' },
+      { to: '/contest', label: 'مسابقه', icon: '★' },
     ],
   },
   {
@@ -29,7 +30,9 @@ const GROUPS = [
       { to: '/rahkaran/customer-brand', label: 'مشتری × برند', icon: '▦' },
       { to: '/rahkaran/total-report', label: 'گزارش کل (Total)', icon: '☰' },
       { to: '/rahkaran/compare', label: 'مقایسه', icon: '⇄' },
+      { to: '/rahkaran/reorder', label: 'پیشنهاد سفارش', icon: '⟳' },
       { to: '/rahkaran/export', label: 'فروش صادراتی', icon: '✈' },
+      { to: '/rahkaran/commission', label: 'پورسانت نمایندگان و صادرات', icon: '٪' },
     ],
   },
   {
@@ -89,6 +92,7 @@ const ROUTE_MODULES = [
   ['/inventory', ['salesInventory']],
   ['/commission', ['salesCommission']],
   ['/rahkaran/export', ['salesExport']],
+  ['/rahkaran/commission', ['salesCommission', 'salesB2B', 'salesExport']],
   ['/rahkaran', ['salesB2B']],
   ['/files/rahkaran', ['salesB2B', 'customers']],
   ['/reconciliation', ['reconciliation']],

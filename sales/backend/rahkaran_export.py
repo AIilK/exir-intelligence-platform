@@ -26,6 +26,8 @@ CUSTOMERS_FILE = ROOT / "data" / "rahkaran" / "export_customers.csv"
 DEFAULT_FROM = "1400/01/01"
 USD = 3  # GNR3.Currency
 MAX_UNIT_USD = 1000  # بیشترین قیمت واحد معقول یک کالا به دلار
+# مبالغ هر سطر که به دلار تبدیل می‌شوند (تخفیف نقدی، مدیریتی و مالیات از سیاست‌های فروش، مثل فروش B2B)
+MONEY = ["gross", "net", "cash", "mgmt", "tax"]
 # برند کالا در products.csv انگلیسی و با چند املاست؛ نام فارسی مثل بقیه داشبورد
 BRANDS = {"padina": "پادینا", "base": "بیس", "jevo": "جوو", "arkia": "آرکیا", "vina": "وینا", "oradent": "اورادنت",
           "tacori": "تاکوری", "kalyon": "کالیون", "mulhens": "مولهنس", "lorient": "لورینت", "upsky": "آپ اسکای",
@@ -34,13 +36,15 @@ BRANDS = {"padina": "پادینا", "base": "بیس", "jevo": "جوو", "arkia":
 LINES_SQL = """
 SELECT 'S' AS kind, c.Number AS code, FORMAT(i.Date, 'yyyy/MM/dd', 'fa-IR') AS date, i.Number AS inv,
        pr.Number AS product_code, pr.Name AS product, ii.MajorUnitQuantity AS qty, ii.Price AS gross, ii.NetPrice AS net,
-       CASE WHEN i.Status = 11 THEN 1 ELSE 0 END AS final, i.CurrencyRef AS cur, i.OperationalCurrencyExchangeRate AS rate
+       CASE WHEN i.Status = 11 THEN 1 ELSE 0 END AS final, i.CurrencyRef AS cur, i.OperationalCurrencyExchangeRate AS rate,
+       ISNULL(cd.cash, 0) AS cash, ISNULL(cd.mgmt, 0) AS mgmt, ISNULL(cd.tax, 0) AS tax
 FROM SLS3.InvoiceItem ii JOIN SLS3.Invoice i ON i.InvoiceID = ii.InvoiceRef
 JOIN SLS3.Customer c ON c.CustomerID = i.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = ii.ProductRef
+{policies}
 WHERE i.Date >= ? AND i.Status IN ({st}) AND c.Number IN ({codes})
 UNION ALL
 SELECT 'Q', c.Number, FORMAT(q.Date, 'yyyy/MM/dd', 'fa-IR'), q.Number,
-       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 1, q.CurrencyRef, q.OperationalCurrencyExchangeRate
+       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 1, q.CurrencyRef, q.OperationalCurrencyExchangeRate, 0, 0, 0
 FROM SLS3.SaleRequestItem qi JOIN SLS3.SaleRequest q ON q.SaleRequestID = qi.SaleRequestRef
 JOIN SLS3.Customer c ON c.CustomerID = q.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = qi.ProductRef
 WHERE q.Date >= ? AND q.State IN ({rq}) AND c.Number IN ({codes})"""
@@ -102,7 +106,7 @@ def load(env_file, cfg: dict) -> dict:
         found = RK._read(cn, RS.CANDIDATES_SQL.format(st=RS.STATUSES, rq=RS.REQUEST_STATES), [since] * 2)
         cust = pd.concat([cust, new_accounts(found, cust)], ignore_index=True)
         codes = ",".join(f"'{c}'" for c in cust["code"] if c.isdigit())
-        df = RK._read(cn, LINES_SQL.format(st=RS.STATUSES, rq=RS.REQUEST_STATES, codes=codes), [since] * 2)
+        df = RK._read(cn, LINES_SQL.format(st=RS.STATUSES, rq=RS.REQUEST_STATES, codes=codes, policies=RS.policies_sql()), [since] * 2)
         today = RK._read(cn, RS.TODAY_SQL, [])["d"].iloc[0]
     finally:
         cn.close()
@@ -112,16 +116,16 @@ def load(env_file, cfg: dict) -> dict:
     df["inv"] = df["inv"].astype(str)
     df["year"] = df["date"].str[:4]
     df["mm"] = df["date"].str[5:7]
-    for k in ("qty", "gross", "net", "rate", "cur"):
+    for k in ("qty", "gross", "net", "rate", "cur", "cash", "mgmt", "tax"):
         df[k] = pd.to_numeric(df[k], errors="coerce").fillna(0.0)
     _to_usd(df)
     # سطرهای وضعیت ۲ گاهی به ریال‌اند (نمونه رایگان)؛ مبلغشان صفر است و دلار حساب نمی‌شوند
-    df[["gross", "net"]] = df[["gross", "net"]].where(df["final"].eq(1), 0.0)
+    df[MONEY] = df[MONEY].where(df["final"].eq(1), 0.0)
     # درخواست در ستون‌های جدا تا همه جمع‌های فروش فقط از فاکتور باشند
     q = df["kind"].eq("Q")
     df["req"] = df["gross"].where(q, 0.0)
     df["req_pcs"] = df["qty"].where(q, 0.0)
-    df.loc[q, ["qty", "gross", "net"]] = 0.0
+    df.loc[q, ["qty", *MONEY]] = 0.0
     cat = RS.products().reindex(df["product_code"])
     df["cat1"] = cat["cat1"].fillna(RS.OTHER).values
     df["cat2"] = cat["cat2"].fillna(RS.OTHER).values
@@ -137,7 +141,7 @@ def _to_usd(df: pd.DataFrame) -> None:
     (ماه بدون سند دلاری: نزدیک‌ترین ماه قبل، وگرنه بعد).
     سطر دلاری با قیمت واحد بیش از MAX_UNIT_USD اشتباه ریالی ثبت شده (مثل درخواست ۲۳۳۱۷)؛ با نرخ همان سند به دلار می‌رود."""
     wrong = df["cur"].eq(USD) & df["rate"].gt(1) & (df["gross"] > MAX_UNIT_USD * df["qty"].clip(lower=1))
-    for k in ("gross", "net"):
+    for k in MONEY:
         df.loc[wrong, k] = df.loc[wrong, k] / df.loc[wrong, "rate"]
     ym = df["date"].str[:7]
     usd = df["cur"].eq(USD)
@@ -148,7 +152,7 @@ def _to_usd(df: pd.DataFrame) -> None:
         return
     rates = rates.reindex(sorted(set(ym) | set(rates.index))).ffill().bfill()
     factor = (df["rate"].where(df["rate"] > 0, 1.0) / ym.map(rates)).where(~usd, 1.0)
-    for k in ("gross", "net"):
+    for k in MONEY:
         df[k] = df[k] * factor
     # دلار ← ریال برای جمع با فروش ریالی (نمای مدیر): سند دلاری با نرخ خودش، بقیه با همان میانگین ماه که به دلار رفته‌اند
     df["rial_rate"] = df["rate"].where(ok, ym.map(rates))

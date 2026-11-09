@@ -21,8 +21,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import analytics as A
+import b2b_reorder as BR
 import chain_store as CS
 import commission as K
+import contest as CT
 import payroll as PAY
 import inventory as INV
 import loader
@@ -31,6 +33,7 @@ import rahkaran as RK
 import rahkaran_export as RE
 import rahkaran_sales as RS
 import remittance as RM
+import rk_commission as RKC
 import sql_source
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,10 +59,12 @@ STATE: dict = {"data": None, "error": "در حال دریافت داده از SQ
 PLANS = PL.PlanStore(ROOT / "data" / "plans")
 PAYROLL = PAY.Cache(lambda: sql_source.connect(sql_source.settings(sql_source.read_env(ENV_FILE))))  # حقوق ثابت استخدامی‌ها
 COMM = K.Store(ROOT / "data" / "commission")  # فهرست ویزیتورها و تارگت‌های پورسانت، هر ماه یک فایل
+RK_COMM = RKC.Store(ROOT / "data" / "rk_commission")  # تنظیمات پورسانت نمایندگان راهکاران و صادرات، هر ماه یک فایل
 INV_SRC = INV.InventorySource(ENV_FILE, lambda: read_config())
 FACTORY = RK.FactorySource(ENV_FILE, lambda: read_config())
 RK_SALES = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RS.load, sig_sql=RS.SIG_SQL)  # فروش B2B از راهکاران
 RK_EXPORT = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RE.load, sig_sql=RS.SIG_SQL)  # فروش صادراتی از راهکاران
+RK_REORDER = RK.FactorySource(ENV_FILE, lambda: read_config(), load=BR.load, sig_sql=RS.SIG_SQL)  # پیشنهاد سفارش B2B (روزانه از ۱۴۰۰/۱۰)
 RK_REMIT = RK.FactorySource(ENV_FILE, lambda: read_config(), load=RM.load)  # حواله‌های فروش زنجیره‌ای و اینترنتی
 
 
@@ -177,7 +182,7 @@ def rk_live_worker():
         if viewers_idle():
             time.sleep(2)
             continue
-        for src in (FACTORY, RK_SALES, RK_EXPORT, RK_REMIT):
+        for src in (FACTORY, RK_SALES, RK_EXPORT, RK_REMIT, RK_REORDER):
             try:
                 src.live_step()
                 src.live_error = None
@@ -525,9 +530,36 @@ def team(req: Request):
     g = A.group_metrics(tx, rq, "seller", c, f, ["branch", "supervisor", "seller_code"])
     g["rank"] = g["net"].rank(ascending=False, method="min")
     sup = A.group_metrics(tx, rq, "supervisor", c, f)
-    return {"kpis": A.kpis(tx, rq, c, f),
-            "sellers": A.records(g[[x for x in BASE_COLS + ["branch", "supervisor", "seller_code", "rank"] if x in g]]),
+    roster = _roster_keys(tx, rq)
+    if roster is not None:
+        g["in_roster"] = g["key"].isin(roster)
+    return {"kpis": A.kpis(tx, rq, c, f), "roster_filter": roster is not None,
+            "sellers": A.records(g[[x for x in BASE_COLS + ["branch", "supervisor", "seller_code", "rank", "in_roster"] if x in g]]),
             "supervisors": A.records(sup[[x for x in BASE_COLS if x in sup]])}
+
+
+ROSTER_FROM = "1405/07"  # از مهر ۱۴۰۵ فهرست ویزیتورهای پورسانت مبنای «فروشندگان بدون فروش خالص» است
+
+
+def _roster_keys(tx: pd.DataFrame, rq: pd.DataFrame | None) -> set | None:
+    """seller_keyهای ویزیتورهای «لیست ویزیتور» صفحه پورسانت برای ماه‌های بازه از مهر ۱۴۰۵ به بعد؛
+    None یعنی بازه هیچ ماهی از مهر به بعد ندارد (فیلتری اعمال نمی‌شود)."""
+    frames_ = [x for x in (tx, rq) if x is not None and len(x)]
+    if not frames_:
+        return None
+    months = sorted({m for x in frames_ for m in x["date"].str[:7].unique() if m >= ROSTER_FROM})
+    if not months:
+        return None
+    d = STATE["data"]
+    cols = ["seller_key", "seller", "seller_code", "branch"]
+    both = pd.concat([d["sales"][cols]] + ([d["requests"][cols]] if d["requests"] is not None else []), ignore_index=True)
+    keys = set()
+    for m in months:
+        plan = COMM.get(m)
+        excl = {K.bkey(b) for b in plan.get("excluded_branches") or []}
+        vis = [v for v in plan.get("visitors") or [] if K.bkey(v.get("branch")) not in excl]
+        keys |= {x["key"] for x in K.match_sellers(vis, both).values()}
+    return keys
 
 
 def _roster_supervisors(month: str, sales: pd.DataFrame) -> dict[str, str]:
@@ -684,7 +716,7 @@ def products(req: Request):
     p = A.group_metrics(tx, rq, "product", c, f, ["brand", "category", "product_group"])
     abc = A.pareto(p)
     p["abc"] = p["key"].map(abc.pop("abc", {})).fillna("-")
-    bc = tx.groupby(["brand", "category"])["net"].sum().reset_index()
+    bc = tx.groupby(["brand", "category"])[["net", "qty"]].sum().reset_index()
     brands = A.group_metrics(tx, rq, "brand", c, f)
     cats = A.group_metrics(tx, rq, "category", c, f)
     groups = A.group_metrics(tx, rq, "group", c, f, ["category", "brand"])
@@ -695,7 +727,7 @@ def products(req: Request):
             "categories": A.records(cats[[x for x in BASE_COLS + ["forecast_qty"] if x in cats]]),
             "groups": A.records(groups[[x for x in BASE_COLS + ["category", "brand"] if x in groups]]),
             "products": A.records(p[[x for x in BASE_COLS + ["brand", "category", "product_group", "abc"] if x in p]]),
-            "brand_category": A.records(bc[bc["net"] > 0]), "pareto": abc}
+            "brand_category": A.records(bc[(bc["net"] > 0) | (bc["qty"] > 0)]), "pareto": abc}
 
 
 @app.get("/api/customers")
@@ -713,34 +745,12 @@ def customers(req: Request):
     g["abc"] = g["key"].map(ab.pop("abc", {})).fillna("-")
     # توزیع مشتریان بر اساس دفعات خرید (روزهای دارای فاکتور مؤثر)
     freq = g[g["invoices"] > 0]["invoices"].clip(upper=5).value_counts().sort_index()
-    master = None
-    cm = STATE["data"]["customers"]
-    if cm is not None and len(cm):
-        # فقط شعبه‌های فیلترشده؛ خرید و درخواست در محدوده همه فیلترهای فعال (تاریخ، برند، ...)
-        listed = sorted(cm["branch"].unique())
-        if f.get("branch"):
-            cm = cm[cm["branch"].isin(f["branch"])]
-        if len(cm):
-            pos = tx.groupby("customer_code")["qty"].sum()
-            bought = set(pos[pos > 0].index)
-            asked = set(rq["customer_code"]) if rq is not None else set()
-            per = cm.groupby("branch").agg(
-                registered=("customer_code", "size"),
-                purchased=("customer_code", lambda s: int(s.isin(bought).sum())),
-                requested=("customer_code", lambda s: int(s.isin(asked).sum())),
-                active=("customer_code", lambda s: int(s.isin(bought | asked).sum())))
-            master = {"by_branch": A.records(per.reset_index()),
-                      "by_trade": A.records(cm.groupby("trade").size().rename("count").reset_index()
-                                            .sort_values("count", ascending=False)) if "trade" in cm else []}
-        else:
-            master = {"by_branch": [], "by_trade": [], "listed_branches": listed}
     return {"kpis": A.kpis(tx, rq, c, f), "new_customers": new_customers, "history_from": s_all["date"].min(),
             "customers": A.records(g[[x for x in BASE_COLS + ["branch", "city", "seller", "first_date",
                                                                "days_active", "abc"] if x in g]]),
             "pareto": ab,
             "frequency": [{"k": int(k), "count": int(v)} for k, v in freq.items()],
-            "cities": A.records(A.group_metrics(tx, None, "city", c, f).head(20)[["key", "label", "net", "customers"]]),
-            "master": master}
+            "cities": A.records(A.group_metrics(tx, None, "city", c, f).head(20)[["key", "label", "net", "customers"]])}
 
 
 @app.get("/api/analysis")
@@ -1528,6 +1538,18 @@ def rk_sales_compare(req: Request, dim: str = "customer", a_from: str | None = N
     return _rk_payload(snap, RS.compare(_by_product(snap, req), dim, p.getlist("item"), a, b, bd, scope))
 
 
+@app.get("/api/rk_sales/reorder")
+def rk_sales_reorder(brand: str | None = None, province: str | None = None, refresh: bool = False):
+    """پیشنهاد ثبت سفارش هر فرد-برند B2B از روی چرخه خرید خودش (b2b_reorder)"""
+    try:
+        snap = RK_REORDER.get(force=refresh)
+    except loader.DataError as e:
+        raise HTTPException(409, str(e))
+    out = BR.report(snap, brand or None, province or None)
+    out["rows"] = A.records(out["rows"])
+    return {**out, "fetched": _ts(snap["fetched"]), "live": RK_REORDER.is_live()}
+
+
 @app.get("/api/rk_sales/products")
 def rk_sales_products():
     """کالاهای فروخته یا درخواست‌شده به نمایندگان B2B، برای فیلتر کالا"""
@@ -1569,6 +1591,30 @@ def rk_export_customer(code: str, req: Request):
     if out is None:
         raise HTTPException(404, f"کد مشتری صادراتی {code} در فهرست نیست.")
     return _rke_payload(snap, out)
+
+
+# ---------------------------------------------------------------- پورسانت نمایندگان راهکاران و صادرات
+def _rkc_snap(channel: str) -> dict:
+    if channel not in RKC.CHANNELS:
+        raise HTTPException(400, "کانال نامعتبر (b2b یا export).")
+    return _rk_sales() if channel == "b2b" else _rk_export()
+
+
+def _rkc_payload(channel: str, month: str | None, snap: dict) -> dict:
+    today = snap["today"]
+    ms = RKC.months(snap["lines"], today)
+    month = month if month in ms else today[:7]
+    s = RK_COMM.get(channel, month)
+    out = RKC.compute(snap, channel, month, s)
+    return {**out, "channel": channel, "month": month, "months": ms, "current": today[:7], "today": today,
+            "settings": s, "bases": RKC.BASES, "fetched": _ts(snap["fetched"]),
+            "live": (RK_SALES if channel == "b2b" else RK_EXPORT).is_live()}
+
+
+@app.get("/api/rk_commission")
+def rk_commission(channel: str = "b2b", month: str | None = None):
+    """جدول پورسانت نمایندگان B2B یا مشتریان صادراتی یک ماه (هنوز بدون دستورالعمل: مبنا و نرخ از تنظیمات ماه)"""
+    return _rkc_payload(channel, month, _rkc_snap(channel))
 
 
 # ---------------------------------------------------------------- فروش زنجیره‌ای به مصرف‌کننده (sell-out)
@@ -1904,6 +1950,40 @@ async def commission_import(req: Request, month: str, kind: str, branch: str | N
     except (ValueError, KeyError) as e:
         raise HTTPException(400, f"فایل خوانده نشد: {e}")
     return _comm_payload(month, COMM.put(plan))
+
+
+# ---------------------------------------------------------------- مسابقه‌های فروش
+# تعریف مسابقه بیرون از داشبورد (contest.save / contest.parse_targets)؛ داشبورد فقط نمایش و حذف دارد
+@app.get("/api/contest")
+def contest_list():
+    return {"contests": sorted(CT.load(), key=lambda c: c.get("created") or "", reverse=True)}
+
+
+@app.delete("/api/contest/{cid}")
+def contest_delete(cid: str):
+    if not CT.delete(cid):
+        raise HTTPException(404, "مسابقه پیدا نشد.")
+    return {"ok": True}
+
+
+@app.get("/api/contest/{cid}/data")
+def contest_data(cid: str, vat: str = "0", date_from: str | None = None, date_to: str | None = None):
+    """date_from / date_to: بخشی از بازه مسابقه (بیرون از بازه مسابقه بریده می‌شود)."""
+    c = CT.get(cid)
+    if not c:
+        raise HTTPException(404, "مسابقه پیدا نشد.")
+    d = STATE["data"]
+    if d is None:
+        raise HTTPException(409, STATE["error"] or "داده‌ای بارگذاری نشده است.")
+    tiers = branch_tiers()
+    lo = max(c["date_from"], date_from or "")
+    hi = min(c["date_to"], date_to or "9999")
+    if lo > hi:
+        raise HTTPException(400, "بازه انتخاب‌شده بیرون از بازه مسابقه است.")
+    tf = lambda b: tier_of(b, tiers)
+    r = CT.compute(c, d["sales"], tf, vat == "1", (lo, hi))
+    # ورود به مسابقه و درصد تحقق در صفحه از فروش همین بازه (و کالاهای انتخاب‌شده) حساب می‌شود
+    return {"contest": c, "period": {"from": lo, "to": hi}, **r}
 
 
 # ---------------------------------------------------------------- frontend

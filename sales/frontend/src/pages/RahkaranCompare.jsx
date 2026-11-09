@@ -190,14 +190,14 @@ export default function RahkaranCompare() {
   const exportScore = () => download('مقایسه فروش',
     [{ label: 'شاخص', kind: 'text' }, ...its.flatMap((x) => [{ label: `${x.label} — دوره اصلی`, kind: 'dec' },
       ...(hasB ? [{ label: `${x.label} — دوره مقایسه`, kind: 'dec' }] : [])])],
-    rows.map((r) => [`${r.l}${r.t === 'money' ? ` (${UNITS[unit].label})` : r.t === 'price' ? ' (تومان)' : r.t === 'pct' ? ' (٪)' : ''}`,
+    rows.map((r) => [`${r.l}${r.t === 'money' || r.t === 'price' ? ' (ریال)' : r.t === 'pct' ? ' (٪)' : ''}`,
       ...its.flatMap((x) => [val(r, x, 'a'), ...(hasB ? [val(r, x, 'b')] : [])].map((v) => (r.t === 'date' ? v || ''
-        : !isNum(v) ? '' : r.t === 'money' ? Math.round((v / UNITS[unit].div) * 10) / 10 : r.t === 'price' ? Math.round(v / 10)
+        : !isNum(v) ? '' : r.t === 'money' || r.t === 'price' ? { v: Math.round(v), k: 'money' }
           : r.t === 'pct' ? Math.round(v * 1000) / 10 : Math.round(v * 10) / 10)))]))
   const exportBd = () => download(`تفکیک ${DIM_FA[data.bd]}`,
     [{ label: DIM_FA[data.bd], kind: 'text' }, ...its.flatMap((x) => [{ label: `${x.label} — تعداد`, kind: 'int' },
-      { label: `${x.label} — خالص (${UNITS[unit].label})`, kind: 'dec' }, ...(hasB ? [{ label: `${x.label} — تعداد دوره مقایسه`, kind: 'int' }] : [])])],
-    bdRows.map((r) => [r.label, ...its.flatMap((x) => [r.qty[x.key] || 0, Math.round(((r.net[x.key] || 0) / UNITS[unit].div) * 10) / 10,
+      { label: `${x.label} — خالص (ریال)`, kind: 'money' }, ...(hasB ? [{ label: `${x.label} — تعداد دوره مقایسه`, kind: 'int' }] : [])])],
+    bdRows.map((r) => [r.label, ...its.flatMap((x) => [r.qty[x.key] || 0, Math.round(r.net[x.key] || 0),
       ...(hasB ? [r.bqty[x.key] || 0] : [])])]))
 
   // ---------------- فیلترهای فعال (هرکدام جدا قابل حذف) و حذف همه

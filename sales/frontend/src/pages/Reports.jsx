@@ -62,6 +62,43 @@ export function DailyReport({ dims, variant = 'team', exportName }) {
   )
 }
 
+const GOODS_DIMS = ['brand', 'category', 'group', 'product']
+
+/**
+ * گزارش کالا (Goods&Group): برند ← گروه کالا ← زیرگروه ← کالا؛ فقط میانگین روزانه و از ابتدای ماه.
+ * برند و گروه‌ها بسته شروع می‌شوند؛ با جست‌وجو یا «باز کردن همه» تا سطح کالا دیده می‌شود.
+ */
+export function GoodsReport() {
+  const nav = useNavigate()
+  const dims = GOODS_DIMS
+  const { data, loading, error } = useApi('/api/report_tree', `&dims=${dims.join(',')}`)
+  if (loading && !data) return <Loading />
+  if (error) return <ErrorBox error={error} />
+  const totNet = data.total?.net || 0
+  const share = (n) => ({ ...n, share: totNet ? n.net / totNet : null, code: n.dim === 'product' ? n.key : undefined })
+  const nodes = data.nodes.map(share)
+  const avg = `میانگین روزانه (${fmtInt(data.days)} روز)`
+  const mtd = 'از ابتدای ماه'
+  const columns = [
+    { key: 'label' },
+    { key: 'code', label: 'کد کالا' },
+    { key: 'avg_net', label: 'خالص', type: 'money', group: avg },
+    { key: 'avg_gross', label: 'ناخالص', type: 'money', group: avg },
+    { key: 'avg_qty', label: 'تعداد', type: 'num1', group: avg },
+    { key: 'net', label: 'خالص', type: 'money', group: mtd },
+    { key: 'gross', label: 'ناخالص', type: 'money', group: mtd },
+    { key: 'share', label: 'سهم', type: 'pct', group: mtd, hint: 'فروش خالص ÷ فروش خالص کل' },
+    { key: 'qty', label: 'تعداد', type: 'int', group: mtd },
+    { key: 'invoices', label: 'فاکتور', type: 'int', group: mtd },
+    { key: 'customers', label: 'مشتری', type: 'int', group: mtd },
+  ]
+  return (
+    <TreeTable nodes={nodes} total={share(data.total)} columns={columns} colorGroups
+      firstLabel={dims.map((d) => LEVEL_NAMES[d]).join(' / ')} levelNames={dims.map((d) => LEVEL_NAMES[d])}
+      exportName="goods-report" onRowClick={(n) => nav(detailPath(n.dim, n.key, nodeWithin(n, dims)))} />
+  )
+}
+
 /** ماتریس فروشنده × گروه‌های اصلی کالا (ستون‌های سمت چپ TotalReport). */
 export function CategoryMatrix({ dims = ['branch', 'seller'] }) {
   const nav = useNavigate()

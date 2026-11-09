@@ -35,25 +35,38 @@ OTHER = "سایر"
 # نام برند در شیت draft چند املا دارد
 BRAND_FIX = {"ارکیا": "آرکیا", "اوردانت": "اورادنت"}
 
+# سیاست‌های فروش هر قلم فاکتور (SLS3.InvoiceItemPolicyResult.Price): تخفیف نقدی، تخفیف مدیریتی و مالیات.
+# خالص (NetPrice) = ناخالص − همه تخفیف‌ها + مالیات؛ پس سایر تخفیف‌ها = ناخالص + مالیات − خالص − نقدی − مدیریتی.
+MGMT_POLICY = "تخفیف مدیریتی"
+TAX_POLICY = "مالیات"
+POLICIES_SQL = """OUTER APPLY (SELECT SUM(CASE WHEN bp.Name LIKE N'{cash}%' THEN pr2.Price END) AS cash,
+                    SUM(CASE WHEN bp.Name LIKE N'{mgmt}%' THEN pr2.Price END) AS mgmt,
+                    SUM(CASE WHEN bp.Name LIKE N'{tax}%' THEN pr2.Price END) AS tax
+             FROM SLS3.InvoiceItemPolicyResult pr2 JOIN GNR3.BusinessPolicy bp ON bp.BusinessPolicyID = pr2.BusinessPolicyRef
+             WHERE pr2.InvoiceItemRef = ii.InvoiceItemID) cd"""
+
+
+def policies_sql() -> str:
+    return POLICIES_SQL.format(cash=CASH_POLICY, mgmt=MGMT_POLICY, tax=TAX_POLICY)
+
+
 LINES_SQL = """
 SELECT 'S' AS kind, c.Number AS code, FORMAT(i.Date, 'yyyy/MM/dd', 'fa-IR') AS date, i.Number AS inv,
        pr.Number AS product_code, pr.Name AS product, ii.MajorUnitQuantity AS qty, ii.Price AS gross, ii.NetPrice AS net,
-       ISNULL(cd.cash, 0) AS cash
+       ISNULL(cd.cash, 0) AS cash, ISNULL(cd.mgmt, 0) AS mgmt, ISNULL(cd.tax, 0) AS tax
 FROM SLS3.InvoiceItem ii JOIN SLS3.Invoice i ON i.InvoiceID = ii.InvoiceRef
 JOIN SLS3.Customer c ON c.CustomerID = i.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = ii.ProductRef
-OUTER APPLY (SELECT SUM(pr2.Price) AS cash FROM SLS3.InvoiceItemPolicyResult pr2
-             JOIN GNR3.BusinessPolicy bp ON bp.BusinessPolicyID = pr2.BusinessPolicyRef
-             WHERE pr2.InvoiceItemRef = ii.InvoiceItemID AND bp.Name LIKE N'{cash}%') cd
+{policies}
 WHERE i.Date >= ? AND i.Status IN ({st}) AND c.Number IN ({codes})
 UNION ALL
 SELECT 'R', c.Number, FORMAT(r.Date, 'yyyy/MM/dd', 'fa-IR'), r.Number,
-       pr.Number, pr.Name, ri.MajorUnitQuantity, ri.Price, ri.NetPrice, 0
+       pr.Number, pr.Name, ri.MajorUnitQuantity, ri.Price, ri.NetPrice, 0, 0, 0
 FROM SLS3.ReturnInvoiceItem ri JOIN SLS3.ReturnInvoice r ON r.ReturnInvoiceID = ri.ReturnInvoiceRef
 JOIN SLS3.Customer c ON c.CustomerID = r.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = ri.ProductRef
 WHERE r.Date >= ? AND r.Status IN ({st}) AND c.Number IN ({codes})
 UNION ALL
 SELECT 'Q', c.Number, FORMAT(q.Date, 'yyyy/MM/dd', 'fa-IR'), q.Number,
-       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 0
+       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 0, 0, 0
 FROM SLS3.SaleRequestItem qi JOIN SLS3.SaleRequest q ON q.SaleRequestID = qi.SaleRequestRef
 JOIN SLS3.Customer c ON c.CustomerID = q.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = qi.ProductRef
 WHERE q.Date >= ? AND q.State IN ({rq}) AND c.Number IN ({codes})"""
@@ -205,7 +218,7 @@ def load(env_file, cfg: dict) -> dict:
         found = RK._read(cn, CANDIDATES_SQL.format(st=STATUSES, rq=REQUEST_STATES), [since] * 2)
         cust = pd.concat([cust, new_reps(found, cust).set_index("code")])
         codes = ",".join(f"'{c}'" for c in cust.index if c.isdigit())
-        df = RK._read(cn, LINES_SQL.format(st=STATUSES, rq=REQUEST_STATES, codes=codes, cash=CASH_POLICY), [since] * 3)
+        df = RK._read(cn, LINES_SQL.format(st=STATUSES, rq=REQUEST_STATES, codes=codes, policies=policies_sql()), [since] * 3)
         today = RK._read(cn, TODAY_SQL, [])["d"].iloc[0]
     finally:
         cn.close()
@@ -213,7 +226,7 @@ def load(env_file, cfg: dict) -> dict:
         df[k] = df[k].map(loader._clean_code)
     df["product"] = df["product"].map(loader._clean_text)
     df["inv"] = df["inv"].astype(str)
-    for k in ("qty", "gross", "net", "cash"):
+    for k in ("qty", "gross", "net", "cash", "mgmt", "tax"):
         df[k] = pd.to_numeric(df[k], errors="coerce").fillna(0.0)
     df["month"] = df["date"].str[:7]
     cat = products().reindex(df["product_code"])
