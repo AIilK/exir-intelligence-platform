@@ -1,0 +1,7 @@
+# company sales/stock data and generated outputs stay local
+data/
+lab/
+*.xlsx
+*.csv
+*.log
+__pycache__/
