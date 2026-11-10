@@ -15,6 +15,15 @@ const STEPS = [
   { key: 'kind', label: 'کدام اکسل؟', ask: 'کدام را برایتان اکسل کنم؟' },
 ]
 
+// گروه‌های اکسل جمعی هیبرید (همان HYBRID_GROUP_A در excel_reports_service.py)
+const GROUP_A = ['اصفهان', 'یزد', 'کرمانشاه', 'مازندران', 'گیلان', 'مرکزی', 'آذربایجان غربی']
+const HYBRID_GROUPS = [
+  { key: 'a', title: `اکسل جمعی ${GROUP_A.length} هیبرید: ${GROUP_A.join('، ')}` },
+  { key: 'b', title: 'اکسل جمعی سایر هیبریدها' },
+]
+const region = (b) => String(b || '').replace(/[يى]/g, 'ی').replace(/ك/g, 'ک').replace(/^هیبریدی?\s*/, '').trim()
+const inGroup = (key, b) => String(b || '').includes('هیبرید') && GROUP_A.includes(region(b)) === (key === 'a')
+
 /** دانلود فایل با کوکی ورود (همان مبدأ، از Proxy پورت 5180) */
 async function download(url, fallbackName) {
   const r = await fetch(url, { credentials: 'include' })
@@ -74,8 +83,11 @@ const COLS = [
   { key: 'net', label: 'فروش خالص', money: true },
   { key: 'gross', label: 'فروش ناخالص', money: true },
   { key: 'returns_net', label: 'برگشت از فروش', money: true },
+  { key: 'status', label: 'وضعیت', text: true },
+  { key: 'target_day', label: 'تارگت تا امروز', money: true },
+  { key: 'target_ach', label: 'درصد تحقق', pct: true },
   { key: 'customers', label: 'مشتری خریدار' },
-  { key: 'sku', label: 'SKU' },
+  { key: 'groups_n', label: 'گروه کالا' },
   { key: 'qty', label: 'تعداد کالا' },
   { key: 'req_docs', label: 'ویزیت ثبت‌شده' },
   { key: 'daily_avg', label: 'میانگین روزانه', money: true },
@@ -112,7 +124,8 @@ function VisitorTable({ rows, title, onPick, picked }) {
           </thead>
           <tbody>
             {sorted.map((r, i) => (
-              <tr key={`${r.visitor}-${r.branch}`} style={{ '--i': Math.min(i, 30) }} className={picked === r.visitor ? 'on' : ''}
+              <tr key={`${r.visitor}-${r.branch}`} style={{ '--i': Math.min(i, 30) }} className={[picked === r.visitor && 'on', r.inactive && 'xr-inactive'].filter(Boolean).join(' ')}
+                title={r.inactive ? 'غیرفعال: در لیست ویزیتور و سرپرست این ماه نیست' : undefined}
                 onClick={onPick ? () => onPick(r) : undefined}>
                 {COLS.map((c) => <td key={c.key} className={c.text ? 't' : ''}>{cell(c, r[c.key])}</td>)}
               </tr>
@@ -120,7 +133,7 @@ function VisitorTable({ rows, title, onPick, picked }) {
           </tbody>
           <tfoot>
             <tr>{COLS.map((c, i) => <td key={c.key} className={c.text ? 't' : ''}>
-              {i === 0 ? 'جمع' : c.text || c.pct ? '' : c.money ? n0(Math.round(sum(c.key))) : n0(sum(c.key))}</td>)}</tr>
+              {i === 0 ? 'جمع' : c.text || c.pct || c.key === 'target_day' ? '' : c.money ? n0(Math.round(sum(c.key))) : n0(sum(c.key))}</td>)}</tr>
           </tfoot>
         </table>
       </div>
@@ -211,21 +224,22 @@ export default function ExcelReports() {
 
   const kinds = [
     { kind: 'visitors', icon: '☺', title: pick.visitor ? `اکسل ویزیتور: ${pick.visitor}` : `اکسل ${n0(chosen.length)} ویزیتور`,
-      desc: ['عملکرد: فروش خالص و ناخالص، مشتری خریدار، تعداد SKU و کالا، ویزیت ثبت‌شده، میانگین فروش روزانه',
-        'مانده حساب مشتریان و چک برگشتی، تخفیف حجمی/نقدی/مدیریتی', '۴۰ کالای پرفروش هر ویزیتور', 'مانده مطالبات و چک‌های برگشتی هر ویزیتور به تفکیک مشتری', 'جمع به تفکیک شعبه',
-        chosen.length <= 40 ? 'یک برگه کارت برای هر ویزیتور با همه شاخص‌ها و کالاهایش' : 'برای برگه جدای هر ویزیتور، هیبرید یا سرپرست را محدود کنید (تا ۴۰ ویزیتور)'] },
+      desc: [chosen.length <= 40 ? 'برگه اول: کارت خود ویزیتور با همه شاخص‌ها، درصد تحقق تارگت و فروش به تفکیک گروه کالا'
+        : 'بیش از ۴۰ ویزیتور: به‌جای کارت جدا، جدول عملکرد (برای کارت هر نفر هیبرید یا سرپرست را محدود کنید)',
+        'درصد تحقق برای ویزیتورهایی که در صفحه پورسانت تارگت دارند', 'ریز فروش هر ویزیتور به تفکیک گروه کالا',
+        'مانده مطالبات و چک‌های برگشتی به تفکیک مشتری، کنار هم در یک برگه', 'افراد بیرون از لیست ویزیتور و سرپرست ماه: ردیف رنگی (غیرفعال)'] },
     { kind: 'supervisors', icon: '♙', title: sups.length === 1 ? `اکسل سرپرست: ${sups[0]}` : `اکسل ${n0(sups.length)} سرپرست`,
       desc: ['برگه اول کارت سرپرست؛ بعد کارت همه ویزیتورهایش (در هر هیبرید، حتی بدون فروش در ۳ ماه اخیر)',
-        'عملکرد سرپرست، درصد تحقق شعبه و تخفیف حجمی/نقدی/مدیریتی',
+        'عملکرد سرپرست، درصد تحقق تیم (جمع ویزیتورهای تارگت‌دار)، درصد تحقق شعبه و تخفیف حجمی/نقدی/مدیریتی',
         pick.visitor ? `کل ویزیتورهای ${sups[0] || 'سرپرستش'} (نه فقط ${pick.visitor})، هرکدام با کارت جدا` : 'یک برگه برای هر سرپرست با ریز همه ویزیتورهایش',
         'همه اعداد کارت سرپرست = جمع ویزیتورهای زیرمجموعه‌اش',
-        'ریز کالاها، مانده مطالبات و چک‌های برگشتی هر ویزیتور به تفکیک مشتری' + (sups.length === 1 ? ' و یک برگه کارت برای هر ویزیتورش' : '')],
+        'ریز گروه کالا؛ مانده مطالبات و چک‌های برگشتی به تفکیک مشتری کنار هم در یک برگه' + (sups.length === 1 ? '؛ یک برگه کارت برای هر ویزیتورش' : '')],
       team: sups.length === 1 ? { title: `ویزیتورهای زیر ${sups[0]}`, total: `جمع ${n0(team.length)} ویزیتور`,
         rows: team.map((r) => ({ name: r.visitor, net: r.net_rial })) } : null },
     { kind: 'hybrids', icon: '⬢', title: branches.length === 1 ? `اکسل هیبرید: ${branches[0]}` : `اکسل ${n0(branches.length)} شعبه / هیبرید`,
-      desc: ['رتبه و درصد تحقق، فاکتور توزیع‌شده و نشده، مانده حساب و چک برگشتی شعبه',
+      desc: ['برگه اول: کارت شعبه/شهر — رتبه و درصد تحقق، فاکتور توزیع‌شده و نشده، مانده حساب و چک برگشتی شعبه',
         `اطلاعات کل شعبه، نه فقط این انتخاب: ${n0(branchSups)} سرپرست و ${n0(branchAll.length)} ویزیتور، جمع فروش خالص ${rial(branchAll.reduce((t, r) => t + r.net_rial, 0))}`,
-        'کارت هر هیبرید: همه سرپرستانش (هرکدام جمع زیرمجموعه) و همه ویزیتورهایش؛ به‌علاوه ریز کالاها، مطالبات و چک‌های برگشتی به تفکیک مشتری'],
+        'کارت هر هیبرید: همه سرپرستانش (هرکدام جمع زیرمجموعه) و همه ویزیتورهایش با درصد تحقق؛ به‌علاوه ریز گروه کالا، و مطالبات و چک‌های برگشتی کنار هم در یک برگه'],
       team: branches.length === 1 ? { title: `سرپرستان ${branches[0]}`, total: `جمع ${n0(branchSups)} سرپرست`,
         rows: [...branchAll.reduce((m, r) => m.set(r.supervisor, { name: r.supervisor, net: (m.get(r.supervisor)?.net || 0) + r.net_rial,
           n: (m.get(r.supervisor)?.n || 0) + 1 }), new Map()).values()].sort((a, b) => b.net - a.net)
@@ -295,6 +309,27 @@ export default function ExcelReports() {
             setSearch('')
             setPick({ branch: pick.branch ?? '', supervisor: pick.supervisor ?? '', visitor: r.visitor })
           }} />
+      )}
+
+      {/* دو اکسل جمعی ثابت: ۷ هیبرید منتخب و بقیه هیبریدها (هر کدام: کارت جمع گروه، بعد کارت هر هیبرید) */}
+      {valid && opts.people !== null && (
+        <section className="u-card xr-stage">
+          <div className="xr-stage-head">
+            <div><h2>اکسل جمعی هیبریدها</h2><small>بی‌توجه به انتخاب‌های بالا؛ همان بازه تاریخ</small></div>
+          </div>
+          <div className="xr-grid">
+            {HYBRID_GROUPS.map((g, i) => {
+              const rows = people.filter((r) => inGroup(g.key, r.branch))
+              const byBranch = groupBy(rows, 'branch')
+              return <KindCard key={g.key} kind={`hybrids-${g.key}`} icon="⬢" index={i} title={g.title}
+                href={`${API}/hybrids.xlsx?${qs({ date_from: from, date_to: to, group: g.key })}`}
+                desc={['برگه اول: کارت جمع همه هیبریدهای گروه (جمع فروش، تحقق وزنی، تخفیف‌ها، مطالبات و چک برگشتی) با جدول هیبریدها، فروش به تفکیک برند و گروه کالا',
+                  'بعد کارت هر هیبرید (سرپرستان، ویزیتورها و تحقق)؛ و برگه‌های سرپرستان، ویزیتورها، ریز گروه کالا، ریز برند و مطالبات']}
+                team={{ title: `${n0(byBranch.length)} هیبرید`, total: `جمع ${n0(rows.length)} ویزیتور`,
+                  rows: byBranch.map((b) => ({ name: b.value, net: b.net, sub: `${n0(b.count)} ویزیتور` })) }} />
+            })}
+          </div>
+        </section>
       )}
 
       <p className="xr-note">

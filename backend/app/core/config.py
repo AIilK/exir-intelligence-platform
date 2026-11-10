@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # ورود کاربران و سطح دسترسی ماژول‌ها (app/auth). false فقط برای اجرای محلی بدون ورود.
     auth_enabled: bool = True
     payment_commitment_review_file: str = "./data/payment_commitment_reviews.json"
+    # سود و زیان (P&L) فقط برای فصل‌هایی که پورسانتشان پرداخت و ثبت شده: آخرین فصل بسته‌شده.
+    # فصل‌های بعد (مثلاً مهر و آبان قبل از پرداخت پورسانت) نه در فهرست می‌آیند نه در «کل سال» حساب می‌شوند.
+    # با پرداخت پورسانت فصل بعد، همین را یک فصل جلو ببرید (مثلاً 1405-Q3).
+    pnl_last_closed_quarter: str = "1405-Q2"
     treasury_operational_currency_ref: int = 1
     treasury_operational_currency_name: str = "ریال"
     # Comma-separated PayableNote.State codes confirmed by finance as cleared.

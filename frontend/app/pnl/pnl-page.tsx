@@ -6,18 +6,23 @@
 // Backend: GET /api/v1/finance/pnl/{hybrid|b2b|export}?source=live|excel&period=1405-Q2
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./pnl.css";
-import { PnlSheet, SheetCards } from "./pnl-sheet";
+import { PnlSheet, SheetCards, comparablePeriod } from "./pnl-sheet";
+import type { BrandParts, PeriodParts, PeriodCustomers } from "./pnl-sheet";
 
 type Row = { label: string; code: string | null; kind: "line" | "total" | "ratio" | "share"; canon: string | null; group: string | null; source?: string | null;
   values: Record<string, number | null>; periods: Record<string, { value: number | null; ratio: number | null }> };
-type Report = { brands: string[]; periods: { key: string; label: string; has_ratio: boolean }[]; rows: Row[];
+type Report = { brands: string[]; periods: { key: string; label: string; has_ratio: boolean; comparable?: boolean }[]; rows: Row[];
   settings: { method?: string; return_mode?: string; channel?: string; cost_multiplier?: number }; unit: string };
 type PivotT = { title: string; key_labels: string[]; measure_labels: string[]; rows: { keys: string[]; values: number[]; count: number }[];
   total: number[]; total_count: number; row_count: number; truncated: boolean };
-type Detail = { key: string; title: string; source: string; pivots?: PivotT[]; table?: { columns: string[]; rows: (string | number | null)[][] } };
+type Cell = string | number | null;
+type TreeT = { columns: string[]; pct_columns?: number[]; child_columns: string[]; child_pct_columns?: number[];
+  rows: { cells: Cell[]; children: Cell[][] }[]; total?: Cell[] };
+type Detail = { key: string; title: string; source: string; pivots?: PivotT[]; table?: { columns: string[]; rows: Cell[][] }; tree?: TreeT };
 type Channel = { status: "ready" | "building" | "missing" | "error"; key: string; title: string; message?: string; elapsed?: number; stale?: boolean;
   modified?: string; source?: { file: string }; report?: Report; details?: Detail[];
-  live?: boolean; refreshing?: boolean; warnings?: string[]; period?: Period; excel?: { label: string; modified?: string } | null };
+  live?: boolean; refreshing?: boolean; warnings?: string[]; period?: Period; excel?: { label: string; modified?: string } | null;
+  brand_parts?: BrandParts; period_parts?: PeriodParts; period_customers?: PeriodCustomers };
 type Period = { key: string; label: string; from: string; to: string; complete: boolean; default?: boolean };
 type Source = "live" | "excel";
 type Unit = "mrial" | "btoman";
@@ -110,37 +115,48 @@ function usePeriods() {
   return { periods, error };
 }
 
-/** گزارش تجمیعی سه کانال: ردیف‌های اصلی، فقط دوره جاری (ستون اول دوره هر فایل) */
+/** گزارش تجمیعی سه کانال: ردیف‌های اصلی و گروه‌های کالای بهای تمام شده، برای دوره جاری و همه دوره‌های مقایسه
+ *  مشترک سه کانال (مثلاً ریز فصل‌ها و کل سال قبل)؛ ستون مقایسه اکسل نمی‌آید. */
 function combine(channels: Channel[]): { report: Report; byChannel: Record<string, Record<string, number | null>> } | null {
   const ready = channels.filter((c) => c.report);
   if (!ready.length) return null;
   const brands = Array.from(new Set(ready.flatMap((c) => c.report!.brands)));
   const canons = ["qty", "gross", "return", "discount", "net", "cogs", "gp", "opex", "op", "tax", "np"];
+  // دوره‌ها به ترتیب کانال اول؛ فقط آن‌هایی که هر سه کانال دارند (با برچسب یکسان)
+  const plist = ready[0].report!.periods.filter((p) => p.key !== "excel"
+    && ready.every((c) => c.report!.periods.some((q) => q.key === p.key && q.label === p.label)));
   const byChannel: Record<string, Record<string, number | null>> = {};
-  const rows: Row[] = canons.map((canon) => {
+  const sumRow = (label: string, find: (rs: Row[]) => Row | undefined, kind: Row["kind"], canon: string | null, group: string | null): Row => {
     const values: Record<string, number | null> = {};
-    let total = 0;
-    byChannel[canon] = {};
+    const per: Row["periods"] = {};
+    plist.forEach((p) => { per[p.key] = { value: 0, ratio: null }; });
     ready.forEach((c) => {
-      const r = c.report!.rows.find((x) => x.canon === canon);
-      const p0 = c.report!.periods[0]?.key;
-      byChannel[canon][c.key] = r && p0 ? r.periods[p0]?.value ?? null : null;
-      total += Number(byChannel[canon][c.key] || 0);
+      const r = find(c.report!.rows);
+      if (canon) byChannel[canon] = { ...(byChannel[canon] || {}), [c.key]: r ? r.periods.p0?.value ?? null : null };
       brands.forEach((b) => { values[b] = (values[b] || 0) + Number(r?.values[b] || 0); });
+      plist.forEach((p) => { per[p.key].value = Number(per[p.key].value || 0) + Number(r?.periods[p.key]?.value || 0); });
     });
-    return { label: CANON_FA[canon], code: null, kind: ["net", "gp", "opex", "op", "np"].includes(canon) ? "total" : "line", canon, group: null,
-      values, periods: { p0: { value: total, ratio: null } } } as Row;
-  });
+    return { label, code: null, kind, canon, group, values, periods: per } as Row;
+  };
+  const rows: Row[] = canons.map((canon) => sumRow(CANON_FA[canon], (rs) => rs.find((x) => x.canon === canon),
+    ["net", "gp", "opex", "op", "np"].includes(canon) ? "total" : "line", canon, null));
+  const groups = Array.from(new Set(ready.flatMap((c) => c.report!.rows.filter((r) => r.group === "cogs_group").map((r) => r.label))));
+  const groupRows = groups.map((g) => sumRow(g, (rs) => rs.find((x) => x.group === "cogs_group" && x.label === g), "line", null, "cogs_group"))
+    .sort((a, b) => Number(b.periods.p0?.value || 0) - Number(a.periods.p0?.value || 0));
+  const at = rows.findIndex((r) => r.canon === "cogs") + 1;
+  rows.splice(at, 0, ...groupRows);
   const net = rows.find((r) => r.canon === "net")!, np = rows.find((r) => r.canon === "np")!;
+  const gross = rows.find((r) => r.canon === "gross")!, cogs = rows.find((r) => r.canon === "cogs")!;
   const margin: Row = { label: "حاشیه سود خالص", code: null, kind: "ratio", canon: "margin", group: null,
     values: Object.fromEntries(brands.map((b) => [b, net.values[b] ? Number(np.values[b] || 0) / Number(net.values[b]) : null])),
-    periods: { p0: { value: net.periods.p0.value ? Number(np.periods.p0.value) / Number(net.periods.p0.value) : null, ratio: null } } };
-  const gross = rows.find((r) => r.canon === "gross")!;
-  rows.forEach((r) => {
-    const den = Number((r.canon === "discount" ? gross : net).periods.p0.value);
-    if (r.kind !== "ratio" && r.canon !== "qty" && den) r.periods.p0.ratio = Number(r.periods.p0.value || 0) / den;
-  });
-  return { report: { brands, periods: [{ key: "p0", label: "جمع سه کانال", has_ratio: true }], rows: [...rows, margin], settings: {}, unit: "میلیون ریال" }, byChannel };
+    periods: Object.fromEntries(plist.map((p) => [p.key, { value: net.periods[p.key]?.value ? Number(np.periods[p.key].value) / Number(net.periods[p.key].value) : null, ratio: null }])) };
+  rows.forEach((r) => plist.forEach((p) => {
+    const base = r.group === "cogs_group" ? cogs : r.canon === "discount" ? gross : net;
+    const den = Number(base.periods[p.key]?.value);
+    if (r.kind !== "ratio" && r.canon !== "qty" && den) r.periods[p.key].ratio = Number(r.periods[p.key].value || 0) / den;
+  }));
+  const periods = plist.map((p, i) => ({ ...p, label: i === 0 ? `جمع سه کانال · ${p.label}` : p.label, has_ratio: true }));
+  return { report: { brands, periods, rows: [...rows, margin], settings: {}, unit: "میلیون ریال" }, byChannel };
 }
 
 export default function PnlPage() {
@@ -173,7 +189,8 @@ export default function PnlPage() {
             <button key={k} type="button" className={`${source === k ? "on" : ""}${k === "live" ? " live" : ""}`} onClick={() => setSource(k)}>{label}</button>)}
         </div>
         {live && periods.length > 0 && <select className="pnl-period" value={period || ""} onChange={(e) => setPeriod(e.target.value)} aria-label="دوره">
-          {periods.map((p) => <option key={p.key} value={p.key}>{faDigits(p.label)}{p.complete ? "" : " (جاری)"}</option>)}
+          {periods.map((p) => <option key={p.key} value={p.key}>{faDigits(p.label)}{p.complete ? "" : " (جاری)"}
+            {/^\d{4}$/.test(p.key) ? " — ریز فصل‌ها + کل سال قبل" : ""}</option>)}
         </select>}
         <div className="pnl-seg" role="tablist" aria-label="واحد">
           {(["btoman", "mrial"] as Unit[]).map((u) => <button key={u} type="button" className={unit === u ? "on" : ""} onClick={() => setUnit(u)}>{unitLabel(u)}</button>)}
@@ -208,7 +225,8 @@ export default function PnlPage() {
     {!report ? <div className="pnl-skeleton">{Array.from({ length: 6 }).map((_, i) => <i key={i} style={{ animationDelay: `${i * 90}ms` }} />)}</div> : ch ? <>
       {/* صفحه اول هر کانال: همان شمایل شیت Report اکسل */}
       <SheetCards report={report} unit={unit} />
-      <PnlSheet report={report} unit={unit} />
+      <PnlSheet report={report} unit={unit} brandParts={ch.brand_parts} details={ch.details}
+        periodParts={ch.period_parts} periodCustomers={ch.period_customers} />
       <div className="pnl-grid">
         <Waterfall report={report} unit={unit} />
         <BrandStructure report={report} />
@@ -231,7 +249,8 @@ function canonRow(report: Report, canon: string) { return report.rows.find((r) =
 function periodValue(row: Row | undefined, key: string) { return row?.periods[key]?.value ?? null; }
 
 function Kpis({ report, unit }: { report: Report; unit: Unit }) {
-  const p0 = report.periods[0]?.key, p1 = report.periods[1]?.key;
+  const cmp = comparablePeriod(report);
+  const p0 = report.periods[0]?.key, p1 = cmp?.key;
   const items = [
     { canon: "gross", label: "فروش ناخالص", tone: "sales" }, { canon: "net", label: "فروش خالص", tone: "sales" },
     { canon: "gp", label: "سود ناخالص", tone: "good", ratio: "net" }, { canon: "opex", label: "هزینه‌های عملیاتی", tone: "cost", ratio: "net" },
@@ -251,7 +270,7 @@ function Kpis({ report, unit }: { report: Report; unit: Unit }) {
         <b><CountUp value={v} render={(x) => fmt(x, unit)} /></b>
         <span>{unitLabel(unit)}{m != null && <> · <em>{pct(m)}</em> از فروش خالص</>}</span>
         {p1 && prev != null && <i className={`pnl-delta ${m != null && pm != null ? (m >= pm ? "up" : "down") : ""}`}>
-          {report.periods[1].label}: {fmt(prev, unit)}{pm != null ? ` (${pct(pm)})` : ""}</i>}
+          {cmp?.label}: {fmt(prev, unit)}{pm != null ? ` (${pct(pm)})` : ""}</i>}
       </article>;
     })}
   </div>;
@@ -342,9 +361,11 @@ function BrandStructure({ report }: { report: Report }) {
 function PnlTable({ report, unit, title, source }: { report: Report; unit: Unit; title: string; source?: string }) {
   const [openDiscount, setOpenDiscount] = useState(false);
   const [focus, setFocus] = useState<string | null>(null);
+  const [openGroups, setOpenGroups] = useState(true);
   const hasDetail = report.rows.some((r) => r.group === "discount_detail");
+  const hasGroups = report.rows.some((r) => r.group === "cogs_group");
   const cell = (r: Row, v: number | null | undefined) => r.kind === "ratio" || r.kind === "share" ? pct(v, r.kind === "share" ? 1 : 1) : fmt(v, unit);
-  const rows = report.rows.filter((r) => r.group !== "discount_detail" || openDiscount);
+  const rows = report.rows.filter((r) => (r.group !== "discount_detail" || openDiscount) && (r.group !== "cogs_group" || openGroups));
   const s = report.settings;
   return <article className="pnl-card pnl-table-card">
     <header>
@@ -355,6 +376,8 @@ function PnlTable({ report, unit, title, source }: { report: Report; unit: Unit;
         {s.return_mode && <span title="فروش با/بدون برگشتی">{s.return_mode === "WithReturn" ? "با برگشت از فروش" : "بدون برگشت"}</span>}
         {s.cost_multiplier && <span title="ضریب بهای تمام شده در اکسل">ضریب بهای تمام شده {nf1.format(s.cost_multiplier)}</span>}
         {hasDetail && <button type="button" onClick={() => setOpenDiscount(!openDiscount)}>{openDiscount ? "▾ بستن ریز تخفیفات" : "▸ ریز انواع تخفیف"}</button>}
+        {hasGroups && <button type="button" onClick={() => setOpenGroups(!openGroups)}
+          title="درصد کنار هر گروه = سهمش از کل بهای تمام شده">{openGroups ? "▾ بستن گروه‌های کالا" : "▸ بهای تمام شده به تفکیک گروه کالا"}</button>}
       </div>
     </header>
     <div className="pnl-table-wrap">
@@ -392,7 +415,48 @@ function Details({ details }: { details: Detail[] }) {
     <div className="pnl-subtabs" role="tablist">{details.map((x) => <button key={x.key} type="button" role="tab" aria-selected={x.key === d.key} className={x.key === d.key ? "on" : ""} onClick={() => setTab(x.key)}>{x.title}<small>{x.source}</small></button>)}</div>
     {d.pivots?.map((p) => <PivotView key={`${d.key}-${p.title}`} p={p} />)}
     {d.table && <TableView key={d.key} t={d.table} />}
+    {d.tree && <TreeView key={d.key} t={d.tree} />}
   </article>;
+}
+
+/** جدول باز شدنی: هر ردیف (مثلاً گروه کالا با سهمش از بهای تمام شده) با کلیک ریز خودش (کالاها) را نشان می‌دهد. */
+function TreeView({ t }: { t: TreeT }) {
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [q, setQ] = useState("");
+  const show = (v: Cell, isPct: boolean) => v == null ? "" : isPct ? pct(Number(v)) : typeof v === "number" ? nf0.format(v) : faDigits(v);
+  const s = q.trim();
+  const rows = t.rows.map((r, i) => ({ r, i, kids: s ? r.children.filter((c) => c.join(" ").includes(s)) : r.children }))
+    .filter(({ r, kids }) => !s || String(r.cells[0]).includes(s) || kids.length);
+  const toggle = (i: number) => setOpen((o) => { const n = new Set(o); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+  const pctCol = (cols: number[] | undefined, j: number) => !!cols?.includes(j);
+  const maxShare = Math.max(1e-9, ...t.rows.map((r) => Number(r.cells[t.pct_columns?.[0] ?? -1] || 0)));
+  return <section className="pnl-pivot pnl-tree">
+    <div className="pnl-pivot-head"><b>{faDigits(t.rows.length)} گروه</b><small>روی هر گروه بزنید تا ریز کالاهایش باز شود</small>
+      <button type="button" className="pnl-tree-all" onClick={() => setOpen(open.size ? new Set() : new Set(t.rows.map((_, i) => i)))}>
+        {open.size ? "بستن همه" : "باز کردن همه"}</button>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجوی گروه یا کالا…" aria-label="جستجو" /></div>
+    <div className="pnl-pivot-wrap"><table>
+      <thead><tr><th aria-hidden />{t.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+      <tbody>{rows.map(({ r, i, kids }) => {
+        const isOpen = open.has(i) || (!!s && kids.length > 0);
+        return [<tr key={`g${i}`} className={`pnl-tree-row${isOpen ? " open" : ""}`} onClick={() => toggle(i)} tabIndex={0}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(i); } }} aria-expanded={isOpen}>
+          <td className="pnl-tree-caret">{isOpen ? "▾" : "▸"}</td>
+          {r.cells.map((v, j) => <td key={j} className={typeof v === "number" ? "num" : ""}>
+            {pctCol(t.pct_columns, j) && v != null && <i className="pnl-inbar" style={{ width: `${(100 * Number(v)) / maxShare}%` }} />}
+            <span>{show(v, pctCol(t.pct_columns, j))}</span></td>)}
+        </tr>,
+        isOpen ? <tr key={`c${i}`} className="pnl-tree-kids"><td />
+          <td colSpan={t.columns.length}><table>
+            <thead><tr>{t.child_columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+            <tbody>{kids.slice(0, 300).map((c, k) => <tr key={k}>{c.map((v, j) =>
+              <td key={j} className={typeof v === "number" ? "num" : ""}>{show(v, pctCol(t.child_pct_columns, j))}</td>)}</tr>)}</tbody>
+          </table>{kids.length > 300 && <small className="muted">{faDigits(kids.length - 300)} کالای دیگر؛ با جستجو محدود کنید.</small>}</td>
+        </tr> : null];
+      })}</tbody>
+      {t.total && <tfoot><tr><th />{t.total.map((v, j) => <th key={j} className="num">{j === 0 ? "جمع کل" : show(v, pctCol(t.pct_columns, j))}</th>)}</tr></tfoot>}
+    </table></div>
+  </section>;
 }
 
 function PivotView({ p }: { p: PivotT }) {

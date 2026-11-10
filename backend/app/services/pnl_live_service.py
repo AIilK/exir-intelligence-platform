@@ -90,43 +90,71 @@ def _rahkaran():
     return get_sqlserver_engine()
 
 
+_range_cache: dict[tuple[int, str, str], tuple[date, date] | None] = {}
+
+
 def _jalali_range(year: int, m_from: str, m_to: str) -> tuple[date, date] | None:
+    k = (year, m_from, m_to)
+    if k in _range_cache:
+        return _range_cache[k]
     with _karamad().connect() as c:
         row = c.execute(text("SELECT MIN(GregorianDate), MAX(GregorianDate) FROM dbo.tblCalendar "
                              "WHERE PersianDate >= :a AND PersianDate < :b"),
                         {"a": f"{year}/{m_from}/01", "b": f"{year}/{m_to}/99"}).first()
     if not row or not row[0]:
+        _range_cache[k] = None
         return None
     to_d = row[1].date() if isinstance(row[1], datetime) else row[1]
     from_d = row[0].date() if isinstance(row[0], datetime) else row[0]
+    _range_cache[k] = (from_d, to_d)
     return from_d, to_d
 
 
-def periods(year: int = 1405) -> list[dict[str, Any]]:
-    """فصل‌های سال (تا امروز) + کل سال؛ پیش‌فرض آخرین فصل کامل‌شده (هم‌دوره اکسل)."""
+def last_closed_quarter() -> tuple[int, int]:
+    """آخرین فصلی که پورسانتش پرداخت و ثبت شده (تنظیم PNL_LAST_CLOSED_QUARTER، مثل 1405-Q2)."""
+    from app.core.config import settings
+    m = re.match(r"(\d{4})-Q([1-4])$", (settings.pnl_last_closed_quarter or "").strip())
+    if not m:
+        t = date.today()
+        return t.year - 621, 1
+    return int(m.group(1)), int(m.group(2))
+
+
+def _year_periods(year: int) -> list[dict[str, Any]]:
+    """فصل‌های بسته‌شده سال + «کل سال» (اگر سال کامل بسته نشده: از ابتدای سال تا پایان آخرین فصل بسته‌شده)."""
+    cy, cq = last_closed_quarter()
     out = []
-    today = date.today()
     for q, (a, b) in QUARTERS.items():
-        rng = _jalali_range(year, a, b)
-        if not rng or rng[0] > today:
+        if (year, q) > (cy, cq):
             continue
-        out.append({"key": f"{year}-Q{q}", "label": f"{year} Q{q}", "from": rng[0].isoformat(), "to": rng[1].isoformat(),
-                    "complete": rng[1] < today})
-    full = _jalali_range(year, "01", "12")
-    if full:
-        out.append({"key": f"{year}", "label": f"{year}", "from": full[0].isoformat(), "to": full[1].isoformat(), "complete": full[1] < today})
-    done = [p for p in out if p["complete"] and "Q" in p["key"]]
-    default = (done[-1] if done else out[0])["key"] if out else None
+        rng = _jalali_range(year, a, b)
+        if rng:
+            out.append({"key": f"{year}-Q{q}", "label": f"{year} Q{q}", "from": rng[0].isoformat(), "to": rng[1].isoformat(),
+                        "complete": True, "quarters": [q]})
+    if out:
+        qs = [p["quarters"][0] for p in out]
+        label = f"{year}" if len(qs) == 4 else f"{year} (Q1–Q{qs[-1]})"
+        out.append({"key": f"{year}", "label": label, "from": out[0]["from"], "to": out[-1]["to"], "complete": True, "quarters": qs})
+    return out
+
+
+def periods(year: int | None = None) -> list[dict[str, Any]]:
+    """دوره‌های P&L: فقط فصل‌های بسته‌شده (پورسانت پرداخت‌شده) سال جاری و سال قبل، و «کل سال» هرکدام.
+    پیش‌فرض: جمع فصل‌های بسته‌شده سال جاری (با ستون جدای هر فصل و کل سال قبل)."""
+    cy, _ = last_closed_quarter()
+    out = []
+    for y in ([year] if year else [cy, cy - 1]):
+        out += _year_periods(y)
+    default = f"{cy}" if any(p["key"] == f"{cy}" for p in out) else (out[0]["key"] if out else None)
     return [dict(p, default=p["key"] == default) for p in out]
 
 
 def _period(key: str | None) -> dict[str, Any]:
-    year = int(re.match(r"(\d{4})", key or "1405").group(1)) if key else 1405
-    items = periods(year)
-    for p in items:
+    year = int(re.match(r"(\d{4})", key).group(1)) if key else None
+    for p in periods(year) if year else periods():
         if p["key"] == key or (not key and p["default"]):
             return p
-    raise KeyError(key)
+    raise KeyError(f"{key}: این دوره بسته نشده (پورسانتش ثبت نشده) یا وجود ندارد")
 
 
 # ------------------------------------------------------------------ داده پایه از اکسل B2B (Map / Cost)
@@ -243,9 +271,12 @@ def _std_rows(rep: Report, std: dict[str, dict[str, float]] | None):
 
 def _tail(rep: Report, net: dict[str, float], cogs: dict[str, float], qty: dict[str, float],
           opex_lines: list[tuple[str, dict[str, float], str | None, str]], after_op: list[tuple[str, dict[str, float], str]],
-          std: dict[str, dict[str, float]] | None = None):
+          std: dict[str, dict[str, float]] | None = None, cogs_groups: dict[str, dict[str, float]] | None = None):
     """بهای تمام شده ← سود ناخالص ← هزینه‌ها ← سود عملیاتی ← (کارمزد) ← مالیات ← سود خالص."""
     rep.add("cost of goods sold", cogs, canon="cogs", source="تعداد خالص × (روش ساخت × آخرین فاکتور خرید × ۱.۳) × ۱.۲")
+    # سهم هر گروه کالا از بهای تمام شده (ستون On sales این ردیف‌ها = درصد از کل بهای تمام شده)
+    for g, vals in sorted((cogs_groups or {}).items(), key=lambda kv: -sum(kv[1].values())):
+        rep.add(g, vals, group="cogs_group", ratio_base="cogs", source="بهای تمام شده این گروه کالا؛ درصد = سهم از کل بهای تمام شده")
     std_total = _std_rows(rep, std)
     gp = rep.add("Gross Profit", _sub(net, cogs), kind="total", canon="gp")
     if std_total is not None:
@@ -539,6 +570,68 @@ def _unit_cost(m: dict[str, Any], part: str, bom: dict[str, float] | None = None
     return groups.get(part[:7]) or groups.get(part[:5])
 
 
+# ------------------------------------------------------------------ گروه کالا (همان نگاشت داشبورد فروش: sales/category_map.json)
+CATEGORY_MAP = Path(__file__).resolve().parents[3] / "sales" / "category_map.json"
+NO_GROUP = "بدون گروه"
+_group_cache: dict[str, Any] = {}
+
+
+def _group_of(part: str) -> str:
+    """گروه کالای هر کد کالا؛ کد ناشناخته = گروه غالب هم‌پیشوند (۷ و بعد ۵ رقم اول)، وگرنه «بدون گروه»."""
+    try:
+        mtime = CATEGORY_MAP.stat().st_mtime
+    except OSError:
+        return NO_GROUP
+    if _group_cache.get("mtime") != mtime:
+        try:
+            prods = json.loads(CATEGORY_MAP.read_text(encoding="utf-8")).get("products") or {}
+        except (OSError, ValueError):
+            prods = {}
+        exact = {str(k).strip(): (v[0] if isinstance(v, list) and v else v) or NO_GROUP for k, v in prods.items()}
+        votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for k, g in exact.items():
+            votes[k[:7]][g] += 1
+            votes[k[:5]][g] += 1
+        prefix = {p: max(c, key=c.get) for p, c in votes.items()}
+        _group_cache.update(mtime=mtime, exact=exact, prefix=prefix)
+    return _group_cache["exact"].get(part) or _group_cache["prefix"].get(part[:7]) or _group_cache["prefix"].get(part[:5]) or NO_GROUP
+
+
+PART_NAME_SQL = "SELECT Code AS part, Name AS name FROM LGS3.Part"
+
+
+def _part_names() -> dict[str, str]:
+    hit = _bom_cache.get("__names")
+    if hit and time.time() - hit[0] < 1800:
+        return hit[1]
+    try:
+        names = {str(r["part"]).strip(): str(r["name"] or "").strip() for r in _rahkaran_rows(PART_NAME_SQL, {})}
+    except Exception:  # noqa: BLE001 — نبود نام کالا نباید گزارش را خراب کند
+        names = {}
+    _bom_cache["__names"] = (time.time(), names)
+    return names
+
+
+def _cogs_group_detail(products: dict[str, dict[str, float]]) -> dict[str, Any]:
+    """جزئیات «بهای تمام شده به تفکیک گروه کالا»: هر گروه با سهمش از بهای تمام شده و ریز کالاهایش (باز شدنی)."""
+    names = _part_names()
+    total = sum(v["cogs"] for v in products.values()) or 0.0
+    groups: dict[str, list[tuple[str, dict[str, float]]]] = defaultdict(list)
+    for part, v in products.items():
+        groups[_group_of(part)].append((part, v))
+    rows = []
+    for g, items in sorted(groups.items(), key=lambda kv: -sum(v["cogs"] for _, v in kv[1])):
+        gc = sum(v["cogs"] for _, v in items)
+        rows.append({"cells": [g, len(items), round(sum(v["qty"] for _, v in items)), round(gc), (gc / total) if total else None],
+                     "children": [[part, names.get(part, ""), round(v["qty"]), round(v["unit"]), round(v["cogs"]), (v["cogs"] / gc) if gc else None]
+                                  for part, v in sorted(items, key=lambda kv: -kv[1]["cogs"])]})
+    return {"key": "cogs_groups", "title": "بهای تمام شده به تفکیک گروه کالا", "source": "SQL",
+            "tree": {"columns": ["گروه کالا", "تعداد کالا", "تعداد خالص", "بهای تمام شده (م.ر)", "سهم از بهای تمام شده"],
+                     "pct_columns": [4],
+                     "child_columns": ["کد کالا", "نام کالا", "تعداد خالص", "بهای واحد روش دوم (ریال)", "بهای تمام شده (م.ر)", "سهم از گروه"],
+                     "child_pct_columns": [5], "rows": rows, "total": [None, None, None, round(total), 1.0 if total else None]}}
+
+
 def _customer_brand(m: dict[str, Any], dl: str, title: Any) -> str:
     return m["brand"].get(dl) or _brand(title) or "Other"
 
@@ -578,6 +671,8 @@ def build_ledger(key: str, p: dict[str, Any]) -> dict[str, Any]:
     std_cost = standard_cost(p)
     std_vals: dict[str, dict[str, float]] = {"dm": defaultdict(float), "labour": defaultdict(float), "overhead": defaultdict(float)}
     products: dict[str, dict[str, float]] = defaultdict(lambda: {"qty": 0.0, "cogs": 0.0, "unit": 0.0})
+    cogs_groups: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    brand_parts: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
     for r in _rahkaran_rows(QTY_SQL, {"a": a, "b": b}):
         dl = str(r["dl"]).strip()
         if dl not in in_channel and m["channel"].get(dl) != cfg["channel"]:
@@ -586,6 +681,7 @@ def build_ledger(key: str, p: dict[str, Any]) -> dict[str, Any]:
         q = float(r["qty"] or 0)
         part = str(r["part"]).strip()
         qty[br] += q
+        brand_parts[br][part][0] += q
         split = _std_split(std_cost, part, q)
         if split:
             std_vals["dm"][br] += split[0] / 1e6; std_vals["labour"][br] += split[1] / 1e6; std_vals["overhead"][br] += split[2] / 1e6
@@ -595,6 +691,8 @@ def build_ledger(key: str, p: dict[str, Any]) -> dict[str, Any]:
             continue
         c = q * unit * COGS_FACTOR / 1e6
         cogs[br] += c
+        cogs_groups[_group_of(part)][br] += c
+        brand_parts[br][part][1] += c
         products[part]["qty"] += q; products[part]["cogs"] += c; products[part]["unit"] = unit
 
     brands = BRANDS + (["Other"] if any(k == "Other" for k in list(gross) + list(qty)) else [])
@@ -625,9 +723,10 @@ def build_ledger(key: str, p: dict[str, Any]) -> dict[str, Any]:
         opex_lines = [("هزینه های حقوق و دستمزد", _alloc(sal, share), "opex", "7110 دفاتر تهران"),
                       ("هزینه های فروش ، اداری و عمومی", _alloc(sga, share), "opex", "7130 مراکز هزینه B2B")]
         after_op = [("هزینه کارمزدهای بانکی", _alloc(bank, share), "712022")]
-    _tail(rep, net, dict(cogs), dict(qty), opex_lines, after_op, std_vals)
+    _tail(rep, net, dict(cogs), dict(qty), opex_lines, after_op, std_vals, cogs_groups)
 
     details = [
+        _cogs_group_detail(products),
         _table_detail("customers", "مشتریان (لایو)", ["کد", "مشتری", "برند", "فروش ناخالص", "برگشت", "تخفیف", "فروش خالص"],
                       sorted(([dl, c["name"], c["brand"], round(c["gross"]), round(c["return"]), round(c["discount"]),
                                round(c["gross"] - c["return"] - c["discount"])] for dl, c in customers.items()), key=lambda x: -x[6])),
@@ -646,7 +745,7 @@ def build_ledger(key: str, p: dict[str, Any]) -> dict[str, Any]:
         warnings.append(f"بهای {cost_used['excel']:,} ردیف کالا از روش ساخت/فاکتور خرید درنیامد و از شیت Cost اکسل خوانده شد.")
     if unmapped:
         warnings.append(f"{len(unmapped)} مشتری با فروش {round(sum(unmapped.values())):,} م.ر در شیت Map کانال ندارد و کنار گذاشته شد.")
-    return {"report": rep, "details": details, "warnings": warnings}
+    return {"report": rep, "details": details, "warnings": warnings, "brand_parts": brand_parts}
 
 
 def _table_detail(key: str, title: str, columns: list[str], rows: list[list[Any]], limit: int = 2000) -> dict[str, Any]:
@@ -703,6 +802,8 @@ def build_hybrid(p: dict[str, Any]) -> dict[str, Any]:
     gross, ret, vol, cash, vat, qty, cogs = (defaultdict(float) for _ in range(7))
     branches: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     products: dict[str, dict[str, float]] = defaultdict(lambda: {"qty": 0.0, "cogs": 0.0, "unit": 0.0})
+    cogs_groups: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    brand_parts: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
     missing_cost = defaultdict(float)
     bom, cost_used = bom_costs(p["to"]), {}
     std_cost = standard_cost(p)
@@ -717,6 +818,7 @@ def build_hybrid(p: dict[str, Any]) -> dict[str, Any]:
         cash[br] += float(r["cash_disc"] or 0) / 1e6
         vat[br] += float(r["vat"] or 0) / 1e6
         qty[br] += q
+        brand_parts[br][_code(r["goods"])][0] += q
         split = _std_split(std_cost, _code(r["goods"]), q)
         if split:
             std_vals["dm"][br] += split[0] / 1e6; std_vals["labour"][br] += split[1] / 1e6; std_vals["overhead"][br] += split[2] / 1e6
@@ -725,6 +827,8 @@ def build_hybrid(p: dict[str, Any]) -> dict[str, Any]:
             missing_cost[_code(r["goods"])] += q
         else:
             cogs[br] += q * unit * COGS_FACTOR / 1e6
+            cogs_groups[_group_of(_code(r["goods"]))][br] += q * unit * COGS_FACTOR / 1e6
+            brand_parts[br][_code(r["goods"])][1] += q * unit * COGS_FACTOR / 1e6
             pr = products[_code(r["goods"])]
             pr["qty"] += q; pr["cogs"] += q * unit * COGS_FACTOR / 1e6; pr["unit"] = unit
         b = branches[str(r["branch"]).strip()]
@@ -753,8 +857,9 @@ def build_hybrid(p: dict[str, Any]) -> dict[str, Any]:
     share = {b: (qty.get(b, 0) / tq if tq else 0) for b in brands}
     opex_lines = [(label, _alloc(totals.get(label, 0.0), share), group, f"اسناد حسابداری کارآمد، {src}، تخصیص به نسبت تعداد")
                   for label, group, src in HYBRID_EXPENSE_LINES]
-    _tail(rep, net, dict(cogs), dict(qty), opex_lines, [], std_vals)
-    details = [_table_detail("branches", "شعبه‌های هیبرید (لایو)", ["شعبه", "تعداد خالص", "فروش ناخالص", "برگشت", "تخفیف", "فروش خالص"],
+    _tail(rep, net, dict(cogs), dict(qty), opex_lines, [], std_vals, cogs_groups)
+    details = [_cogs_group_detail(products),
+               _table_detail("branches", "شعبه‌های هیبرید (لایو)", ["شعبه", "تعداد خالص", "فروش ناخالص", "برگشت", "تخفیف", "فروش خالص"],
                              sorted(([k, round(v["qty"]), round(v["gross"]), round(v["return"]), round(v["discount"]),
                                       round(v["gross"] - v["return"] - v["discount"])] for k, v in branches.items()), key=lambda x: -x[5])),
                _table_detail("products", "بهای تمام شده به تفکیک کالا", ["کد کالا", "بهای مواد (روش ساخت × آخرین خرید، ریال)",
@@ -770,7 +875,7 @@ def build_hybrid(p: dict[str, Any]) -> dict[str, Any]:
         warnings.append(f"{len(missing_cost)} کالا ({round(sum(missing_cost.values())):,} عدد) نه روش ساخت/فاکتور خرید دارد نه بهای اکسل؛ در بهای تمام شده نیامده.")
     if cost_used.get("excel"):
         warnings.append(f"بهای {cost_used['excel']:,} ردیف کالا از روش ساخت/فاکتور خرید درنیامد و از شیت Cost اکسل خوانده شد.")
-    return {"report": rep, "details": details, "warnings": warnings}
+    return {"report": rep, "details": details, "warnings": warnings, "brand_parts": brand_parts}
 
 
 # ------------------------------------------------------------------ مقایسه با اکسل و خروجی
@@ -796,9 +901,12 @@ def _comparison_periods(p: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     if not m:
         return []
     year, q = int(m.group(1)), int(m.group(2) or 0)
-    wanted = [f"{year}-Q{i}" for i in range(q - 1, 0, -1)] or ([f"{year - 1}-Q4"] if q else [])
     if q:
+        wanted = [f"{year}-Q{i}" for i in range(q - 1, 0, -1)] or [f"{year - 1}-Q4"]
         wanted.append(f"{year - 1}-Q{q}")
+    else:
+        # «کل سال»: ریز هر فصل بسته‌شده همان سال (به ترتیب) و بعد کل سال قبل
+        wanted = [f"{year}-Q{i}" for i in p.get("quarters") or []] if len(p.get("quarters") or []) > 1 else []
     wanted.append(f"{year - 1}")
     out = []
     for k in wanted:
@@ -820,18 +928,24 @@ def _attach_period(rows: list[dict[str, Any]], key: str, other: list[dict[str, A
         v = o["periods"]["p0"]["value"] if o else None
         den = _ratio_base_value(other, r)
         r["periods"][key] = {"value": v, "ratio": (v / den) if (v is not None and den and r["kind"] not in ("ratio", "share")
-                                                                  and r.get("canon") != "qty") else None}
-    # نوع تخفیفی که فقط در دوره مقایسه بوده (مثل «فروش ویژه زمستان ۱۴۰۴» اکسل): ردیف صفر برای دوره جاری
-    last_detail = max((i for i, r in enumerate(rows) if r.get("group") == "discount_detail"), default=None)
+                                                                  and r.get("canon") != "qty") else None,
+                             "brands": dict(o["values"]) if o else None}
+    # نوع تخفیف یا گروه کالایی که فقط در دوره مقایسه بوده (مثل «فروش ویژه زمستان ۱۴۰۴» اکسل): ردیف صفر برای دوره جاری
+    for group in ("discount_detail", "cogs_group"):
+        _insert_missing(rows, key, other, seen, group)
+
+
+def _insert_missing(rows: list[dict[str, Any]], key: str, other: list[dict[str, Any]], seen: set, group: str):
+    last_detail = max((i for i, r in enumerate(rows) if r.get("group") == group), default=None)
     if last_detail is None:
         return
     for o in other:
         k = o.get("canon") or o["label"]
-        if o.get("group") == "discount_detail" and k not in seen:
+        if o.get("group") == group and k not in seen:
             v = o["periods"]["p0"]["value"]
             den = _ratio_base_value(other, o)
             new = {**o, "values": {b: 0.0 for b in rows[0]["values"]}, "periods": {"p0": {"value": 0.0, "ratio": 0.0},
-                   key: {"value": v, "ratio": (v / den) if den and v is not None else None}}}
+                   key: {"value": v, "ratio": (v / den) if den and v is not None else None, "brands": dict(o["values"])}}}
             last_detail += 1
             rows.insert(last_detail, new)
             seen.add(k)
@@ -851,22 +965,63 @@ def _build(key: str, p: dict[str, Any]) -> dict[str, Any]:
         ["تعداد تولید دوره (عدد)", round(sc["units_produced"])],
     ]))
     periods_meta = [{"key": "p0", "label": p["label"], "has_ratio": True}]
+    # ریز کالا و مشتری هر دوره برای پنجره جزئیات ستون‌های دوره
+    period_parts = {"p0": _period_parts_payload(res.get("brand_parts") or {}, res["report"].brands)}
+    period_customers = {"p0": _customers_rows(res["details"])}
     for i, (_, cp) in enumerate(_comparison_periods(p), start=1):
         try:
-            other = (build_hybrid(cp) if key == "hybrid" else build_ledger(key, cp))["report"].finish()
+            ores = build_hybrid(cp) if key == "hybrid" else build_ledger(key, cp)
+            other = ores["report"].finish()
         except Exception:  # noqa: BLE001 — نبودِ یک دوره مقایسه نباید گزارش اصلی را خراب کند
             continue
         _attach_period(rows, f"p{i}", other)
-        periods_meta.append({"key": f"p{i}", "label": cp["label"], "has_ratio": True})
+        period_parts[f"p{i}"] = _period_parts_payload(ores.get("brand_parts") or {}, ores["report"].brands)
+        period_customers[f"p{i}"] = _customers_rows(ores["details"])
+        # هم‌طول با دوره جاری (فصل با فصل، کل سال با کل سال هم‌تعداد فصل)؟ کارت «رشد» فقط با دوره هم‌طول مقایسه می‌کند
+        same = len(cp.get("quarters") or []) == len(p.get("quarters") or []) and ("Q" in cp["key"]) == ("Q" in p["key"])
+        periods_meta.append({"key": f"p{i}", "label": cp["label"], "has_ratio": True, "comparable": same})
     # اکسل‌ها گزارش آخرین فصل کامل‌شده‌اند؛ برای دوره‌های دیگر ستون مقایسه گمراه‌کننده است
-    excel = _excel_compare(key, rows) if p.get("default") else None
+    cy, cq = last_closed_quarter()
+    excel = _excel_compare(key, rows) if p["key"] == f"{cy}-Q{cq}" else None
     if excel:
         periods_meta.append({"key": "excel", "label": excel["label"], "has_ratio": False})
     report = {"brands": res["report"].brands, "periods": periods_meta, "rows": rows,
               "settings": {"method": "Method2", "return_mode": "WithReturn", "cost_multiplier": COGS_FACTOR}, "unit": "میلیون ریال"}
     return {"key": key, "title": pnl_service.SOURCES[key]["title"], "status": "ready", "live": True,
             "period": p, "modified": datetime.now().isoformat(timespec="seconds"), "built_seconds": round(time.time() - t0, 1),
-            "warnings": res["warnings"], "excel": excel, "report": report, "details": res["details"]}
+            "warnings": res["warnings"], "excel": excel, "report": report, "details": res["details"],
+            "brand_parts": _brand_parts_payload(res.get("brand_parts") or {}),
+            "period_parts": period_parts, "period_customers": {k: v for k, v in period_customers.items() if v}}
+
+
+def _period_parts_payload(bp: dict[str, dict[str, list[float]]], brands: list[str]) -> list[list[Any]]:
+    """ریز کالاهای یک دوره (جمع همه برندها): [کد، نام، گروه کالا، تعداد خالص، بهای تمام شده (م.ر)، برندها]."""
+    names = _part_names()
+    tot: dict[str, list[Any]] = {}
+    for br, parts in bp.items():
+        if br not in brands:  # همان برندهای ستون‌های گزارش، تا جمع کالاها با ردیف بهای تمام شده یکی باشد
+            continue
+        for part, v in parts.items():
+            if not (v[0] or v[1]):
+                continue
+            t = tot.setdefault(part, [0.0, 0.0, set()])
+            t[0] += v[0]; t[1] += v[1]; t[2].add(br)
+    return sorted(([part, names.get(part, ""), _group_of(part), round(t[0]), round(t[1], 2), "، ".join(sorted(t[2]))]
+                   for part, t in tot.items()), key=lambda x: -x[4])
+
+
+def _customers_rows(details: list[dict[str, Any]]) -> list[list[Any]] | None:
+    """جدول مشتریان (B2B/صادرات): [کد، مشتری، برند، فروش ناخالص، برگشت، تخفیف، فروش خالص]."""
+    d = next((x for x in details if x.get("key") == "customers"), None)
+    return d["table"]["rows"] if d and d.get("table") else None
+
+
+def _brand_parts_payload(bp: dict[str, dict[str, list[float]]]) -> dict[str, list[list[Any]]]:
+    """ریز کالاهای هر برند برای پنجره جزئیات سلول‌های جدول: [کد، نام، گروه کالا، تعداد خالص، بهای تمام شده (م.ر)]."""
+    names = _part_names()
+    return {br: sorted(([part, names.get(part, ""), _group_of(part), round(v[0]), round(v[1], 2)]
+                        for part, v in parts.items() if v[0] or v[1]), key=lambda x: -x[4])
+            for br, parts in bp.items()}
 
 
 def _run(job_key: str, key: str, p: dict[str, Any]):

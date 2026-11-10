@@ -328,6 +328,11 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
   // فروش خالص ماه = کارآمد (همه شعب) + نمایندگان B2B راهکاران + صادرات (معادل ریالی با نرخ اسناد)
   const allNet = net + Number(rkNet || 0) + Number(expNet || 0), allPrevNet = prevNet + Number(rkPrevNet || 0) + Number(expPrevNet || 0);
   const pace = mCur.data && mPrev.data && comb.data && allPrevNet > 0 ? ((allNet / Math.max(1, now.day)) / (allPrevNet / monthDays(prev)) - 1) * 100 : null;
+  // فروش ناخالص ماه (پیش از تخفیف‌ها) = کارآمد + B2B راهکاران + صادرات (صادرات تخفیف جدا ندارد: همان خالص)؛ درخواست باز = فقط کارآمد
+  const kmCur = comb.data?.karamad?.cur || {};
+  const kmGross = kmCur.gross_rial ?? null, rkGross = comb.data?.sales?.cur?.gross_rial ?? null;
+  const allGross = kmGross == null ? null : Number(kmGross) + Number(rkGross || 0) + Number(expNet || 0);
+  const openReq = kmCur.open_req_rial ?? null;
   const curKey = `${cur.year}/${String(cur.month).padStart(2, "0")}`;
   const rkColl = (inflAll.data?.monthly_trend || []).find((m: any) => m.month === curKey)?.values?.b2b ?? null;
   const rkDebt = comb.data?.receivables?.open_receivable_rial ?? null;
@@ -393,6 +398,12 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
     { key: "sales", label: "فروش خالص ماه (همه کانال‌ها)", domain: "فروش", value: mCur.data && comb.data ? allNet / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
       hint: <>کارآمد <b>{shortToman(net)}</b> · B2B <b>{rkNet == null ? "…" : shortToman(rkNet)}</b> · صادرات <b>{expNet == null ? "…" : shortToman(expNet)}</b><br />{pace === null ? "در حال مقایسه…" : <span className={pace >= 0 ? "up" : "down"}>{pace >= 0 ? "▲" : "▼"} {nf1.format(Math.abs(pace))}٪ سرعت فروش نسبت به {MONTHS[prev.month - 1]}</span>}</>,
       tone: pace === null ? "neutral" : pace >= 0 ? "good" : "watch", target: "mo-sales", locked: !salesOk, error: mCur.error || comb.error },
+    { key: "gross", label: "فروش ناخالص ماه (همه کانال‌ها)", domain: "فروش", value: allGross == null ? null : allGross / 10, format: (v) => shortToman(v * 10), unit: "تومان",
+      hint: <>کارآمد <b>{shortToman(kmGross)}</b> · B2B <b>{rkGross == null ? "…" : shortToman(rkGross)}</b> · صادرات <b>{expNet == null ? "…" : shortToman(expNet)}</b><br />{allGross ? <>تخفیف و برگشت تا خالص: <b>{fa(pct(allGross - allNet, allGross))}٪</b></> : "پیش از تخفیف‌ها"}</>,
+      tone: "neutral", target: "mo-sales", locked: !salesOk, error: comb.error },
+    { key: "openreq", label: "درخواست باز (فاکتورنشده) ماه — کارآمد", domain: "فروش", value: openReq == null ? null : Number(openReq) / 10, format: (v) => shortToman(v * 10), unit: "تومان",
+      hint: openReq == null ? "" : <>{fa(kmCur.open_req_docs)} سند باز از {fa(kmCur.req_docs)} درخواست ماه ({shortToman(kmCur.req_rial)})<br />نرخ تبدیل درخواست به فاکتور <b>{fa(Math.round(Number(kmCur.req_conv || 0) * 100))}٪</b></>,
+      tone: "watch", target: "mo-sales", locked: !salesOk, error: comb.error },
     { key: "coll", label: "وصول ماه (راهکاران + کارآمد)", domain: "فروش", value: mCur.data && inflAll.data ? (Number(t.collected_rial || 0) + Number(rkColl || 0)) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
       hint: <>{split(rkColl, Number(t.collected_rial || 0))}<br />راهکاران: نقد و حواله ماه · کارآمد: وصول فاکتورهای ماه ({fa(collPct)}٪ توزیع‌شده)</>, tone: "neutral", target: "mo-sales", locked: !salesOk, error: mCur.error || inflAll.error },
     { key: "debt", label: "مطالبات مشتریان (راهکاران + کارآمد)", domain: "فروش", value: network.data && comb.data ? (Number(sm.open_account_receivable_rial || 0) + Number(rkDebt || 0)) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
@@ -446,6 +457,13 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
           { key: "ecust", label: "به تفکیک مشتری", value: expNet, go: "/rahkaran/export", children: rows(expCur?.customers, (x) => x.key, (x) => x.net_rial, "/rahkaran/export", (x) => `${nf.format(Math.round(x.net_usd))} دلار`) },
         ] },
     ] },
+    gross: { key: "gross", label: `فروش ناخالص ${MONTHS[cur.month - 1]}`, value: allGross, go: "/sales", children: [
+      { key: "k", label: "شعب کارآمد", value: kmGross, go: "/hybrid", children: rows(kmCur.branches, (b) => b.key, (b) => b.gross_rial, "/hybrid", (b) => `خالص ${shortToman(b.net_rial)}`) },
+      { key: "b2b", label: "نمایندگان B2B (راهکاران)", value: rkGross, go: "/rahkaran", note: rkGross && rkNet != null ? `خالص ${shortToman(rkNet)}` : undefined },
+      { key: "exp", label: "صادرات (راهکاران)", value: expNet, go: "/rahkaran/export", note: "بدون تخفیف جدا: همان خالص" },
+    ] },
+    openreq: { key: "openreq", label: `درخواست باز ${MONTHS[cur.month - 1]} (کارآمد)`, value: openReq, go: "/sales", children:
+      rows(kmCur.branches, (b) => b.key, (b) => b.open_req_rial, "/hybrid", (b) => `از درخواست ${shortToman(b.req_rial)} · ${fa(b.req_docs)} سند`) },
     coll: { key: "coll", label: `وصول ${MONTHS[cur.month - 1]}`, value: Number(t.collected_rial || 0) + Number(rkColl || 0), go: "cashBank", children: [
       { key: "k", label: "وصول فاکتورهای ماه هیبریدها (کارآمد)", value: Number(t.collected_rial || 0), go: "distribution", note: `${fa(collPct)}٪ از توزیع‌شده`,
         children: rows(mCur.data?.branches, (b) => b.branch_name, (b) => b.collected_rial, "distribution", (b) => `مانده ${shortToman(b.remaining_rial)}`) },

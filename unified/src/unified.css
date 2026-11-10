@@ -464,6 +464,7 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
 .xr-table tbody tr { animation: xr-in .35s ease both; animation-delay: calc(var(--i) * 18ms); cursor: pointer; transition: background .15s; }
 .xr-table tbody tr:hover td { background: #10283a; }
 .xr-table tbody tr.on td { background: #2dd4bf1f; }
+.xr-table tbody tr.xr-inactive td { background: #f8717122; color: #fca5a5; }
 .xr-table tfoot td { position: sticky; bottom: 0; background: var(--u-surface-3); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .xr-table-card, .xr-table tbody tr { animation: none; } }
 

@@ -72,10 +72,36 @@ def rahkaran_sales(year: int, month: int) -> dict[str, Any]:
         k = data["kpis"]
         top = lambda rows: [{"key": r.get("key"), "net_rial": float(r.get("net") or 0)}  # noqa: E731
                             for r in sorted(rows or [], key=lambda r: -float(r.get("net") or 0))[:12] if r.get("key")]
-        return {"net_rial": float(k.get("net") or 0), "returns_rial": float(k.get("returns") or 0),
+        return {"net_rial": float(k.get("net") or 0), "gross_rial": float(k.get("gross") or 0), "returns_rial": float(k.get("returns") or 0),
                 "customers": k.get("customers_period"), "today": data.get("today"),
                 "provinces": top(data.get("provinces")), "brands": top(data.get("brands"))}
     return _cached(f"sales:{year}/{month}", load)
+
+
+def karamad_sales(year: int, month: int) -> dict[str, Any]:
+    """فروش ناخالص و درخواست‌های باز (فاکتورنشده) شعب کارآمد در ماه، از داشبورد فروش (/api/hybrid، با ارزش افزوده).
+
+    ناخالص = مبلغ پیش از تخفیف‌ها (بدون ارزش افزوده)؛ درخواست باز = درخواست خالص ماه منهای بخشی که فاکتور شده.
+    """
+    def load():
+        m = f"{year}/{month:02d}"
+        data = _sales_api("/api/hybrid", {"vat": 1, "date_from": f"{m}/01", "date_to": f"{m}/31"})
+        if not data or not data.get("kpis"):
+            return {"gross_rial": None, "open_req_rial": None}
+        k = data["kpis"]
+        fl = lambda v: float(v or 0)  # noqa: E731
+        branches = []
+        for b in data.get("branches") or []:
+            req, conv = fl(b.get("req_net")), b.get("req_conv")
+            branches.append({"key": b.get("label") or b.get("key"), "gross_rial": fl(b.get("gross")), "net_rial": fl(b.get("net")),
+                             "req_rial": req, "open_req_rial": req * (1 - float(conv)) if conv is not None else 0.0,
+                             "req_docs": int(fl(b.get("req_docs")))})
+        return {"gross_rial": fl(k.get("gross")), "net_rial": fl(k.get("net")), "returns_rial": fl(k.get("returns_net")),
+                "req_rial": fl(k.get("req_net")), "req_done_rial": fl(k.get("req_net_done")),
+                "open_req_rial": max(0.0, fl(k.get("req_net")) - fl(k.get("req_net_done"))),
+                "req_docs": int(fl(k.get("req_docs"))), "open_req_docs": int(fl(k.get("req_docs")) - fl(k.get("req_docs_done"))),
+                "req_conv": k.get("req_conv"), "branches": branches}
+    return _cached(f"karamad:{year}/{month}", load)
 
 
 def rahkaran_export(year: int, month: int) -> dict[str, Any]:
@@ -109,6 +135,7 @@ def overview(year: int, month: int) -> dict[str, Any]:
     try:
         out["sales"] = {"cur": rahkaran_sales(year, month), "prev": rahkaran_sales(*prev)}
         out["export"] = {"cur": rahkaran_export(year, month), "prev": rahkaran_export(*prev)}
+        out["karamad"] = {"cur": karamad_sales(year, month)}
     except Exception as exc:  # noqa: BLE001
         out["errors"].append(f"فروش راهکاران: {exc}")
     try:

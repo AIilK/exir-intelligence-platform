@@ -14,9 +14,10 @@ if not exist "frontend\dist\index.html" (
   call npm run build || goto :err
   popd
 )
-python -m pip install -q -r backend\requirements.txt || goto :err
+if not exist ..\.venv\Scripts\python.exe python -m venv ..\.venv
+..\.venv\Scripts\python.exe -m pip install -q -r backend\requirements.txt || goto :err
 start "" http://127.0.0.1:8000
-python backend\app.py
+..\.venv\Scripts\python.exe backend\app.py
 goto :eof
 :err
 echo Setup failed.
