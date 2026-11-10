@@ -152,3 +152,14 @@
 .pnl-notes summary{cursor:pointer;font-weight:600}
 .pnl-notes ul{margin:8px 0 0;padding-inline-start:18px;line-height:1.9}
 .pnl-src{font-style:normal;opacity:.45;font-size:10px;margin-inline-start:5px}
+.pnl-table tr.g-cogs_group th.sticky{padding-right:26px;color:#fdba74}
+.pnl-table tr.g-cogs_group td{color:#fed7aa;background:#1c1512}
+.pnl-tree .pnl-tree-row{cursor:pointer}
+.pnl-tree .pnl-tree-row:hover td,.pnl-tree .pnl-tree-row.open td{background:#ffffff0d}
+.pnl-tree .pnl-tree-row:focus-visible{outline:2px solid #2dd4bf;outline-offset:-2px}
+.pnl-tree .pnl-tree-row td{position:relative}
+.pnl-tree .pnl-tree-caret{width:22px;text-align:center;opacity:.7}
+.pnl-tree .pnl-tree-kids>td{padding:4px 0 10px}
+.pnl-tree .pnl-tree-kids table{width:100%;font-size:12px;opacity:.92}
+.pnl-tree .pnl-tree-kids th{font-weight:500;opacity:.75}
+.pnl-tree-all{margin-inline-start:auto;border:1px solid #ffffff26;background:transparent;color:inherit;border-radius:8px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px}

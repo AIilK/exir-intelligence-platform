@@ -595,16 +595,28 @@ def report_people(req: Request):
     sellers = table("seller", ["branch", "supervisor", "seller_code", "city"])
     sups = table("supervisor", ["branch", "city"])
     branches = table("branch", ["city"])
+    # تعداد گروه کالای فروخته‌شده (به‌جای تعداد SKU در اکسل‌ها)
+    grp = tx.assign(group=tx["category"].astype(str).replace({"nan": "بدون گروه", "": "بدون گروه"}))
+    grp = grp[grp["qty"] > 0]
+    for g, dim in ((sellers, "seller"), (sups, "supervisor"), (branches, "branch")):
+        g["groups_n"] = g["key"].map(grp.groupby(A.DIMS[dim][0], observed=True)["group"].nunique()).fillna(0).astype(int)
     ach_month, ach = _hybrid_achievement(f)
     for g, col in ((branches, "key"), (sups, "branch"), (sellers, "branch")):
         g["branch_ach"] = g[col].map(lambda b: (ach.get(K.bkey(b)) or {}).get("ach") if isinstance(b, str) else None)
         g["branch_target_rial"] = g[col].map(lambda b: (ach.get(K.bkey(b)) or {}).get("target_rial") if isinstance(b, str) else None)
     branches["ach_rank"] = branches["branch_ach"].rank(ascending=False, method="min")
-    rates = ["vol_disc_rate", "cash_disc_rate", "mgmt_disc_rate", "branch_ach", "branch_target_rial", "ach_rank"]
+    rates = ["vol_disc_rate", "cash_disc_rate", "mgmt_disc_rate", "branch_ach", "branch_target_rial", "ach_rank", "groups_n"]
     pick = lambda g: A.records(g[[x for x in dict.fromkeys(cols + rates) if x in g]])  # noqa: E731
-    # پرفروش‌ترین کالاهای هر ویزیتور (برای شیت ریز SKU)
-    sku = (sale.groupby(["seller_key", "product_code", "product"], observed=True)[["qty", "net"]].sum().reset_index()
-           .sort_values(["seller_key", "net"], ascending=[True, False]).groupby("seller_key").head(40))
+    # فروش هر ویزیتور به تفکیک گروه کالا (نه SKU): تعداد، فروش خالص و تعداد کالای متمایز هر گروه
+    sg = sale.assign(group=sale["category"].astype(str).replace({"nan": "بدون گروه", "": "بدون گروه"}))
+    sku = (sg.groupby(["seller_key", "group"], observed=True)
+           .agg(qty=("qty", "sum"), net=("net", "sum"), items=("product_code", "nunique")).reset_index()
+           .sort_values(["seller_key", "net"], ascending=[True, False]))
+    # فروش هر ویزیتور به تفکیک برند (پادینا، بیس، ...)
+    sb = sale.assign(brand=sale["brand"].astype(str).replace({"nan": "بدون برند", "": "بدون برند", "None": "بدون برند"}))
+    brd = (sb.groupby(["seller_key", "brand"], observed=True)
+           .agg(qty=("qty", "sum"), net=("net", "sum"), items=("product_code", "nunique")).reset_index()
+           .sort_values(["seller_key", "net"], ascending=[True, False]))
     # فهرست ویزیتورهای هر سرپرست در ۳ ماه منتهی به پایان بازه (آخرین سرپرست و شعبه هر ویزیتور)، تا ویزیتور بدون فروش
     # در همین بازه هم در اکسل سرپرست بیاید
     y, m = (int(end[:4]), int(end[5:7])) if len(end) >= 7 else (0, 0)
@@ -617,7 +629,66 @@ def report_people(req: Request):
     return {"date_from": f.get("date_from"), "date_to": f.get("date_to"), "ach_month": ach_month, "kpis": A.kpis(tx, rq, c, f),
             "sellers": pick(sellers), "supervisors": pick(sups), "branches": pick(branches),
             "seller_products": A.records(sku.rename(columns={"seller_key": "key"})),
-            "roster_since": since, "roster": A.records(roster)}
+            "seller_brands": A.records(brd.rename(columns={"seller_key": "key"})),
+            "roster_since": since, "roster": A.records(roster), **_report_roster_targets(end[:7], allx, sup_of)}
+
+
+def _roster_base(month: str, rv: list[dict]) -> str:
+    """ماهی که همین فهرست ویزیتورها برایش بارگذاری شده: از ماه‌های ذخیره‌شده تا وقتی فهرست ماه قبل همین است عقب می‌رود
+    (ماه بعد که فقط تارگتش ذخیره شده و فهرستش از ماه قبل آمده، مبنای فهرست را عوض نمی‌کند)."""
+    sig = lambda vs: sorted((K.bkey(v.get("branch")), K.clean_name(v.get("name"))) for v in vs or [])  # noqa: E731
+    mine, base = sig(rv), month
+    for m in reversed([m for m in COMM.months() if m <= month]):
+        if sig(COMM.get(m).get("visitors")) != mine:
+            break
+        base = m
+    return base
+
+
+def _report_roster_targets(month: str, allx: pd.DataFrame, sup_of: dict[str, str]) -> dict:
+    """برای اکسل‌های گزارش‌ساز، از «لیست ویزیتور و سرپرست» و تارگت‌های همان ماه در صفحه پورسانت
+    (ماه بدون فهرست = فهرست آخرین ماه قبل):
+    - listed: ویزیتورهای فهرست (فعال) با seller_key پیدا‌شده در داده، یا بدون کلید اگر هنوز فروشی ندارند (نفر تازه)؛
+    - listed_supervisors: نام سرپرستان فهرست؛ هر کس بیرون از فهرست باشد در اکسل «غیرفعال» علامت می‌خورد؛
+    - targets: seller_key ← تارگت ریالی ماه، تارگت تا امروز، فروش ناخالص ماه و درصد تحقق (همان صفحه پورسانت)
+      و تحقق تعدادی هر گروه کالا."""
+    if len(month) < 7:
+        return {"roster_month": None, "listed": [], "listed_supervisors": [], "targets": {}}
+    plan = COMM.get(month)
+    rv = plan.get("visitors") or []
+    if not rv:
+        return {"roster_month": None, "listed": [], "listed_supervisors": [], "targets": {}}
+    # ماه مبنای فهرست (ماهی که فایل لیست برایش بارگذاری شده، مثلاً مهر)؛ نفری که اولین فروشش بعد از شروع این ماه است
+    # «تازه» حساب می‌شود و بیرون از لیست هم فعال است، ولی قدیمی‌های بیرون از لیست غیرفعال‌اند
+    base = _roster_base(month, rv)
+    first = allx[~allx["is_return"]].groupby("seller_key", observed=True)["date"].min()
+    first_sale = {str(k): v for k, v in first.items() if isinstance(v, str)}
+    match = K.match_sellers(rv, allx)
+    listed = []
+    for v in rv:
+        k = (match.get(v["id"]) or {}).get("key")
+        listed.append({"key": k, "label": v.get("name"), "branch": v.get("branch"), "seller_code": v.get("code"),
+                       "supervisor": (sup_of.get(str(k)) if k is not None else None) or v.get("supervisor"), "note": v.get("note") or ""})
+    sups = {K.clean_name(s.get("name")) for s in plan.get("supervisors") or []} | {K.clean_name(v.get("supervisor")) for v in rv}
+    sups |= set(sup_of.values())
+    targets = {}
+    if plan.get("targets"):
+        d = STATE["data"]
+        wd_e, wd_t = K.workdays(month, d["meta"].get("today"))
+        try:
+            res = K.compute(plan, d["sales"], d["requests"], month, wd_e, wd_t, None)
+        except Exception:  # noqa: BLE001 — نبود تارگت نباید گزارش را خراب کند
+            res = {"visitors": []}
+        for r in res["visitors"]:
+            if r.get("seller_key") is None or not (r.get("target_rial") or any(g.get("target") for g in r["groups"])):
+                continue
+            targets[str(r["seller_key"])] = {
+                "target_rial": r.get("target_rial"), "target_day": r.get("target_day"), "target_gross": r.get("gross"),
+                "target_ach": r.get("ach"),
+                "target_groups": [{"group": g["key"], "qty": g["qty"], "target": g["target"], "target_day": g["target_day"],
+                                   "ach": g["ach_day"]} for g in r["groups"] if g.get("target")]}
+    return {"roster_month": month, "roster_base": base, "first_sale": first_sale,
+            "listed": listed, "listed_supervisors": sorted(s for s in sups if s), "targets": targets}
 
 
 @app.get("/api/inactive")
@@ -1927,4 +1998,4 @@ if __name__ == "__main__":
         write_config(cfg)
     host = os.environ.get("SALES_HOST") or cfg["host"]  # RUN_UNIFIED: فقط 127.0.0.1 (از شبکه فقط پورت 5180 باز است)
     print(f"Dashboard: http://{host}:{cfg['port']}")
-    uvicorn.run(app, host=host, port=int(cfg["port"]))
+    uvicorn.run(app, host=host, port=int(os.environ.get("SALES_PORT") or cfg["port"]))

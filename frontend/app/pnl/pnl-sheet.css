@@ -134,3 +134,60 @@
 .pnl .xl-wrap .xl-scroll table.xl-sheet tbody tr.xl-row.std:hover td,.pnl .xl-wrap .xl-scroll table.xl-sheet tbody tr.xl-row.std-detail:hover td{color:#0f5f58!important;background:#dff7f0!important}
 .pnl .xl-wrap .xl-scroll table.xl-sheet tbody tr.xl-row:hover>th{color:#fff!important}
 .pnl .xl-wrap .xl-scroll table.xl-sheet tbody tr.xl-row:hover td.hot{background:#dce9ff!important}
+.xl-row.cogs-group>th{padding-inline-start:22px}
+.xl-row.cogs-group td{color:#9a3412!important}
+
+/* ------------------------------------------------------------------ درصد کوچک کنار سلول برند + پنجره جزئیات سلول */
+.xl-sheet td .xl-cpct{position:relative;z-index:1;margin-left:4px;font:600 9.5px "Segoe UI",Tahoma,sans-serif;color:#7a8aa3!important;opacity:.95}
+.xl-sheet td.neg .xl-cpct{color:#d27a72!important}
+.xl-sheet td.clk{cursor:pointer}
+.xl-sheet td.clk:hover{outline:1.5px solid #6f9fdc;outline-offset:-2px}
+.xl-modal{position:fixed;inset:0;z-index:1000;background:rgba(10,20,40,.45);display:flex;align-items:center;justify-content:center;padding:16px;
+  animation:xlFadeUp .2s both}
+.xl-modal-box{width:min(860px,100%);max-height:88vh;overflow:auto;background:#fff!important;color:#1f2a3a!important;border-radius:14px;
+  box-shadow:0 24px 60px rgba(0,0,0,.45);padding:16px 18px;font:13px/1.5 Tahoma,"Segoe UI",sans-serif}
+.xl-modal-box header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;border-bottom:3px solid #e8202a;padding-bottom:8px;margin-bottom:12px}
+.xl-modal-box header small{color:#6a7890!important}
+.xl-modal-box h3{margin:2px 0 0;font-size:17px;color:#1e3a8a!important}
+.xl-modal-box header button{border:0;background:#f0f3f8!important;color:#1f2a3a!important;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:14px}
+.xl-modal-box h4{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:16px 0 8px;font-size:13.5px;color:#1e3a8a!important}
+.xl-modal-box h4 small{font-weight:400;color:#6a7890!important}
+.xl-modal-box h4 input{margin-inline-start:auto;border:1px solid #c9d3df;border-radius:8px;padding:4px 9px;font-size:12px;background:#fff!important;color:#1f2a3a!important;min-width:200px}
+.xl-modal-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.xl-modal-stats div{background:#f4f7fb!important;border:1px solid #e1e7ef;border-radius:10px;padding:8px 10px}
+.xl-modal-stats small{display:block;color:#5d6b82!important;font-size:11px}
+.xl-modal-stats b{display:block;font:700 17px "Segoe UI",Tahoma,sans-serif;color:#1e3a8a!important;text-align:right}
+.xl-mbars{display:grid;gap:3px}
+.xl-mbars button,.xl-msum button{display:grid;align-items:center;gap:8px;border:0;background:transparent!important;color:#1f2a3a!important;
+  padding:3px 6px;border-radius:7px;cursor:pointer;text-align:right;font:inherit}
+.xl-mbars button{grid-template-columns:90px 1fr 100px 52px}
+.xl-mbars button:hover,.xl-msum button:hover{background:#f0f5fc!important}
+.xl-mbars button.on,.xl-msum button.on{background:#e3eefc!important;box-shadow:inset 3px 0 0 #2f6db5}
+.xl-mbars i{height:9px;background:#eef2f7!important;border-radius:6px;overflow:hidden;direction:ltr}
+.xl-mbars em{display:block;height:100%;background:linear-gradient(90deg,#9ec2f0,#2f6db5)!important;border-radius:6px}
+.xl-mbars em.neg{background:#e7948c!important}
+.xl-mbars b,.xl-msum b{font:600 12px "Segoe UI",Tahoma,sans-serif;text-align:left}
+.xl-mbars small,.xl-msum small{font-size:11px;color:#6a7890!important;text-align:left}
+.xl-msum{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:2px 12px}
+.xl-msum button{grid-template-columns:1fr 100px 52px}
+.xl-msum b.neg,.xl-modal-box .neg{color:#c0392b!important}
+.xl-mtable{max-height:46vh;overflow:auto;border:1px solid #e1e7ef;border-radius:10px}
+.xl-mtable table{width:100%;border-collapse:collapse;font-size:12px}
+.xl-mtable th{position:sticky;top:0;background:#1e3a8a!important;color:#fff!important;padding:5px 8px;font-weight:600;text-align:right;white-space:nowrap}
+.xl-mtable td{padding:4px 8px;border-bottom:1px solid #eef1f5!important;color:#1f2a3a!important;background:#fff!important}
+.xl-mtable td[dir=ltr]{text-align:left;font-variant-numeric:tabular-nums}
+.xl-mtable tr.clk{cursor:pointer}
+.xl-mtable tr.clk:hover td{background:#f0f5fc!important}
+.xl-mpct{position:relative;display:inline-block;min-width:70px;padding:0 4px;border-radius:4px;background:#eef2f7!important;overflow:hidden;z-index:0}
+.xl-mpct em{position:absolute;inset:0 auto 0 0;background:#bcd5f4!important;z-index:-1}
+.xl-mnote{margin:6px 0 0;font-size:11.5px;color:#6a7890!important}
+@media (max-width:600px){.xl-mbars button{grid-template-columns:70px 1fr 80px 44px}.xl-modal-box h4 input{min-width:0;width:100%}}
+/* درصد سهم در جدول ریز: متن تیره روی زمینه روشن، مستقل از تم تیره سراسری */
+.xl-modal-box .xl-mtable td .xl-mpct{display:inline-block;min-width:74px;padding:1px 6px;text-align:left;border-radius:5px;
+  background:#e8eef6!important;color:#14306b!important;font:700 11.5px "Segoe UI",Tahoma,sans-serif;border:1px solid #c9d6e8}
+.xl-modal-box .xl-mtable td .xl-mpct em{background:linear-gradient(90deg,#a9c9f3,#7fb0ec)!important;opacity:.85}
+.xl-mbars button:disabled{cursor:default}
+.xl-mbars button:disabled:hover{background:transparent!important}
+.xl-mbars span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xl-mlink{border:0;background:none!important;color:#2f6db5!important;cursor:pointer;font:inherit;padding:0}
+.xl-sheet td.pv.clk{cursor:pointer}

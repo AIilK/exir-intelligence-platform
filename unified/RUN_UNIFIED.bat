@@ -9,18 +9,28 @@ rem ---- Paths may contain ")" (e.g. "...-main (1)"), so no ( ) blocks use these
 set "SALES_DIR=%~dp0..\sales"
 set "FINANCE_BACKEND=%~dp0..\backend"
 
-rem ---- sales backend (FastAPI, 127.0.0.1:8000). Packages: run "python -m pip install -r backend\requirements.txt" once.
+rem ---- one shared Python virtual env (..\.venv) for both backends; created and filled on first run.
+set "VENV_PY=%~dp0..\.venv\Scripts\python.exe"
+if exist "%VENV_PY%" goto :venv_ok
+echo Creating Python virtual env (.venv)...
+python -m venv "%~dp0..\.venv"
+if errorlevel 1 goto :err
+:venv_ok
+"%VENV_PY%" -m pip install -q --disable-pip-version-check -r "%FINANCE_BACKEND%\requirements-v21.txt" -r "%SALES_DIR%\backend\requirements.txt"
+if errorlevel 1 goto :err
+
+rem ---- sales backend (FastAPI, 127.0.0.1:8000)
 netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul
 if not errorlevel 1 goto :sales_done
 echo Starting sales backend...
-start "Sales API" /min /d "%SALES_DIR%" cmd /k "set SALES_HOST=127.0.0.1&& python backend\app.py"
+start "Sales API" /min /d "%SALES_DIR%" cmd /k "set SALES_HOST=127.0.0.1&& "%VENV_PY%" backend\app.py"
 :sales_done
 
 rem ---- finance backend (FastAPI, 127.0.0.1:8010)
 netstat -ano | findstr /R /C:":8010 .*LISTENING" >nul
 if not errorlevel 1 goto :finance_done
 echo Starting finance backend...
-start "Finance API" /min /d "%FINANCE_BACKEND%" cmd /k python -m uvicorn app.main:app --host 127.0.0.1 --port 8010
+start "Finance API" /min /d "%FINANCE_BACKEND%" cmd /k ""%VENV_PY%" -m uvicorn app.main:app --host 127.0.0.1 --port 8010"
 :finance_done
 
 rem ---- unified dashboard (port 5180): production build served by server.mjs (compressed, cached), not the dev server

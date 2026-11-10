@@ -689,7 +689,7 @@ class KaramadSalesNetworkService:
             cheques: dict[int, list[dict[str, Any]]] = defaultdict(list)
             for r in connection.execute(text(
                 f"""
-                SELECT fx.[VisitorRef], d.[DLRef], dl.[Code] AS DLCode, dl.[Name] AS DLName, d.[Serial], d.[Price], d.[DueDate],
+                SELECT fx.[VisitorRef], d.[DLRef], dl.[Code] AS DLCode, dl.[Name] AS DLName, d.[Code] AS ChequeNo, d.[Serial], d.[Price], d.[DueDate],
                        st.[Name] AS StatusName
                 FROM dbo.[tblChequeD] d INNER JOIN dbo.[tblFactorF] fx ON fx.[ID] = d.[FactorRef]
                 INNER JOIN dbo.[tblVisitor] v ON v.[ID] = fx.[VisitorRef]
@@ -701,7 +701,8 @@ class KaramadSalesNetworkService:
                 """
             ), {"returned_from": returned_from_date()}).mappings():
                 cheques[int(r["VisitorRef"])].append({
-                    "customer_code": _text(r["DLCode"]), "customer_name": _text(r["DLName"]), "serial": _text(r["Serial"]),
+                    "customer_code": _text(r["DLCode"]), "customer_name": _text(r["DLName"]), "number": _text(r["ChequeNo"]),
+                    "serial": _text(r["Serial"]),
                     "amount_rial": _num(r["Price"]), "due_date_jalali": format_jalali_date(r["DueDate"]),
                     "status": _text(r["StatusName"])})
             # فاکتورهای توزیع‌نشده هر ویزیتور، با همان تعریف تب «توزیع بار»: سال مالی جاری، حواله خروج ندارد
