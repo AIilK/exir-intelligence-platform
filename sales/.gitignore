@@ -6,7 +6,7 @@ data/uploads/
 data/chain_store/
 data/inventory/
 data/plans/
-data/commission/
+# data/commission/ (تارگت‌ها و لیست ویزیتورهای پورسانت) به خواست کاربر در ریپو است تا گزارش‌ساز روی main تارگت داشته باشد
 __pycache__/
 .env
 ~$*
