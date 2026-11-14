@@ -441,7 +441,11 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = N
     top_cust = cb.groupby(level=0).idxmax().map(lambda t: t[1])
     cust_name = sold.groupby("customer_code", observed=True)["customer"].agg(mode)
     last_sale = sold[sold["qty"] > 0].groupby("product_code", observed=True)["date"].max()
-    open_req = req[req["status"] == 0].groupby("product_code", observed=True)["qty"].sum() if req is not None and len(req) else pd.Series(dtype=float)
+    # درخواست باز فقط از سال مالی جاری کارآمد (= سال شمسی، از ۰۱/۰۱): درخواست‌های باز جامانده از سال قبل
+    # در خود کارآمد (که روی سال جاری باز است) دیده نمی‌شوند و نباید از موجودی کم شوند
+    fy_start = f"{today[:4]}/01/01"
+    open_req = (req[(req["status"] == 0) & (req["date"] >= fy_start)].groupby("product_code", observed=True)["qty"].sum()
+                if req is not None and len(req) else pd.Series(dtype=float))
 
     # -- راهکاران (اختیاری): سفارش باز شعبه به کارخانه و فاکتور کارخانه که هنوز در کارآمد خرید نشده
     rk = src.get("rk")

@@ -7,7 +7,7 @@ import { achPill } from './Commission.jsx'
 
 // صفحه «مسابقه»: مسابقه‌های فروش (بازه، کالاها، تارگت ویزیتورها، گروه A/B شعب) در data/contests.json تعریف می‌شوند
 // (بیرون از صفحه، با contest.save)؛ این صفحه فقط نمایش و حذف پس از پایان مسابقه را دارد.
-// ریز فروش (فروشنده × کالا) یک بار از سرور می‌آید و همه فیلترها و تجمیع‌ها همین‌جا انجام می‌شود.
+// ریز درخواست‌ها (فروشنده × کالا؛ نه فاکتور) یک بار از سرور می‌آید و همه فیلترها و تجمیع‌ها همین‌جا انجام می‌شود.
 
 const FILTERS = [
   ['tier', 'گروه هیبرید'], ['branch', 'هیبرید'], ['supervisor', 'سرپرست'], ['seller_key', 'ویزیتور'],
@@ -36,7 +36,7 @@ export default function Contest() {
   if (list.error) return <ErrorBox error={list.error} />
   return (
     <>
-      <PageHead title="مسابقه" desc="مسابقه‌های فروش: فروش تعدادی و ریالی کالاهای مسابقه به تفکیک هیبرید، ویزیتور و SKU، تحقق تارگت و نفرات برتر">
+      <PageHead title="مسابقه" desc="مسابقه‌های فروش بر اساس درخواست: تعداد و مبلغ درخواست کالاهای مسابقه به تفکیک هیبرید، ویزیتور و SKU، تحقق تارگت و نفرات برتر">
         <div className="pill-row">
           {cur && <button className="btn ghost" onClick={() => remove(cur)}>حذف مسابقه</button>}
         </div>
@@ -94,26 +94,26 @@ function ContestView({ contest, unit, vat }) {
   const allKeys = FILTERS.map(([k]) => k)
   const fr = useMemo(() => rows.filter((r) => pass(r, allKeys)), [rows, f])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // جمع هر ویزیتور: فروش فیلترشده + تارگت (ویزیتورهای تارگت‌دار بی‌فروش هم می‌آیند)
+  // جمع هر ویزیتور: درخواست فیلترشده + تارگت (ویزیتورهای تارگت‌دار بی‌درخواست هم می‌آیند)
   const persons = useMemo(() => {
     const m = new Map()
     for (const p of people) {
       if (!pass(p, PERSON_KEYS)) continue
-      m.set(p.seller_key, { ...p, key: p.seller_key, qty: 0, sale_qty: 0, ret_qty: 0, net: 0, customers: 0, skus: 0 })
+      m.set(p.seller_key, { ...p, key: p.seller_key, qty: 0, done_qty: 0, net: 0, customers: 0, skus: 0 })
     }
     for (const r of fr) {
       let p = m.get(r.seller_key)
       if (!p) {
         p = { key: r.seller_key, seller_key: r.seller_key, branch: r.branch, tier: r.tier, seller: r.seller, seller_code: r.seller_code,
-          supervisor: r.supervisor, target: null, qty: 0, sale_qty: 0, ret_qty: 0, net: 0, customers: 0, skus: 0 }
+          supervisor: r.supervisor, target: null, qty: 0, done_qty: 0, net: 0, customers: 0, skus: 0 }
         m.set(r.seller_key, p)
       }
-      p.qty += r.qty; p.sale_qty += r.sale_qty; p.ret_qty += r.ret_qty; p.net += r.net
+      p.qty += r.qty; p.done_qty += r.done_qty || 0; p.net += r.net
       p.customers = Math.max(p.customers, r.customers)
       if (r.qty > 0) p.skus += 1
     }
     const out = [...m.values()]
-    // ورود به مسابقه: فروش خالص همان بازه و کالاهای انتخاب‌شده (همان عددی که در جدول دیده می‌شود) به تارگت برسد
+    // ورود به مسابقه: تعداد/مبلغ درخواست همان بازه و کالاهای انتخاب‌شده (همان عددی که در جدول دیده می‌شود) به تارگت برسد
     for (const p of out) {
       const fv = byNet ? p.net : p.qty
       p.full = fv
@@ -167,10 +167,9 @@ function ContestView({ contest, unit, vat }) {
     { key: 'branch', label: 'هیبرید' },
     { key: 'tier', label: 'گروه' },
     { key: 'supervisor', label: 'سرپرست' },
-    { key: 'sale_qty', label: 'تعداد فروش', type: 'int' },
-    { key: 'ret_qty', label: 'تعداد برگشتی', type: 'int' },
-    { key: 'qty', label: 'تعداد خالص', type: 'int' },
-    { key: 'net', label: 'مبلغ خالص', type: 'money' },
+    { key: 'qty', label: 'تعداد درخواست', type: 'int' },
+    { key: 'done_qty', label: 'فاکتور شده (تعداد)', type: 'int' },
+    { key: 'net', label: 'مبلغ درخواست', type: 'money' },
     { key: 'target', label: byNet ? 'تارگت ریالی' : 'تارگت (تعداد)', ...tgt },
     { key: 'ach', label: 'درصد تحقق', type: 'pct', render: (r) => (r.target ? achPill('ach')(r) : '—') },
     { key: 'status', label: 'وضعیت', render: (r) => (r.in ? <b style={{ color: 'var(--good, #16a34a)' }}>✓ وارد مسابقه شده</b> : <span className="muted">{r.status}</span>) },
@@ -186,10 +185,10 @@ function ContestView({ contest, unit, vat }) {
   const lineRows = fr.filter(ofTier(psTier))
   const branchCols = [
     { key: 'label', label: 'هیبرید' }, { key: 'tier', label: 'گروه' },
-    { key: 'qty', label: 'تعداد خالص', type: 'int' }, { key: 'net', label: 'مبلغ خالص', type: 'money' },
+    { key: 'qty', label: 'تعداد درخواست', type: 'int' }, { key: 'net', label: 'مبلغ درخواست', type: 'money' },
     { key: 'target', label: byNet ? 'تارگت ریالی' : 'تارگت (تعداد)', ...tgt },
     { key: 'ach', label: 'درصد تحقق', type: 'pct', render: (r) => (r.target ? achPill('ach')(r) : '—') },
-    { key: 'sellers', label: 'ویزیتور', type: 'int' }, { key: 'active', label: 'ویزیتور با فروش', type: 'int' },
+    { key: 'sellers', label: 'ویزیتور', type: 'int' }, { key: 'active', label: 'ویزیتور با درخواست', type: 'int' },
     { key: 'done', label: 'وارد مسابقه شده', type: 'int' },
     { key: 'per_seller', label: 'میانگین تعداد هر ویزیتور', type: 'int' },
   ]
@@ -197,9 +196,9 @@ function ContestView({ contest, unit, vat }) {
     { key: 'seller', label: 'ویزیتور' }, { key: 'branch', label: 'هیبرید' }, { key: 'tier', label: 'گروه' },
     { key: 'product_code', label: 'کد کالا' }, { key: 'product', label: 'کالا' }, { key: 'category', label: 'گروه کالا' },
     { key: 'brand', label: 'برند' },
-    { key: 'sale_qty', label: 'تعداد فروش', type: 'int' }, { key: 'ret_qty', label: 'تعداد برگشتی', type: 'int' },
-    { key: 'qty', label: 'تعداد خالص', type: 'int' }, { key: 'net', label: 'مبلغ خالص', type: 'money' },
-    { key: 'customers', label: 'مشتری', type: 'int' }, { key: 'invoices', label: 'فاکتور', type: 'int' },
+    { key: 'qty', label: 'تعداد درخواست', type: 'int' }, { key: 'done_qty', label: 'فاکتور شده (تعداد)', type: 'int' },
+    { key: 'net', label: 'مبلغ درخواست', type: 'money' },
+    { key: 'customers', label: 'مشتری', type: 'int' }, { key: 'requests', label: 'سند درخواست', type: 'int' },
   ]
 
   return (
@@ -215,24 +214,24 @@ function ContestView({ contest, unit, vat }) {
       </div>
 
       <div className="kpis">
-        <Kpi label="تعداد خالص" value={totQty} type="int" hint="تعداد فروش منهای برگشتی کالاهای مسابقه" />
-        <Kpi label="مبلغ خالص" value={totNet} hint={vat ? 'با ارزش افزوده (قابل پرداخت)' : 'پس از تخفیف، بدون ارزش افزوده'} />
+        <Kpi label="تعداد درخواست" value={totQty} type="int" hint="تعداد درخواست‌های ثبت‌شده کالاهای مسابقه (بدون باطل‌شده‌ها، فاکتور شده یا نشده)" />
+        <Kpi label="مبلغ درخواست" value={totNet} hint={vat ? 'با ارزش افزوده (قابل پرداخت)' : 'پس از پروموشن، بدون ارزش افزوده'} />
         <Kpi label={byNet ? 'تارگت ریالی' : 'تارگت (تعداد)'} value={totTarget} type={byNet ? 'money' : 'int'} />
-        <Kpi label="تحقق کل" value={totTarget ? totFull / totTarget : null} type="pct" hint="فروش خالص بازه و کالاهای انتخاب‌شده نسبت به تارگت" />
+        <Kpi label="تحقق کل" value={totTarget ? totFull / totTarget : null} type="pct" hint="درخواست بازه و کالاهای انتخاب‌شده نسبت به تارگت" />
         <Kpi label="وارد مسابقه شده" value={done} type="int" hint="ویزیتورهایی که به تارگتشان رسیده‌اند؛ فقط این‌ها در رتبه‌بندی هستند"
           sub={`از ${fmtInt(persons.filter((p) => p.target).length)} ویزیتور تارگت‌دار`} />
       </div>
 
       {(unmatched.length > 0 || loose.length > 0) && (
         <div className="state" style={{ textAlign: 'start', marginBottom: 12 }}>
-          {unmatched.length > 0 && <div>در کارآمد پیدا نشد (با فروش صفر حساب می‌شوند): {unmatched.map((p) => `${p.seller} (${p.branch})`).join('، ')}</div>}
+          {unmatched.length > 0 && <div>در کارآمد پیدا نشد (با درخواست صفر حساب می‌شوند): {unmatched.map((p) => `${p.seller} (${p.branch})`).join('، ')}</div>}
           {loose.length > 0 && <div>فقط با کد فروشنده تطبیق شد، نامشان با فایل تارگت یکی نیست: {loose.map((p) => `${p.file_name} ← ${p.seller}`).join('، ')}</div>}
         </div>
       )}
 
       <div className="grid g2">
         <Card title="نفرات برتر" className="span2"
-          subtitle={`فقط ویزیتورهایی که به تارگتشان رسیده‌اند وارد مسابقه می‌شوند (${fmtInt(done)} نفر). تارگت، مازاد و درصد تحقق از فروش خالص همین بازه و کالاهای انتخاب‌شده`}
+          subtitle={`فقط ویزیتورهایی که به تارگتشان رسیده‌اند وارد مسابقه می‌شوند (${fmtInt(done)} نفر). تارگت، مازاد و درصد تحقق از درخواست‌های همین بازه و کالاهای انتخاب‌شده`}
           actions={<>
             <Tabs value={topBy} onChange={setTopBy} tabs={[{ value: 'excess', label: 'مازاد بر تارگت' }, { value: 'ach', label: 'درصد تحقق' }, { value: 'qty', label: 'تعداد' }, { value: 'net', label: 'مبلغ' }]} />
             <Tabs value={topTier} onChange={setTopTier} tabs={[{ value: 'all', label: 'کل' }, { value: 'A', label: 'هیبرید A' }, { value: 'B', label: 'هیبرید B' }]} />
@@ -263,14 +262,14 @@ function ContestView({ contest, unit, vat }) {
           </>}>
           {view === 'people' && (
             <DataTable rows={psRows} columns={personCols} unit={unit} pageSize={30} exportName={`contest-${contest.name}-visitors`}
-              totals={(rs) => ({ label: 'جمع', qty: sum(rs, 'qty'), sale_qty: sum(rs, 'sale_qty'), ret_qty: sum(rs, 'ret_qty'),
+              totals={(rs) => ({ label: 'جمع', qty: sum(rs, 'qty'), done_qty: sum(rs, 'done_qty'),
                 net: sum(rs, 'net'), target: sum(rs, 'target'), excess: sum(rs, 'excess'), gap: sum(rs, 'gap') })} />
           )}
           {view === 'sku' && <SkuMatrix persons={psRows} rows={lineRows} val={skuVal} unit={unit} name={contest.name} />}
           {view === 'lines' && (
             <DataTable rows={lineRows.map((r, i) => ({ ...r, key: i }))} columns={lineCols} unit={unit} pageSize={30}
               exportName={`contest-${contest.name}-lines`} defaultSort={{ key: 'qty', dir: 'desc' }}
-              totals={(rs) => ({ seller: 'جمع', sale_qty: sum(rs, 'sale_qty'), ret_qty: sum(rs, 'ret_qty'), qty: sum(rs, 'qty'), net: sum(rs, 'net') })} />
+              totals={(rs) => ({ seller: 'جمع', qty: sum(rs, 'qty'), done_qty: sum(rs, 'done_qty'), net: sum(rs, 'net'), requests: sum(rs, 'requests') })} />
           )}
         </Card>
       </div>
@@ -304,7 +303,7 @@ function DayRange({ contest, value, onChange, today }) {
   )
 }
 
-/** خلاصه بازه به شکل برچسب: «مسابقه: ۱ آبان تا ۳۰ آبان» · «نمایش: فقط ۱۰ آبان · شنبه» · «آخرین فروش» · «تعداد کالا» */
+/** خلاصه بازه به شکل برچسب: «مسابقه: ۱ آبان تا ۳۰ آبان» · «نمایش: فقط ۱۰ آبان · شنبه» · «آخرین درخواست» · «تعداد کالا» */
 function PeriodNote({ contest, period, narrowed, lastDate }) {
   const short = (s) => { const d = parseDate(s); return d ? `${faDigits(d.jd)} ${MONTH_NAMES[d.jm - 1]}` : faDigits(s) }
   const span = (a, b) => (a === b ? `فقط ${dayName(a)}` : `${short(a)} تا ${short(b)}`)
@@ -313,7 +312,7 @@ function PeriodNote({ contest, period, narrowed, lastDate }) {
     <span className="small" style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
       <span style={chip} className="muted">مسابقه: {span(contest.date_from, contest.date_to)}</span>
       {narrowed && period && <span style={{ ...chip, background: 'var(--accent)', color: '#fff' }}>نمایش: {span(period.from, period.to)}</span>}
-      <span style={chip} className="muted">{lastDate ? `آخرین فروش: ${short(lastDate)}` : 'در این بازه فروشی نیست'}</span>
+      <span style={chip} className="muted">{lastDate ? `آخرین درخواست: ${short(lastDate)}` : 'در این بازه درخواستی نیست'}</span>
       <span style={chip} className="muted">{fmtInt(contest.products.length)} کالا</span>
     </span>
   )

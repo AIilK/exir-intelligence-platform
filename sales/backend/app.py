@@ -2058,8 +2058,8 @@ def contest_data(cid: str, vat: str = "0", date_from: str | None = None, date_to
     if lo > hi:
         raise HTTPException(400, "بازه انتخاب‌شده بیرون از بازه مسابقه است.")
     tf = lambda b: tier_of(b, tiers)
-    r = CT.compute(c, d["sales"], tf, vat == "1", (lo, hi))
-    # ورود به مسابقه و درصد تحقق در صفحه از فروش همین بازه (و کالاهای انتخاب‌شده) حساب می‌شود
+    r = CT.compute(c, d["sales"], d.get("requests"), tf, vat == "1", (lo, hi))
+    # ورود به مسابقه و درصد تحقق در صفحه از درخواست‌های همین بازه (و کالاهای انتخاب‌شده) حساب می‌شود
     return {"contest": c, "period": {"from": lo, "to": hi}, **r}
 
 

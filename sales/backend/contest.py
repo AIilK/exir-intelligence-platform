@@ -1,6 +1,7 @@
 """مسابقه‌های فروش: هر مسابقه بازه تاریخ، فهرست کالا (کد کالا)، دسته شعب (A / B) و تارگت ویزیتورها دارد.
 تعریف‌ها در data/contests.json ذخیره می‌شوند و پس از پایان مسابقه حذف می‌شوند.
-فروش از همان داده لایو داشبورد (فاکتورهای کارآمد) با تعداد و مبلغ خالص پس از برگشتی حساب می‌شود."""
+تعداد و مبلغ از درخواست‌های ثبت‌شده در کارآمد (بدون باطل‌شده‌ها، چه فاکتور شده باشند چه نه) حساب می‌شود؛
+ورود به مسابقه هم با همین عدد درخواست است، نه فاکتور."""
 from __future__ import annotations
 
 import io
@@ -158,28 +159,34 @@ def _match_targets(c: dict, roster: pd.DataFrame) -> tuple[dict, list[dict]]:
     return out, missing
 
 
-def compute(c: dict, sales: pd.DataFrame, tier_of, vat: bool, period: tuple[str, str] | None = None) -> dict:
-    """ردیف‌های فروشنده × کالا (برای فیلتر و تجمیع در صفحه) و تارگت فروشندگان.
-    period: بخشی از بازه مسابقه برای فروش؛ فهرست فروشندگان (تطبیق تارگت) همیشه از کل بازه مسابقه است."""
+def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of, vat: bool,
+            period: tuple[str, str] | None = None) -> dict:
+    """ردیف‌های فروشنده × کالا از درخواست‌ها (برای فیلتر و تجمیع در صفحه) و تارگت فروشندگان.
+    period: بخشی از بازه مسابقه؛ فهرست فروشندگان (تطبیق تارگت) همیشه از کل بازه مسابقه است."""
     lo, hi = period or (c["date_from"], c["date_to"])
     tiers = {_norm(k): v for k, v in (c.get("tiers") or {}).items()}
-    hyb = sales[sales["branch"].astype(str).str.contains("هیبرید") & (sales["date"] <= c["date_to"])]
+    hyb_of = lambda df: df[df["branch"].astype(str).str.contains("هیبرید") & (df["date"] <= c["date_to"])]
+    req = hyb_of(requests) if requests is not None and len(requests) else None
+    # فهرست فروشندگان از فاکتور و درخواست با هم، تا ویزیتوری که فقط درخواست دارد هم پیدا شود
+    hyb = pd.concat([x for x in (hyb_of(sales), req) if x is not None], ignore_index=True)
     # فهرست فروشندگان شعب: سه ماه پیش از شروع تا پایان مسابقه، تا ویزیتور تارگت‌دار بی‌فروش هم با نام کارآمدش بیاید
     y, m = int(c["date_from"][:4]), int(c["date_from"][5:7]) - 3
     since = f"{y - (m < 1)}/{(m - 1) % 12 + 1:02d}/01"
     roster = hyb[hyb["date"] >= since].sort_values("date").drop_duplicates("seller_key", keep="last")[
         ["branch", "seller_key", "seller", "seller_code", "supervisor"]]
-    s = hyb[(hyb["date"] >= lo) & (hyb["date"] <= hi) & hyb["product_code"].isin(c["products"])]
+    s = req if req is not None else hyb.iloc[0:0]
+    s = s[(s["date"] >= lo) & (s["date"] <= hi) & s["product_code"].isin(c["products"])]
     if "is_sample" in s:
         s = s[~s["is_sample"]]
     if vat:
         s = s.assign(net=s["payable"])
-    s = s.assign(sale_qty=s["qty"].where(~s["is_return"], 0), ret_qty=-s["qty"].where(s["is_return"], 0))
+    # status: 0 درخواست باز، 1 فاکتور شده (باطل‌شده‌ها در خواندن حذف شده‌اند)
+    s = s.assign(done_qty=s["qty"].where(s["status"] == 1, 0) if "status" in s else 0)
     g = s.groupby(["branch", "seller_key", "product_code"], observed=True).agg(
         seller=("seller", "first"), seller_code=("seller_code", "first"), supervisor=("supervisor", "first"),
         product=("product", "first"), category=("category", "first"), brand=("brand", "first"),
-        qty=("qty", "sum"), sale_qty=("sale_qty", "sum"), ret_qty=("ret_qty", "sum"), net=("net", "sum"),
-        customers=("customer_code", "nunique"), invoices=("inv_no", "nunique")).reset_index()
+        qty=("qty", "sum"), done_qty=("done_qty", "sum"), net=("net", "sum"),
+        customers=("customer_code", "nunique"), requests=("inv_no", "nunique")).reset_index()
     tmap, missing = _match_targets(c, roster)
     tier = lambda b: tiers.get(_norm(b)) or tier_of(b)
     info = roster.set_index("seller_key")
@@ -188,8 +195,8 @@ def compute(c: dict, sales: pd.DataFrame, tier_of, vat: bool, period: tuple[str,
     rows = [{"branch": r.branch, "tier": tier(r.branch), "seller_key": r.seller_key, "seller": nm(r.seller),
              "seller_code": str(r.seller_code), "supervisor": r.supervisor, "product_code": r.product_code,
              "product": r.product, "category": r.category, "brand": r.brand, "qty": float(r.qty),
-             "sale_qty": float(r.sale_qty), "ret_qty": float(r.ret_qty), "net": float(r.net),
-             "customers": int(r.customers), "invoices": int(r.invoices)} for r in g.itertuples()]
+             "done_qty": float(r.done_qty), "net": float(r.net),
+             "customers": int(r.customers), "requests": int(r.requests)} for r in g.itertuples()]
     # همه ویزیتورهای تارگت‌دار (حتی بی‌فروش) با مشخصاتشان؛ تارگت‌هایی که در کارآمد پیدا نشدند جدا علامت می‌خورند
     people = []
     for k, (tg, fname, loose) in tmap.items():
