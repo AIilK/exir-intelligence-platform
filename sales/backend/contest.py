@@ -161,7 +161,8 @@ def _match_targets(c: dict, roster: pd.DataFrame) -> tuple[dict, list[dict]]:
 
 
 def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of, vat: bool,
-            period: tuple[str, str] | None = None, supervisors: list[tuple[str, str]] | None = None) -> dict:
+            period: tuple[str, str] | None = None, supervisors: list[tuple[str, str]] | None = None,
+            visitor_sups: dict[tuple[str, str], str] | None = None) -> dict:
     """ردیف‌های فروشنده × کالا از درخواست‌ها (برای فیلتر و تجمیع در صفحه) و تارگت فروشندگان.
     period: بخشی از بازه مسابقه؛ فهرست فروشندگان (تطبیق تارگت) همیشه از کل بازه مسابقه است.
     supervisors: (شعبه، نام) سرپرستان لیست ماه؛ در فهرست خودکار تارگت پیش‌فرض نمی‌آیند."""
@@ -238,6 +239,36 @@ def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of
             people.append({"seller_key": k, "target": tg, "branch": r["branch"], "tier": tier(r["branch"]),
                            "seller": nm(r["seller"]), "seller_code": str(r["seller_code"]), "supervisor": r["supervisor"],
                            "file_name": "", "loose": False, "auto": True})
+    # فقط شرکت‌کنندگان (تارگت فایل یا تارگت پیش‌فرض) در مسابقه می‌آیند؛ درخواست سرپرست‌ها و حساب‌های دفتر حساب نمی‌شود
+    # سرپرست هر ویزیتور از «لیست ویزیتور و سرپرست» (صفحه پورسانت)، نه از کارآمد: شعبه تک‌سرپرست ← همان سرپرست؛
+    # شعبه چندسرپرست (تهران، اصفهان) ← سرپرست همان ویزیتور در لیست، وگرنه سرپرست کارآمدش اگر یکی از سرپرستان لیست است؛
+    # شعبه‌ای که در لیست سرپرست ندارد (مثل البرز، یزد، قم) ← «بدون سرپرست»
+    if supervisors:
+        listed: dict[str, list[str]] = {}
+        for b, n in supervisors:
+            if n:
+                listed.setdefault(_norm(b), []).append(n)
+        vs = {(_norm(b), _code(cd)): n for (b, cd), n in (visitor_sups or {}).items()}
+        core = lambda n: re.sub(r"\s*-\s*تهران\s+(شرق|غرب)$", "", _clean_name(n))  # noqa: E731
+        same = lambda a, b: bool(a and b) and (_name_fits(core(a), b) or _name_fits(core(b), a))  # noqa: E731
+
+        def sup_of(branch, code, ksup):
+            opts = listed.get(_norm(branch)) or []
+            if not opts:
+                return "بدون سرپرست"
+            if len(opts) == 1:
+                return opts[0]
+            for cand in (vs.get((_norm(branch), _code(code))), ksup):
+                hit = [o for o in opts if same(o, cand)]
+                if hit:
+                    return hit[0]
+            return ksup or ""
+        for x in rows + people:
+            x["supervisor"] = sup_of(x["branch"], x.get("seller_code"), x.get("supervisor"))
+    # (مسابقه بدون tier_targets مثل قبل همه درخواست‌ها را نشان می‌دهد)
+    if tt:
+        keys = {p["seller_key"] for p in people}
+        rows = [r for r in rows if r["seller_key"] in keys]
     days = sorted(s["date"].unique())
     return {"rows": rows, "people": people, "last_date": days[-1] if days else None}
 
