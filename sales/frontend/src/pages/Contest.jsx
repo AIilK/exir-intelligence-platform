@@ -157,7 +157,6 @@ function ContestView({ contest, unit, vat }) {
   const near = inTier.filter((p) => p.target && !p.in).sort((a, b) => b.ach - a.ach).slice(0, 5)
   const unmatched = people.filter((p) => p.unmatched)
   const loose = people.filter((p) => p.loose)
-  const auto = people.filter((p) => p.auto)
   const tgt = byNet ? { type: 'money' } : { type: 'int' }
   const active = Object.values(f).some((v) => v?.length) || dr.date_from !== dr0.date_from || !!dr.date_to
 
@@ -223,9 +222,8 @@ function ContestView({ contest, unit, vat }) {
           sub={`از ${fmtInt(persons.filter((p) => p.target).length)} ویزیتور تارگت‌دار`} />
       </div>
 
-      {(unmatched.length > 0 || loose.length > 0 || auto.length > 0) && (
+      {(unmatched.length > 0 || loose.length > 0) && (
         <div className="state" style={{ textAlign: 'start', marginBottom: 12 }}>
-          {auto.length > 0 && <div>در فایل تارگت نبودند، تارگت پیش‌فرض گروه شعبه گرفتند ({Object.entries(contest.tier_targets || {}).map(([t, v]) => `${t}: ${fmtInt(v)}`).join('، ')}): {auto.map((p) => `${p.seller} (${p.branch})`).join('، ')}</div>}
           {unmatched.length > 0 && <div>در کارآمد پیدا نشد (با درخواست صفر حساب می‌شوند): {unmatched.map((p) => `${p.seller} (${p.branch})`).join('، ')}</div>}
           {loose.length > 0 && <div>فقط با کد فروشنده تطبیق شد، نامشان با فایل تارگت یکی نیست: {loose.map((p) => `${p.file_name} ← ${p.seller}`).join('، ')}</div>}
         </div>
