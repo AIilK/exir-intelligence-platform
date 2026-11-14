@@ -45,7 +45,8 @@ def save(body: dict) -> dict:
         cur = next((c for c in items if c["id"] == body.get("id")), None) if body.get("id") else None
         c = dict(cur or {"id": uuid.uuid4().hex[:10], "created": time.strftime("%Y-%m-%d %H:%M"),
                          "targets": [], "tiers": {}, "target_unit": "qty"})
-        for k in ("name", "date_from", "date_to", "default_from", "products", "target_unit", "targets", "tiers", "note"):
+        for k in ("name", "date_from", "date_to", "default_from", "products", "target_unit", "targets", "tiers",
+                  "tier_targets", "note"):
             if k in body and body[k] is not None:
                 c[k] = body[k]
         c["name"] = str(c.get("name") or "").strip()
@@ -160,9 +161,10 @@ def _match_targets(c: dict, roster: pd.DataFrame) -> tuple[dict, list[dict]]:
 
 
 def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of, vat: bool,
-            period: tuple[str, str] | None = None) -> dict:
+            period: tuple[str, str] | None = None, supervisors: list[tuple[str, str]] | None = None) -> dict:
     """ردیف‌های فروشنده × کالا از درخواست‌ها (برای فیلتر و تجمیع در صفحه) و تارگت فروشندگان.
-    period: بخشی از بازه مسابقه؛ فهرست فروشندگان (تطبیق تارگت) همیشه از کل بازه مسابقه است."""
+    period: بخشی از بازه مسابقه؛ فهرست فروشندگان (تطبیق تارگت) همیشه از کل بازه مسابقه است.
+    supervisors: (شعبه، نام) سرپرستان لیست ماه؛ در فهرست خودکار تارگت پیش‌فرض نمی‌آیند."""
     lo, hi = period or (c["date_from"], c["date_to"])
     tiers = {_norm(k): v for k, v in (c.get("tiers") or {}).items()}
     hyb_of = lambda df: df[df["branch"].astype(str).str.contains("هیبرید") & (df["date"] <= c["date_to"])]
@@ -208,6 +210,34 @@ def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of
         br = bnames.get(_norm(t["branch"]), t["branch"])
         people.append({"seller_key": f"t:{i}", "target": t["target"], "branch": br, "seller": t["name"],
                        "seller_code": t.get("code") or "", "tier": tier(br), "unmatched": True})
+    # ویزیتورهایی که در فایل تارگت نیستند ولی در ماه جاری مسابقه در کارآمد درخواست ثبت کرده‌اند (برگشتی به‌تنهایی
+    # کافی نیست): تارگت پیش‌فرض دسته شعبه (tier_targets، مثلاً A=2000، B=1000). سرپرست‌ها (نامشان نام سرپرست شعبه
+    # را دارد، مثل «آذربایجان غربی- فرزاد خمویی») و حساب‌های «دفتر» ویزیتور نیستند.
+    tt = {str(k).upper(): float(v) for k, v in (c.get("tier_targets") or {}).items()}
+    if tt and req is not None and len(req):
+        rq = req[(req["date"] >= c["date_from"]) & (req["qty"] > 0)]
+        cur_m = rq["date"].max()[:7] if len(rq) else ""
+        act = rq[rq["date"] >= f"{cur_m}/01"]["seller_key"].unique()
+        # سرپرستان همین ماه در کارآمد و در «لیست ویزیتور و سرپرست» (کسی که قبلاً سرپرست بوده و حالا ویزیتور است،
+        # مثل محمدرضا سلطانی کرمان، ویزیتور است). نام سرپرست با همه کلمه‌هایش در نام فروشنده: «مهدی سرشار» ← «مهدی آقا سرشار»
+        sup_names = {}
+        now = hyb[hyb["date"] >= f"{cur_m}/01"]
+        pairs = list(now[["branch", "supervisor"]].dropna().drop_duplicates().itertuples(index=False)) + list(supervisors or [])
+        for b, sv in pairs:
+            n = re.sub(r"\s*-\s*تهران\s+(شرق|غرب)$", "", _clean_name(sv))
+            if len(n.replace(" ", "")) >= 4:
+                sup_names.setdefault(_norm(b), set()).add(n)
+        is_sup = lambda b, s: any(_name_fits(n, s) for n in sup_names.get(_norm(b), ()))  # noqa: E731
+        for k in act:
+            if k in tmap or k not in info.index:
+                continue
+            r = info.loc[k]
+            tg = tt.get(tier(r["branch"]))
+            if tg is None or "دفتر" in _norm(r["seller"]) or is_sup(r["branch"], r["seller"]):
+                continue
+            people.append({"seller_key": k, "target": tg, "branch": r["branch"], "tier": tier(r["branch"]),
+                           "seller": nm(r["seller"]), "seller_code": str(r["seller_code"]), "supervisor": r["supervisor"],
+                           "file_name": "", "loose": False, "auto": True})
     days = sorted(s["date"].unique())
     return {"rows": rows, "people": people, "last_date": days[-1] if days else None}
 
