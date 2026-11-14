@@ -5,7 +5,7 @@
   ویزیت ثبت‌شده (= اسناد درخواست کارآمد)، میانگین فروش روزانه، تخفیف حجمی/نقدی/مدیریتی و درصد تحقق شعبه؛
   با ارزش افزوده (قابل پرداخت)، مثل گزارش توزیع. کالاها همه‌جا به تفکیک «گروه کالا» می‌آیند، نه SKU.
 - صفحه پورسانت (همان پاسخ): «لیست ویزیتور و سرپرست» ماه پایان بازه و تارگت هر ویزیتور. هر ویزیتور/سرپرستی که در
-  لیست آن ماه نیست «غیرفعال» علامت می‌خورد (ردیف رنگی)؛ نفر تازه لیست بدون فروش هم با فروش صفر می‌آید.
+  لیست آن ماه نیست و ۹۰ روز در کارآمد فاکتور یا درخواستی ندارد «غیرفعال» علامت می‌خورد (ردیف رنگی)؛ نفر تازه لیست بدون فروش هم با فروش صفر می‌آید.
   درصد تحقق ویزیتور = فروش ناخالص ماه ÷ تارگت تا امروز (همان صفحه پورسانت)؛ سرپرست = جمع ویزیتورهای تارگت‌دار تیمش.
 - مالی (کارآمد): مانده حساب مشتریان و چک برگشتی هر ویزیتور (visitor_finance)، مانده هر شعبه (sales-network)
   و فاکتورهای توزیع‌شده/نشده هر هیبرید در ماه‌های بازه (توزیع بار).
@@ -25,7 +25,15 @@ from app.services.manager_combined_service import _sales_api
 KINDS = {"visitors": "ویزیتورها", "supervisors": "سرپرست‌ها", "hybrids": "هیبریدها"}
 MAX_PERSON_SHEETS = 40
 INACTIVE = "غیرفعال"
-INACTIVE_FILL = "F4CCCC"   # رنگ ردیف افراد غیرفعال (بیرون از لیست ویزیتور و سرپرست ماه)
+INACTIVE_FILL = "F4CCCC"   # رنگ ردیف افراد غیرفعال
+# غیرفعال = بیرون از لیست ویزیتور و سرپرست ماه و بدون هیچ فاکتور یا درخواستی در کارآمد در این تعداد روز تا پایان بازه
+INACTIVE_DAYS = 90
+INACTIVE_TEXT = f"در لیست ماه نیست و {INACTIVE_DAYS} روز در کارآمد فعالیتی ندارد"
+
+
+def _days_before(jdate: str, days: int) -> str:
+    y, m, d = (int(x) for x in jdate.split("/"))
+    return (jdatetime.date(y, m, d) - jdatetime.timedelta(days=days)).strftime("%Y/%m/%d")
 
 
 def _norm(s: Any) -> str:
@@ -75,7 +83,7 @@ def default_range() -> tuple[str, str]:
 def _status(r: dict) -> str:
     note = f" — {r['roster_note']}" if r.get("roster_note") else ""
     if r.get("inactive"):
-        return f"{INACTIVE} (در لیست ماه نیست)"
+        return f"{INACTIVE} ({INACTIVE_TEXT})"
     if r.get("new_hire"):
         return f"فعال، تازه (اولین فروش {r['new_hire']}، بعد از لیست)"
     if r.get("idle"):
@@ -145,6 +153,11 @@ def load(date_from: str, date_to: str) -> dict[str, Any]:
     for s in people["sellers"] + people["idle"]:   # حساب فروش خود سرپرستِ لیست هم فعال است
         if any(_same_person(s.get("label"), n) for n in listed_sups):
             active_keys.add(str(s.get("key")))
+    # غیرفعال فقط کسی است که در کارآمد هم مدتی فعالیت نداشته: نبودن در لیست ماه به‌تنهایی غیرفعال نمی‌کند
+    cutoff = _days_before(date_to, INACTIVE_DAYS)
+    last_act = people.get("last_activity") or {}
+    sup_last = people.get("supervisor_last_activity") or {}
+    stale = lambda d: not d or d < cutoff  # noqa: E731
     for s in people["sellers"] + people["idle"] + people["listed_idle"]:
         k = str(s.get("key"))
         f = vfin.get(k) or {}
@@ -160,12 +173,13 @@ def load(date_from: str, date_to: str) -> dict[str, Any]:
         fs = first_sale.get(k)
         new = bool(unlisted and base_start and fs and fs >= base_start)
         s["new_hire"] = fs if new else None
-        s["inactive"] = unlisted and not new
+        s["inactive"] = unlisted and not new and stale(last_act.get(k))
         s["status"] = _status(s)
     for s in people["supervisors"]:
         s["inactive"] = (has_roster and _bkey(s.get("branch")) in roster_branches
-                         and not any(_same_person(s.get("label") or s.get("key"), n) for n in listed_sups))
-        s["status"] = f"{INACTIVE} (در لیست ماه نیست)" if s["inactive"] else "فعال"
+                         and not any(_same_person(s.get("label") or s.get("key"), n) for n in listed_sups)
+                         and stale(sup_last.get(str(s.get("key")))))
+        s["status"] = f"{INACTIVE} ({INACTIVE_TEXT})" if s["inactive"] else "فعال"
     return {"people": people, "branch_debt": branch_debt, "has_roster": has_roster}
 
 
@@ -701,7 +715,7 @@ def build(kind: str, date_from: str | None = None, date_to: str | None = None, c
         if not _visitor_sheets(book, products, rows, brands):
             book.sheet("عملکرد ویزیتورها", VISITOR_COLS, rows,
                        f"عملکرد ویزیتورها {date_from} تا {date_to} — بیش از {MAX_PERSON_SHEETS} ویزیتور؛ برای کارت جدای هر نفر "
-                       "هیبرید یا سرپرست را محدود کنید. ردیف رنگی = غیرفعال (در لیست ویزیتور و سرپرست ماه نیست)")
+                       "هیبرید یا سرپرست را محدود کنید. ردیف رنگی = غیرفعال (در لیست ماه نیست و ۹۰ روز در کارآمد فعالیتی ندارد)")
         book.sheet("ریز گروه کالا", GROUP_COLS, _groups(products, rows), "فروش هر ویزیتور به تفکیک گروه کالا در بازه")
         book.sheet("ریز برند", BRAND_COLS, _groups(brands, rows), "فروش هر ویزیتور به تفکیک برند در بازه")
         _customer_sheet(book, rows)

@@ -662,7 +662,13 @@ def report_people(req: Request):
     roster = recent.groupby("seller_key", observed=True).agg(label=("seller", "last"), supervisor=("supervisor", "last"),
                                                             branch=("branch", "last"), seller_code=("seller_code", "last"),
                                                             last_date=("date", "max")).reset_index().rename(columns={"seller_key": "key"})
-    return {"date_from": f.get("date_from"), "date_to": f.get("date_to"), "ach_month": ach_month, "kpis": A.kpis(tx, rq, c, f),
+    # آخرین فعالیت هر ویزیتور و سرپرست در کارآمد (فاکتور یا درخواست، تا پایان بازه): مبنای فعال/غیرفعال در اکسل‌ها
+    reqs = STATE["data"].get("requests")
+    act = pd.concat([x[["date", "seller_key", "supervisor"]] for x in (allx, reqs) if x is not None], ignore_index=True)
+    act = _with_supervisors(act[act["date"] <= end], sup_of)
+    last_act = {str(k): v for k, v in act.groupby("seller_key", observed=True)["date"].max().items() if isinstance(v, str)}
+    sup_last = {str(k): v for k, v in act.groupby("supervisor", observed=True)["date"].max().items() if isinstance(v, str)}
+    return {"last_activity": last_act, "supervisor_last_activity": sup_last,"date_from": f.get("date_from"), "date_to": f.get("date_to"), "ach_month": ach_month, "kpis": A.kpis(tx, rq, c, f),
             "sellers": pick(sellers), "supervisors": pick(sups), "branches": pick(branches),
             "seller_products": A.records(sku.rename(columns={"seller_key": "key"})),
             "seller_brands": A.records(brd.rename(columns={"seller_key": "key"})),
