@@ -1,71 +1,142 @@
-<div align="center">✦ EXIR Intelligence Platform
-Enterprise data. Actionable intelligence. Smarter decisions.
-An AI-powered command center for finance, sales, treasury, and business operations.
-    
-Overview · Modules · Screenshots · Architecture · Roadmap
-</div>✨ Overview
-EXIR Intelligence Platform brings fragmented enterprise data into one intelligent workspace. It connects ERP and SQL Server systems to operational dashboards, business-rule engines, forecasting services, and AI-assisted analysis — helping teams move from what happened to what needs attention next.
 
-Built around real finance and treasury workflows, the platform is expanding toward a unified view of sales and business operations.
-🧩 What it does
-Area	Highlights
-📊 Management Command Center	KPI dashboards, management summaries, operational alerts, and drill-down views
-💳 Treasury & Finance	Account balances, receipts, payments, issued/received cheques, due dates, and cash/bank movements
-📈 Cash Flow & Forecasting	Expected inflows/outflows, liquidity scenarios, and explainable rule-based estimates
-🤝 Customer & Collections	Customer exposure, overdue balances, payment behavior, and collection prioritization
-🛍️ Sales Intelligence	Sales reporting, customer and product views, and performance analysis
-🔎 Reconciliation & Reports	Bank/ERP reconciliation workflows, exception review, and report viewing
-🤖 AI Assistant	Tool-driven access to validated business data, natural-language explanations, and decision support
+<div align="center">
 
+# ✦ EXIR Intelligence Platform
 
-Design principle: Financial figures are calculated by backend services and explicit business rules. AI agents interpret validated results rather than inventing numbers.
+### Enterprise Data. Actionable Intelligence. Smarter Decisions.
 
-🖥️ Platform preview
-<!-- Add actual screenshots to docs/images/ with the filenames below. Remove these comments once images are uploaded. -->Management dashboard	Treasury intelligence
-	
+**An AI-powered command center for Finance, Treasury, Sales, and Enterprise Operations.**
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white)
+![SQL Server](https://img.shields.io/badge/SQL_Server-CC2927?style=flat-square&logo=microsoftsqlserver&logoColor=white)
+![AI](https://img.shields.io/badge/AI-Powered-8B5CF6?style=flat-square)
+
+**[Overview](#-overview) · [Modules](#-core-modules) · [Screenshots](#-platform-preview) · [Architecture](#-architecture) · [Roadmap](#-roadmap)**
+
+</div>
+
+---
+
+## ✨ Overview
+
+**EXIR Intelligence Platform** transforms fragmented enterprise data into actionable business intelligence.
+
+By connecting ERP systems, Microsoft SQL Server, financial workflows, analytics dashboards, and AI-powered agents, the platform enables organizations to monitor operations, identify risks, and make informed decisions.
+
+> From enterprise data to intelligent decisions.
+
+---
+
+## 🧩 Core Modules
+
+| Module | Capabilities |
+|---|---|
+| 📊 **Management Command Center** | Executive KPIs, management summaries, alerts, and drill-down analytics |
+| 💳 **Finance & Treasury** | Account balances, receipts, payments, cheque tracking, and due dates |
+| 📈 **Cash Flow Forecasting** | Liquidity projections, expected inflows/outflows, and financial scenarios |
+| 🤝 **Customer Intelligence** | Customer balances, payment behavior, overdue accounts, and collection insights |
+| 🛍️ **Sales Intelligence** | Sales performance, customer analysis, and operational reporting |
+| 🔎 **Bank Reconciliation** | Bank statement processing, ERP reconciliation, and exception detection |
+| 🤖 **AI Assistant** | Natural-language interaction with validated enterprise data and business tools |
+
+**Design principle:** Financial calculations are performed through validated backend services and explicit business rules. AI agents provide interpretation and decision support.
+
+---
+
 ## 🖥️ Platform Preview
 
-Explore the EXIR Intelligence Platform through its key modules.
+A visual overview of the platform's core modules.
 
 ### 📊 Management Command Center
+
+Executive dashboards, financial KPIs, business alerts, and management insights.
 
 ![Management Dashboard](docs/images/management-dashboard.svg)
 
 ### 💳 Finance & Treasury Intelligence
 
+Monitor cash positions, payments, receivables, cheques, and financial operations.
+
 ![Treasury Dashboard](docs/images/treasury-dashboard.svg)
 
 ### 📈 Sales Intelligence
 
+Explore sales performance, customer trends, and business analytics.
+
 ![Sales Dashboard](docs/images/sales-dashboard.svg)
 
-###
+### 🤖 AI-Powered Assistant
 
-Sales intelligence	AI assistant
-	
+Ask business questions in natural language and receive explanations grounded in validated data.
 
+![AI Assistant](docs/images/ai-assistant.svg)
 
-<sub>📷 Screenshot slots are placeholders until real application captures are uploaded. Use demo or redacted data only — never expose customer or financial records.</sub>
-🏗️ Architecture
+> **Note:** Preview illustrations are conceptual. Replace them with actual application screenshots when available. Avoid publishing confidential financial or customer information.
+
+---
+
+## 🏗️ Architecture
+
 ```mermaid
-flowchart LR
-    A[Next.js dashboards & AI chat] --> B[FastAPI services]
-    B --> C[Business rules & validated tools]
-    C --> D[SQL Server / ERP / Excel]
-    B --> E[Forecast & risk engines]
-    C --> F[Specialized AI agents]
+flowchart TD
+    A["Next.js / React Frontend"]
+    B["FastAPI Backend"]
+    C["Business Rules & Data Services"]
+    D["SQL Server / ERP / Excel"]
+    E["Forecasting & Risk Analysis"]
+    F["Specialized AI Agents"]
+
+    A --> B
+    B --> C
+    C --> D
+    B --> E
+    C --> F
     E --> F
-    F --> A
+    F --> B
 ```
-Stack: Python · FastAPI · Next.js / React · Microsoft SQL Server · ERP integrations · Excel · LLM tool calling · modular services.
 
-Engineering approach: Read-only enterprise data access where appropriate, deterministic financial calculations, controlled agent tools, and human review for consequential business actions.
-🚀 Roadmap
-Current focus: Treasury dashboards, cheque tracking, customer intelligence, sales views, reconciliation workflows, and explainable forecasts.
+### Technology Stack
 
-Evolving: Automated alerts, historical comparisons, richer agent orchestration, and safer ad-hoc enterprise queries.
+| Layer | Technologies |
+|---|---|
+| Frontend | Next.js, React, JavaScript / TypeScript |
+| Backend | Python, FastAPI |
+| Database | Microsoft SQL Server |
+| Integrations | ERP systems, Excel |
+| Intelligence | LLMs, tool calling, specialized AI agents |
+| Analytics | Financial rules, forecasting, risk analysis |
 
-Long-term vision: Extend the same intelligence layer to warehouse, production, planning, procurement, HR, marketing, and other departments.
-<div align="center">From enterprise data to confident decisions.
-EXIR Intelligence Platform · Built for practical, explainable enterprise AI.
+---
+
+## 🚀 Roadmap
+
+**Current focus**
+- Treasury and finance dashboards
+- Cheque tracking and payment monitoring
+- Customer and sales intelligence
+- Bank reconciliation
+- Explainable cash flow forecasts
+
+**Next steps**
+- Automated management alerts
+- Historical performance comparisons
+- Advanced AI agent orchestration
+- Expanded enterprise analytics
+
+**Long-term vision**
+
+A unified intelligence platform connecting Finance, Sales, Warehouse, Production, Planning, HR, and other enterprise departments.
+
+---
+
+<div align="center">
+
+### ✦ From Enterprise Data to Confident Decisions
+
+**EXIR Intelligence Platform**
+
+*Built for practical, explainable enterprise AI.*
+
 </div>
