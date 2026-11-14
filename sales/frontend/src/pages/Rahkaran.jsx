@@ -6,11 +6,14 @@ import { Chart, HBar, baseOption, useTheme } from '../components/Chart.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { brandColor } from '../brands.js'
 import { MAP_VIEWBOX, MAP_PATHS, BUBBLE_POS } from '../iranMap.js'
+import DayPicker, { isDays, parseDays, daysLabel } from '../components/DayPicker.jsx'
 
 // فروش B2B نمایندگان استانی از راهکاران؛ نمای اصلی معادل شیت Bubble Chart فایل B2B-Sales Report
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']
 export const monthLabel = (m) => `${MONTHS[Number(m.slice(5, 7)) - 1]} ${faDigits(m.slice(0, 4))}`
 const periodLabel = (p) => (p.value === 'YTD' ? `از ابتدای سال ${faDigits(p.label.slice(-4))}` : monthLabel(p.value))
+/** متن دوره: از ابتدای سال، نام ماه یا روزهای انتخابی */
+export const periodText = (p) => (p === 'YTD' ? 'از ابتدای سال' : isDays(p) ? daysLabel(parseDays(p)) : monthLabel(p))
 const money = (v) => (isNum(v) ? `${fmtCompact(v).value} ${fmtCompact(v).unit}` : '—')
 const growthText = (g) => (isNum(g) ? `${g >= 0 ? '▲' : '▼'} ${fmtPct(Math.abs(g))} نسبت به سال قبل` : 'بدون فروش در همین دوره سال قبل')
 /** پارامترهای درخواست؛ مقدار آرایه (مثل product) پارامتر تکراری می‌شود */
@@ -326,10 +329,13 @@ export default function Rahkaran() {
         <div className="rk-controls">
           <label className="unit-select">
             <span className="ms-label">دوره</span>
-            <select value={data.period} onChange={(e) => set({ period: e.target.value === 'YTD' ? null : e.target.value })}>
+            <select value={isDays(data.period) ? 'DAYS' : data.period} onChange={(e) => set({ period: e.target.value === 'YTD' ? null : e.target.value })}>
+              {isDays(data.period) && <option value="DAYS" disabled>روزهای انتخابی</option>}
               {data.periods.map((p) => <option key={p.value} value={p.value}>{periodLabel(p)}</option>)}
             </select>
           </label>
+          <DayPicker value={parseDays(data.period)} today={data.today} dataDays={data.sale_days}
+            onChange={(ds) => set({ period: ds.length ? ds.join(',') : null })} />
           <label className="unit-select">
             <span className="ms-label">برند</span>
             <select value={brand} onChange={(e) => set({ brand: e.target.value })}>
@@ -354,7 +360,7 @@ export default function Rahkaran() {
         {inactive && <InactiveList brand={brand} products={products} unit={unit}
           onCustomer={openCustomer} onClose={() => setInactive(false)} />}
         <Card title="نقشه حبابی فروش خالص استان‌ها" className="span2"
-          subtitle={`اندازه حباب و پررنگی استان = فروش خالص ${data.period === 'YTD' ? 'از ابتدای سال' : monthLabel(data.period)}${mapBrand ? ` برند ${mapBrand}` : ''} (${UNITS[unit].label})؛ برای جزئیات روی استان کلیک کنید`}
+          subtitle={`اندازه حباب و پررنگی استان = فروش خالص ${periodText(data.period)}${mapBrand ? ` برند ${mapBrand}` : ''} (${UNITS[unit].label})؛ برای جزئیات روی استان کلیک کنید`}
           actions={!brand && (
             <div className="rk-brand-chips" role="group" aria-label="برند نمودار حبابی">
               <button className={`chip${mapBrand ? '' : ' on'}`} onClick={() => set({ mbrand: null })}>Total</button>

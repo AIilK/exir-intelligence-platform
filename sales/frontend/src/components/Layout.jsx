@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useApp, useBusy, EMPTY_FILTERS, FILTER_LABELS, UNITS, faDigits } from '../lib.jsx'
 import { MultiSelect, ErrorBoundary } from './ui.jsx'
 import DateRange from './DateRange.jsx'
+import DayPicker from './DayPicker.jsx'
 
 // فروش در دو بخش: کارآمد (شعب هیبرید) و راهکاران (فروش کارخانه به نمایندگان B2B)
 const NAV = [
@@ -54,7 +55,11 @@ function FilterBar() {
   return (
     <div className="filterbar">
       {/* بدون فیلتر تاریخ = ماه جاری */}
-      <DateRange filters={filters} setFilters={setFilters} meta={meta} />
+      <DateRange filters={filters} setFilters={(x) => setFilters({ ...x, days: [] })} meta={meta} daysActive={!!filters.days?.length} />
+      {/* فیلتر روزانه: یک یا چند روز دلخواه؛ جای بازه تاریخ را می‌گیرد */}
+      <DayPicker value={filters.days || []} today={meta.file.today || meta.file.month_to} dataDays={meta.dates}
+        minDate={(meta.file.months || []).filter((m) => m.loaded).slice(-1)[0]?.from}
+        onChange={(ds) => setFilters({ ...filters, days: ds, date_from: '', date_to: '' })} />
       {['branch', 'supervisor', 'seller', 'brand', 'category', 'group', 'city', 'payment', 'inv_type'].map((k) => (
         <MultiSelect key={k} label={FILTER_LABELS[k]} value={filters[k] || []} onChange={(v) => set(k, v)}
           options={{ supervisor: supOpts, seller: sellerOpts, group: groupOpts }[k] || meta.options[k]} />

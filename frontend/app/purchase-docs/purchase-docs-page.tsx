@@ -8,18 +8,14 @@ import { createPortal } from "react-dom";
 import SortTable from "../sort-table";
 import { flashChatTarget, useChatLink, type ChatLink } from "../chatbot/chat-link";
 import "./purchase-docs.css";
+import { shortTomanText } from "../money-unit";
 
 const API = () => `/api/v1/finance`;
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf2 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 2 });
 const fa = (v: number | null | undefined = 0) => nf.format(v || 0);
 const faDigits = (v: string | null | undefined) => String(v || "").replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
-const shortToman = (rial: number | null | undefined) => {
-  const t = Number(rial || 0) / 10, a = Math.abs(t);
-  if (a >= 1e9) return `${nf2.format(Math.round(t / 1e8) / 10)} میلیارد`;
-  if (a >= 1e6) return `${nf.format(t / 1e6)} میلیون`;
-  return nf.format(t);
-};
+const shortToman = (rial: number | null | undefined) => shortTomanText(rial);
 const REFRESH_MS = 5 * 60 * 1000;
 const currentYear = () => Number(new Intl.DateTimeFormat("en-US-u-ca-persian", { year: "numeric" }).formatToParts(new Date()).find((p) => p.type === "year")?.value || 1405);
 

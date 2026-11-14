@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useApp } from '@sales/lib.jsx'
+import { useApp, useSaved } from '@sales/lib.jsx'
 import { useJson, faDigits, n0, pct, signedPct, growth, isNum, moneyText, dayOfYear } from '../data.js'
 import { hybridRows, hybridTotals, yearCompare } from '../model.js'
 import { useSalesSet, NETWORK_URL } from '../hooks.js'
@@ -17,7 +17,7 @@ export default function HybridList() {
   const network = useJson(NETWORK_URL)
   const risk = useHybridRisk()
   const monthly = useJson(`/api/monthly?vat=${vat ? 1 : 0}`)
-  const [q, setQ] = useState('')
+  const [q, setQ] = useSaved('q', '')
   const rows = useMemo(() => (network.data && S.cur.data
     ? hybridRows({ network: network.data, salesCur: S.cur.data, salesPrev: S.prev.data, ytd: S.ytd.data, ytdPrev: S.ytdPrev.data, fullPrev: S.fullPrev.data, today: P?.today })
     : null), [network.data, S.cur.data, S.prev.data, S.ytd.data, S.ytdPrev.data, S.fullPrev.data, P?.today])
@@ -80,7 +80,7 @@ export default function HybridList() {
       </div>
 
       <Card title={`همه هیبریدها (${n0(shown?.length ?? 0)})`}
-        sub={P ? `روی عنوان هر ستون بزنید تا مرتب شود · مبالغ به میلیون تومان · دوره وصول بالای ۷۵ روز «توجه» و بالای ۱۲۰ روز «بحرانی»` : ''}
+        sub={P ? `روی عنوان هر ستون بزنید تا مرتب شود · مبالغ به واحد انتخابی بالای صفحه · دوره وصول بالای ۷۵ روز «توجه» و بالای ۱۲۰ روز «بحرانی»` : ''}
         action={<label className="u-search"><span>جستجو</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="نام هیبرید یا هیبرید من…" /></label>}>
         {!shown ? <Pending state={network.error ? network : S.cur} label="هیبریدها" height={300} /> : <HybridTable rows={shown} prevLabel={P?.prevLabel} year={Y?.year} />}
       </Card>

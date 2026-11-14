@@ -9,18 +9,14 @@ import ChequeStatusDrawer, { type ChequeStatusKind } from "./cheque-status-drawe
 import { PeekContext, PeekPanel, usePeek, type Peek } from "./peek-panel";
 import { ChartCard, DivergingRows, FlowCompare, MonthBars, NetWeeks, PALETTE, StackBar } from "./mini-charts";
 import "./executive-overview.css";
+import { shortTomanText } from "../money-unit";
 
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number | null | undefined = 0) => nf.format(v || 0);
 const fullToman = (rial: number | null | undefined) => nf.format(Math.round(Number(rial || 0) / 10));
 /** ریال ← «۱۲٫۳ میلیارد» تومان */
-const shortToman = (rial: number | null | undefined) => {
-  const t = Number(rial || 0) / 10, a = Math.abs(t);
-  if (a >= 1e9) return `${nf1.format(t / 1e9)} میلیارد`;
-  if (a >= 1e6) return `${nf.format(t / 1e6)} میلیون`;
-  return nf.format(t);
-};
+const shortToman = (rial: number | null | undefined) => shortTomanText(rial);
 const faDigits = (v: string | null | undefined) => String(v || "").replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 async function getJson(url: string) {
   const r = await fetch(url);

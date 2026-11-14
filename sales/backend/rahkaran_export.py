@@ -332,5 +332,7 @@ def month_rial(snap: dict, month: str) -> dict:
         g = pd.DataFrame({"key": d[col].fillna(RS.OTHER), "usd": d["net"], "rial": rial}).groupby("key")[["usd", "rial"]].sum()
         g = g[g["rial"] != 0].sort_values("rial", ascending=False).head(limit)
         return [{"key": str(k), "net_usd": float(r.usd), "net_rial": float(r.rial)} for k, r in g.iterrows()]
+    gross_rial = d["gross"] * d["rial_rate"]  # ناخالص = InvoiceItem.Price (پیش از تخفیف)
     return {"month": month, "net_usd": float(d["net"].sum()), "net_rial": float(rial.sum()),
+            "gross_usd": float(d["gross"].sum()), "gross_rial": float(gross_rial.sum()),
             "countries": by("country"), "customers": by("short"), "today": snap["today"]}

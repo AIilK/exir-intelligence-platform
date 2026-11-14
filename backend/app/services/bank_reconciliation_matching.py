@@ -68,7 +68,7 @@ def _cheque_serial_matches(
         token
         for token in re.findall(r"\d{5,}", str(transaction.get("item_number") or ""))
         if len(token) <= 20
-    }
+    } | _transaction_cheque_serials(transaction)
     return any(token in bank_text for token in item_tokens)
 
 
@@ -109,9 +109,14 @@ def _transaction_cheque_serials(transaction: dict[str, Any]) -> set[str]:
         "issued_cheque_status",
     }:
         return set()
+    item_number = str(transaction.get("item_number") or "").translate(_PERSIAN_DIGITS)
+    tokens = set(re.findall(r"\d+", item_number))
+    # بعضی سریال‌ها در راهکاران با ممیز ثبت شده‌اند («605039/31») و بانک همان را
+    # یکجا می‌نویسد («60503931»)؛ دو بخش کنار هم هم نامزد سریال است.
+    tokens |= {left + right for left, right in re.findall(r"(\d+)\s*/\s*(\d+)", item_number)}
     return {
         token.lstrip("0")
-        for token in re.findall(r"\d+", str(transaction.get("item_number") or ""))
+        for token in tokens
         if 5 <= len(token.lstrip("0")) <= 12
     }
 

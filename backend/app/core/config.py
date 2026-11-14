@@ -74,6 +74,26 @@ class Settings(BaseSettings):
     karamad_excel_min_file_age_seconds: int = 30
 
     # =====================================================
+    # WHATSAPP (WAHA روی همین سرور؛ app/services/whatsapp)
+    # =====================================================
+    # کلید اصلی: تا true نشود هیچ پیامی ارسال و هیچ قاعده‌ای خودکار اجرا نمی‌شود.
+    whatsapp_enabled: bool = False
+    waha_url: str = "http://127.0.0.1:3010"
+    waha_api_key: str = ""
+    waha_session: str = "default"
+    whatsapp_db: str = "./data/whatsapp.db"
+    staff_contracts_db: str = "./data/staff_contracts.db"  # قراردادهای همکاران (ماژول contracts)
+    # حالت آزمایشی: اگر پر باشد همه پیام‌ها فقط به همین شماره می‌رود (نه به مشتری/ویزیتور).
+    whatsapp_test_phone: str = ""
+    # فاصله تصادفی بین دو پیام و سقف روزانه، برای کم کردن خطر بسته شدن شماره
+    whatsapp_min_delay_seconds: int = 8
+    whatsapp_max_delay_seconds: int = 20
+    whatsapp_daily_limit: int = 300
+    # فقط در این بازه ساعت (به وقت تهران) پیام فرستاده می‌شود
+    whatsapp_send_from_hour: int = 8
+    whatsapp_send_to_hour: int = 21
+
+    # =====================================================
     # SETTINGS
     # =====================================================
 

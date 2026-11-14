@@ -357,6 +357,51 @@ class ReconciliationAgent(PageAgent):
         }
 
 
+class ContractsAgent(PageAgent):
+    key = "contracts"
+    page = "قراردادهای همکاران"
+    name = "Staff Contracts Agent"
+    role_fa = "یک هفته مانده به پایان قرارداد هر همکار الارم می‌دهد؛ قرارداد تمام‌شده و تمدیدنشده بحرانی است"
+    tracked_metrics = {"ended": "قرارداد تمام‌شده", "week": "یک هفته مانده"}
+    primary_metric = "week"
+    primary_unit = "count"
+
+    def collect(self):
+        from app.services.staff_contracts import ContractsStore
+
+        data = ContractsStore().summary()
+        return {"metrics": {**data["counts"], "total": data["total"]}, "contracts": data["contracts"], "today": data["today_jalali"]}
+
+    def rules(self, data, memory, deltas):
+        alerts = []
+        for c in data["contracts"]:
+            who = f"{c['name']}" + (f" (هیبرید {c['hybrid']})" if c["hybrid"] else "")
+            end = c["end_date"].translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
+            ev = [{"label": "تاریخ پایان", "value": end}, {"label": "روز باقی‌مانده", "value": fa_number(c["days_left"])}]
+            if c["status"] == "week":
+                when = "امروز" if c["days_left"] == 0 else f"{fa_number(c['days_left'])} روز دیگر"
+                alerts.append(alert("contract_ending", "high", f"قرارداد {who} {when} تمام می‌شود",
+                                    [f"تاریخ پایان قرارداد {end} است.", "یک هفته یا کمتر تا پایان قرارداد مانده است."],
+                                    "درباره تمدید یا پایان همکاری تصمیم بگیرید و تاریخ تازه را در صفحه «قراردادهای همکاران» ثبت کنید.",
+                                    entity_ref=f"contract:{c['id']}", evidence=ev, metric=c["days_left"]))
+        # قراردادهای تمام‌شده بدون تاریخ تازه: یک الارم جمع (نه یکی برای هر نفر) تا مرکز الارم شلوغ نشود
+        ended = [c for c in data["contracts"] if c["status"] == "ended"]
+        if ended:
+            names = "، ".join(f"{c['name']}" + (f" ({c['hybrid']})" if c["hybrid"] else "") for c in ended[:6])
+            alerts.append(alert("contracts_ended", "medium", f"{fa_number(len(ended))} قرارداد تمام شده و تاریخ تمدیدش ثبت نشده",
+                                [names + ("، …" if len(ended) > 6 else ""), "اگر تمدید شده‌اند تاریخ پایان جدید ثبت نشده است."],
+                                "تاریخ پایان قراردادهای تمدیدشده را در صفحه «قراردادهای همکاران» به‌روز کنید.",
+                                entity_ref="contracts:ended", metric=len(ended)))
+        m = data["metrics"]
+        return {
+            "headline": f"{fa_number(m['week'])} قرارداد تا یک هفته دیگر و {fa_number(m['ended'])} قرارداد تمام‌شده بدون تمدید.",
+            "summary": f"از {fa_number(m['total'])} قرارداد ثبت‌شده، {fa_number(m['month'])} قرارداد کمتر از یک ماه وقت دارد.",
+            "good_signals": [], "risks": [a["title"] for a in alerts],
+            "recommended_actions": [], "next_best_action": "تاریخ قراردادهای تمدیدشده در صفحه «قراردادهای همکاران» به‌روز شود.",
+            "alerts": alerts, "predictions": [],
+        }
+
+
 # ============================================================= wrapped agents
 class LegacyWrappedAgent(PageAgent):
     """بررسی الارم ماژول‌هایی که اعدادشان از سرویس‌های قدیمی (ctx) می‌آید: فقط extra() (قواعد) اجرا می‌شود.
@@ -683,5 +728,5 @@ class LiquidityAgent(PageAgent):
 
 
 PAGE_AGENT_CLASSES: list[type[PageAgent]] = [
-    ReceivedChequesAgent, IssuedChequesAgent, CompanyPaymentsAgent, DistributionAgent, ReconciliationAgent, CustomerRiskAgent, CashBankAgent, CollectionAgent, RepresentativeAgentPage, PayablesAgent, LiquidityAgent,
+    ReceivedChequesAgent, IssuedChequesAgent, CompanyPaymentsAgent, DistributionAgent, ReconciliationAgent, CustomerRiskAgent, CashBankAgent, CollectionAgent, RepresentativeAgentPage, PayablesAgent, LiquidityAgent, ContractsAgent,
 ]

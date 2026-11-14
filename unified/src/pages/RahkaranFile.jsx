@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { sendChatLink } from '@finance/chatbot/chat-link.ts'
-import { useJson, qs, mt, n0, pct, signedPct, isNum, faDigits, moneyText, monthName } from '../data.js'
+import { useJson, qs, mt, n0, pct, signedPct, isNum, faDigits, moneyText, monthName, mtLabel } from '../data.js'
 import { Card, Pending, Bar, Kpi, Money, PairBars, Mt } from '../ui.jsx'
 import { PORTFOLIO_URL, finFacts, repRisk, REP_RISK } from '../rahkaran.js'
 import { useAiAnalysis, AiAnalysisPanel } from '../aiAnalysis.jsx'
@@ -206,7 +206,7 @@ function SalesTab({ sales, periodLabel, f, go, openSales }) {
         </div>
       </div>
       <div className="u-grid2">
-        <Card title="کالاها" sub={`فروش خالص ${periodLabel} · میلیون تومان`}>
+        <Card title="کالاها" sub={`فروش خالص ${periodLabel} · ${mtLabel()}`}>
           {!sales.data ? <Pending state={sales} label="کالاها" height={200} /> : (
             <div className="u-table-wrap">
               <table className="u-table">
@@ -222,7 +222,7 @@ function SalesTab({ sales, periodLabel, f, go, openSales }) {
             </div>
           )}
         </Card>
-        <Card title="فاکتورها، برگشتی‌ها و درخواست‌ها" sub={`${periodLabel} · میلیون تومان`}>
+        <Card title="فاکتورها، برگشتی‌ها و درخواست‌ها" sub={`${periodLabel} · ${mtLabel()}`}>
           {!sales.data ? <Pending state={sales} label="فاکتورها" height={200} /> : (
             <div className="u-table-wrap">
               <table className="u-table">
@@ -263,7 +263,7 @@ function ChequesCard({ cheques, ref_, finMissing, portfolio, nav }) {
         </div>
         <div className="u-table-wrap">
           <table className="u-table">
-            <thead><tr><th>سررسید</th><th>زمان</th><th>شماره چک</th><th>مبلغ<small>میلیون تومان</small></th><th>اتکا</th><th>محل نگهداری</th><th>ثبت</th></tr></thead>
+            <thead><tr><th>سررسید</th><th>زمان</th><th>شماره چک</th><th>مبلغ<small>{mtLabel()}</small></th><th>اتکا</th><th>محل نگهداری</th><th>ثبت</th></tr></thead>
             <tbody>
               {rows.slice(0, 300).map((x) => (
                 <tr key={x.cheque_id}>
@@ -296,7 +296,7 @@ function InvoicesCard({ file, finMissing, portfolio, limit, action, open }) {
         {!d ? <Pending state={file.error ? file : portfolio} label="فاکتورها" height={160} /> : (
           <div className="u-table-wrap">
             <table className="u-table">
-              <thead><tr><th>شماره</th><th>تاریخ</th><th>مبلغ<small>میلیون تومان</small></th><th>وصول‌شده</th><th>مانده<small>میلیون تومان</small></th></tr></thead>
+              <thead><tr><th>شماره</th><th>تاریخ</th><th>مبلغ<small>{mtLabel()}</small></th><th>وصول‌شده</th><th>مانده<small>{mtLabel()}</small></th></tr></thead>
               <tbody>
                 {last.map((x) => (
                   <tr key={x.invoice_id}>
@@ -315,7 +315,7 @@ function InvoicesCard({ file, finMissing, portfolio, limit, action, open }) {
         <Card title={`فاکتورهای باز (${n0(d.open_invoices?.length)})`} sub="فاکتورهایی که مانده حساب به آن‌ها تخصیص یافته است">
           <div className="u-table-wrap">
             <table className="u-table">
-              <thead><tr><th>شماره</th><th>تاریخ</th><th>سن</th><th>مبلغ<small>میلیون تومان</small></th><th>مانده<small>میلیون تومان</small></th></tr></thead>
+              <thead><tr><th>شماره</th><th>تاریخ</th><th>سن</th><th>مبلغ<small>{mtLabel()}</small></th><th>مانده<small>{mtLabel()}</small></th></tr></thead>
               <tbody>
                 {(d.open_invoices || []).map((x) => (
                   <tr key={x.invoice_id}>

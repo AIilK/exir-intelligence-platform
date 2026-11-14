@@ -160,6 +160,16 @@ MODULES: dict[str, dict[str, Any]] = {
         "alarm_agents": ["reconciliation"],
         "chat_tools": [],
     },
+    "contracts": {
+        # تاریخ پایان قرارداد همکاران و الارم یک هفته مانده (app/services/staff_contracts.py)
+        "title": "قراردادهای همکاران",
+        "group": "system", "views": [], "alarm_agents": ["contracts"], "chat_tools": [],
+    },
+    "whatsapp": {
+        # ارسال خودکار بدهی، چک‌های پیش‌رو و اکسل ویزیتورها با واتساپ (app/services/whatsapp)
+        "title": "ارسال واتساپ",
+        "group": "system", "views": ["whatsapp"], "alarm_agents": [], "chat_tools": [],
+    },
     "chatbot": {
         # اجازه استفاده از دستیار هوشمند؛ داده‌ای که جواب می‌دهد همچنان به ماژول‌های دیگر همین کاربر محدود است.
         "title": "دستیار هوشمند (چت‌بات)",
@@ -175,6 +185,8 @@ COMMON_VIEWS = ["alerts"]
 # «admin» یعنی فقط مدیر سیستم (اجرای دستی همه Agentها).
 API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/chatbot", ("chatbot",)),
+    ("/api/v1/whatsapp", ("whatsapp",)),
+    ("/api/v1/finance/contracts", ("contracts",)),
     ("/api/v1/finance/agents/run-all", ("admin",)),
     ("/api/v1/finance/payables", ("payables", "management")),
     ("/api/v1/finance/pnl", ("pnl",)),

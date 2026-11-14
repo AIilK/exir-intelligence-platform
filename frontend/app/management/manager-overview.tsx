@@ -11,18 +11,14 @@ import { ChartCard, FlowCompare, MonthBars, NetWeeks, PALETTE, StackBar } from "
 import { Stat, peekRows } from "./executive-overview";
 import "./executive-overview.css";
 import "./manager-overview.css";
+import { shortTomanText } from "../money-unit";
 
 const FIN = () => `/api/v1/finance`;
 const LIQ = () => `/api/v1/liquidity`;
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number | null | undefined = 0) => nf.format(v || 0);
-const shortToman = (rial: number | null | undefined) => {
-  const t = Number(rial || 0) / 10, a = Math.abs(t);
-  if (a >= 1e9) return `${nf1.format(t / 1e9)} میلیارد`;
-  if (a >= 1e6) return `${nf.format(t / 1e6)} میلیون`;
-  return nf.format(t);
-};
+const shortToman = (rial: number | null | undefined) => shortTomanText(rial);
 const faDigits = (v: unknown) => String(v ?? "").replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 const pct = (a: unknown, b: unknown) => (Number(b || 0) ? Math.round((100 * Number(a || 0)) / Number(b)) : 0);
 const MONTHS = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"];
@@ -220,10 +216,58 @@ function Ring({ value, label, sub, color, onClick }: { value: number | null; lab
 }
 
 /** یک گره درخت ریز شاخص: مبلغ به ریال؛ children = جزء بعدی؛ go = صفحه مرتبط (view مالی یا مسیر یکپارچه) */
-type DNode = { key: string; label: string; value: number | null; note?: string; go?: string; count?: number; children?: DNode[] };
+/** file = پرونده همان شخص/شعبه (مسیر داشبورد یکپارچه)؛ کنار ردیف دکمه «پرونده» می‌گیرد */
+type DNode = { key: string; label: string; value: number | null; note?: string; go?: string; file?: string; count?: number; children?: DNode[] };
+
+/** راهنمای هر شاخص: از کجا می‌آید، چه چیزی داخلش هست و چه چیزی نیست */
+type Guide = { source: string; includes: string[]; excludes?: string[] };
+const GUIDES: Record<string, Guide> = {
+  tin: { source: "راهکاران: رسیدهای دریافت تأییدشده امروز (صندوق و بانک). کارآمد: واریزهای حواله و نقد امروز با شعبه و مشتری.",
+    includes: ["نقد و حواله مشتریان", "پولی که بابت چک برگشتی واریز شده", "پول خریداران مواد اولیه", "چکی که وصول‌کننده نقد کرده و به حساب ریخته"],
+    excludes: ["چک‌هایی که امروز گرفته شده ولی هنوز وصول نشده", "جابه‌جایی پول بین حساب‌های خود شرکت", "پول شرکا و تسویه کالای هیبریدها با شرکت", "رسید راهکاران که هنوز تأیید نشده"] },
+  tpay: { source: "چک‌های پرداختی باز راهکاران و کارآمد که سررسیدشان امروز است.",
+    includes: ["چک‌های سررسید امروز", "در جزئیات: چک‌هایی که سررسیدشان گذشته و هنوز پاس نشده"], excludes: ["چک‌هایی که پاس شده‌اند"] },
+  sales: { source: "کارآمد: فاکتورهای همه شعب. راهکاران: فروش نمایندگان B2B و فروش صادراتی (معادل ریالی با نرخ سند).",
+    includes: ["فروش این ماه از روز اول تا امروز", "بعد از کم شدن تخفیف‌ها و برگشتی‌ها"], excludes: ["مالیات بر ارزش افزوده", "سفارش‌هایی که هنوز فاکتور نشده‌اند"] },
+  gross: { source: "همان فاکتورهای فروش خالص، به قیمت فاکتور پیش از تخفیف.",
+    includes: ["فروش ماه به قیمت پیش از تخفیف", "صادرات به قیمت فاکتور (Price)"], excludes: ["تخفیف‌ها و برگشتی‌ها هنوز کم نشده‌اند"] },
+  openreq: { source: "درخواست‌های فروش ثبت‌شده در کارآمد در این ماه.",
+    includes: ["درخواست‌هایی که هنوز به فاکتور تبدیل نشده‌اند"], excludes: ["راهکاران", "درخواست‌هایی که فاکتور شده‌اند"] },
+  coll: { source: "کارآمد: وصول فاکتورهای همین ماه شعب (گزارش توزیع). راهکاران: رسیدهای نقد و حواله تأییدشده روی حساب‌های دریافتنی مشتریان.",
+    includes: ["شعب کارآمد: پولی که بابت فاکتورهای همین ماه گرفته شده", "نمایندگان B2B: کد ۷xxxxx تا ۹xxxxx، شامل پرداخت بابت چک برگشتی (معین ۱)", "صادرات: دریافت دلاری روی معین ارزی ۱۲۳۰۱۰", "سایر: بقیه دریافت‌های حساب‌های مشتری"],
+    excludes: ["چک‌ها (تا وصول نشده‌اند در بخش چک‌ها هستند)", "فروش مواد اولیه (باکس «وصولی مواد اولیه»)", "تسویه کالای هیبریدها با شرکت", "پول شرکا"] },
+  raw: { source: "رسیدهای نقد و حواله راهکاران روی معین ۱۲۴۰۴۶ «دریافتنی غیر رسمی (مواد اولیه)» و خریداران مواد روی حساب‌های دریافتنی.",
+    includes: ["هر دریافت از خریداری که نامش «مواد» دارد و نماینده نیست"], excludes: ["فروش محصول", "چک"] },
+  fut: { source: "چک‌های دریافتی باز راهکاران و کارآمد که سررسیدشان در ۱۲ ماه آینده است.",
+    includes: ["چک‌های نزد صندوق، بانک و وصول‌کننده", "احتمال وصول هر مشتری از سابقه چک‌هایش"], excludes: ["چک‌هایی که سررسیدشان گذشته (باکس تعیین تکلیف نشده)", "چک‌های برگشتی"] },
+  open: { source: "راهکاران: همان عدد صفحه «پرونده مشتری» (مانده حساب و حساب چک برگشتی). کارآمد: مانده دفتر کل مشتریان شعب.",
+    includes: ["فاکتورهایی که نه پولشان رسیده نه چکشان", "چک‌های برگشتی تسویه‌نشده نمایندگان", "در کارآمد چک برگشتی داخل همان مانده است"], excludes: ["چک‌های در دست که هنوز سررسید نشده (باکس چک‌های آینده)"] },
+  und: { source: "چک‌های دریافتی که سررسیدشان گذشته و هیچ وضعیت نهایی ندارند.",
+    includes: ["راهکاران: هر وضعیتی غیر از واخواست", "کارآمد: هر وضعیتی غیر از برگشتی نزد مشتری/صندوق"], excludes: ["چک‌های وصول‌شده", "چک‌های برگشتی (باکس جدا)"] },
+  ret: { source: "چک‌های دریافتی با وضعیت برگشتی، از ابتدای ۱۴۰۵.",
+    includes: ["راهکاران: چک‌های واخواست‌شده", "کارآمد: برگشتی نزد مشتری و نزد صندوق"], excludes: ["چک‌های برگشتی که بعداً تسویه شده‌اند"] },
+  iss: { source: "چک‌های پرداختی باز راهکاران و کارآمد با سررسید ۳۰ روز آینده.",
+    includes: ["همه چک‌هایی که باید در این یک ماه پاس شوند"], excludes: ["چک‌های سررسیدگذشته (در «امروز باید پرداخت کنی»)"] },
+  pay: { source: "مانده بستانکار تأمین‌کنندگان در راهکاران (معین‌های پرداختنی) و چک‌های پرداختی باز.",
+    includes: ["چک‌های داده‌شده که هنوز پاس نشده‌اند (آینده و سررسیدگذشته)", "خریدهایی که هنوز چکی بابتشان داده نشده"], excludes: ["پیش‌پرداخت‌ها (بدهی نیستند)"] },
+  paync: { source: "مانده بستانکار تأمین‌کنندگان تجاری و غیرتجاری در راهکاران.",
+    includes: ["فاکتور خرید که نه پولش داده شده نه چکش"], excludes: ["چک‌های داده‌شده (باکس بدهی به تأمین‌کنندگان)", "پیش‌پرداخت‌ها"] },
+  gp: { source: "صورت سود و زیان زنده هر کانال: فروش منهای بهای تمام‌شده کالای فروخته‌شده.",
+    includes: ["سه کانال هیبرید، B2B و صادرات", "حاشیه با بهای واقعی و با بهای استاندارد"], excludes: ["هزینه‌های اداری و فروش"] },
+  slow: { source: "تحلیل SQL روی سه ماه اخیر.", includes: ["روندهایی که کند یا بد شده‌اند، به ترتیب اولویت"] },
+};
+const HOW_TO_READ = [
+  "هر ردیف یک تکه از عدد بالاست؛ درصد کنار مبلغ، سهم آن تکه از کل است.",
+  "نوار رنگی بالای فهرست همان سهم‌ها را با رنگ هر ردیف نشان می‌دهد.",
+  "ردیف با علامت › یک مرحله جزئی‌تر می‌شود؛ ↗ یعنی رفتن به صفحه کامل آن.",
+  "برای برگشتن روی نام مرحله‌های بالا بزنید یا Esc را بزنید.",
+  "همه مبالغ به تومان‌اند.",
+];
 
 /** پنل ریز شاخص: کل ← اجزا ← جزئیات (هر سطح با انیمیشن باز می‌شود) و در هر سطح رفتن به صفحه مرتبط */
-function DrillPanel({ root, path, setPath, go }: { root: DNode; path: string[]; setPath: (p: string[] | null) => void; go: (v: string) => void }) {
+function DrillPanel({ root, path, setPath, go, about, guide }: { root: DNode; path: string[]; setPath: (p: string[] | null) => void; go: (v: string) => void; about?: string; guide?: Guide }) {
+  const [help, setHelp] = useState<boolean>(() => { try { return localStorage.getItem("mo-guide") === "1"; } catch { return false; } });
+  const toggleHelp = () => setHelp((h) => { try { localStorage.setItem("mo-guide", h ? "0" : "1"); } catch { /* حالت خصوصی */ } return !h; });
   const trail: DNode[] = [root];
   for (const k of path.slice(1)) {
     const next = trail[trail.length - 1].children?.find((c) => c.key === k);
@@ -234,39 +278,64 @@ function DrillPanel({ root, path, setPath, go }: { root: DNode; path: string[]; 
   const kids = (node.children || []).filter((c) => c.value !== 0);
   const max = Math.max(1, ...kids.map((c) => Math.abs(Number(c.value || 0))));
   const total = kids.reduce((x, c) => x + Math.max(0, Number(c.value || 0)), 0);
+  // درصد فقط وقتی اجزا تکه‌های همان کل‌اند (نه چند تفکیک موازی از یک عدد)
+  const additive = node.value == null || total <= Math.abs(Number(node.value)) * 1.02;
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setPath(path.length > 1 ? path.slice(0, -1) : null); };
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [path, setPath]);
-  return <section className="mo-drill" aria-label={`ریز ${root.label}`}>
+  const share = (v: number | null | undefined) => (v != null && v > 0 ? (100 * v) / Math.max(total, Math.abs(Number(node.value || 0))) : 0);
+  return <section className="mo-drill" aria-label={`ریز ${root.label}`} style={{ "--depth": trail.length - 1 } as CSSProperties}>
     <header className="mo-drill-head">
       <nav className="mo-drill-crumbs" aria-label="مسیر">
         {trail.map((n, i) => <span key={n.key}>{i > 0 && <i aria-hidden>‹</i>}
           <button type="button" disabled={i === trail.length - 1} onClick={() => setPath(path.slice(0, i + 1))}>{n.label}</button></span>)}
       </nav>
+      <button type="button" className={`mo-drill-help ${help ? "on" : ""}`} onClick={toggleHelp} aria-expanded={help}>؟ راهنما</button>
+      <span className="mo-drill-steps" aria-label={`مرحله ${fa(trail.length)}`}>{trail.map((n, i) => <i key={n.key} className={i === trail.length - 1 ? "on" : ""} />)}</span>
       <button type="button" className="mo-drill-x" onClick={() => setPath(null)} aria-label="بستن">✕</button>
     </header>
+    {about && trail.length === 1 && !help && <p className="mo-drill-about">{about}</p>}
+    {help && <div className="mo-guide">
+      {about && <section><h5>این عدد چیست</h5><p>{about}</p></section>}
+      {guide && <section><h5>از کجا می‌آید</h5><p>{guide.source}</p></section>}
+      {guide && <section className="in"><h5>داخلش هست</h5><ul>{guide.includes.map((x) => <li key={x}>{x}</li>)}</ul></section>}
+      {guide?.excludes?.length ? <section className="out"><h5>داخلش نیست</h5><ul>{guide.excludes.map((x) => <li key={x}>{x}</li>)}</ul></section> : null}
+      <section className="how"><h5>چطور بخوانید</h5><ul>{HOW_TO_READ.map((x) => <li key={x}>{x}</li>)}</ul></section>
+    </div>}
     <div className="mo-drill-body" key={path.join("/")}>
       <div className="mo-drill-total">
         <b>{node.value == null ? (node.count != null ? `${fa(node.count)} مورد` : "…") : <CountUp value={node.value / 10} format={(v) => shortToman(v * 10)} />}</b>
         {node.value != null && <small>تومان</small>}
         {node.note && <em>{node.note}</em>}
-        {node.go && <button type="button" className="mo-drill-go" onClick={() => go(node.go!)}>رفتن به صفحه ←</button>}
+        {node.file && <button type="button" className="mo-drill-go file" onClick={() => go(node.file!)}>باز کردن پرونده ←</button>}
+        {node.go && <button type="button" className={`mo-drill-go ${node.file ? "ghost" : ""}`} onClick={() => go(node.go!)}>رفتن به صفحه ←</button>}
       </div>
+      {kids.length > 1 && <div className="mo-drill-stats">
+        <span>{fa(kids.length)} ردیف</span>
+        {kids[0]?.value != null && <span>بزرگ‌ترین: <b>{kids.reduce((a, c) => (Number(c.value || 0) > Number(a.value || 0) ? c : a)).label}</b></span>}
+        {additive && total > 0 && kids.length > 3 && <span>سه‌تای اول <b>{fa(Math.round([...kids].sort((a, b) => Number(b.value || 0) - Number(a.value || 0)).slice(0, 3).reduce((x, c) => x + share(c.value), 0)))}٪</b> کل</span>}
+        {!additive && <span className="alt">این ردیف‌ها چند تفکیک جدا از یک عددند؛ جمعشان با کل برابر نیست</span>}
+      </div>}
+      {additive && total > 0 && kids.length > 1 && <div className="mo-drill-comp" aria-hidden>
+        {kids.map((c, i) => <i key={c.key} title={`${c.label}: ${shortToman(c.value)}`}
+          style={{ "--c": partColor(i), "--w": `${share(c.value)}%`, "--i": i } as CSSProperties} />)}
+      </div>}
       {kids.length === 0 ? <p className="mo-drill-empty">{node.go ? "ریز بیشتری برای این بخش نیست؛ جزئیات کامل در صفحه مربوط است." : "داده‌ای برای نمایش نیست."}</p>
         : <ol className="mo-drill-list">
           {kids.map((c, i) => {
             const deeper = !!c.children?.some((x) => x.value);
             const w = c.value == null ? 0 : (100 * Math.abs(Number(c.value))) / max;
-            return <li key={c.key} style={{ "--i": i, "--w": `${w}%` } as CSSProperties}>
-              <button type="button" onClick={() => (deeper ? setPath([...path, c.key]) : c.go && go(c.go))} disabled={!deeper && !c.go}>
-                <span className="mo-drill-label">{c.label}{c.note && <small>{c.note}</small>}</span>
+            return <li key={c.key} style={{ "--i": i, "--w": `${w}%`, "--c": partColor(i) } as CSSProperties}>
+              <button type="button" onClick={() => (deeper ? setPath([...path, c.key]) : (c.file || c.go) && go((c.file || c.go)!))} disabled={!deeper && !c.go && !c.file}>
+                <span className="mo-drill-label"><span className="mo-drill-name"><em className="mo-drill-rank">{fa(i + 1)}</em><i className="mo-drill-dot" />{c.label}</span>{c.note && <small>{c.note}</small>}</span>
                 <span className="mo-drill-bar"><i /></span>
                 <span className="mo-drill-val">{c.value == null ? "…" : withUnit(shortToman(c.value))}
-                  {total > 0 && c.value != null && c.value > 0 && <small>{fa(Math.round((100 * c.value) / total))}٪</small>}</span>
-                <span className="mo-drill-arrow" aria-hidden>{deeper ? "›" : c.go ? "↗" : ""}</span>
+                  {additive && total > 0 && c.value != null && c.value > 0 && <small>{fa(Math.round(share(c.value)))}٪</small>}</span>
+                <span className="mo-drill-arrow" aria-hidden>{deeper ? "›" : c.file || c.go ? "↗" : ""}</span>
               </button>
+              {c.file && deeper && <button type="button" className="mo-drill-file" onClick={() => go(c.file!)} title={`پرونده ${c.label}`}>پرونده ↗</button>}
             </li>;
           })}
         </ol>}
@@ -274,8 +343,30 @@ function DrillPanel({ root, path, setPath, go }: { root: DNode; path: string[]; 
   </section>;
 }
 
+/** about = این عدد به زبان ساده چیست؛ parts = از چه تکه‌هایی ساخته شده (نوار رنگی)؛ foot = یک نکته کوتاه زیرش */
 type Tile = { key: string; label: string; domain: "مالی" | "فروش" | "روند"; value: number | null; format: (v: number) => string; unit?: string;
-  hint?: ReactNode; tone?: "good" | "watch" | "follow" | "neutral"; target: string; locked?: boolean; error?: string };
+  about?: string; parts?: Part[]; foot?: ReactNode; tone?: "good" | "watch" | "follow" | "neutral"; target: string; locked?: boolean; error?: string };
+
+type Part = { label: string; value: number | null };
+const PART_COLORS = ["#2dd4bf", "#60a5fa", "#a78bfa", "#f472b6", "#fbbf24", "#4ade80"];
+const partColor = (i: number) => (i < PART_COLORS.length ? PART_COLORS[i] : "#64748b");
+
+/** نوار تکه‌های یک عدد: هر تکه با رنگ خودش و سهمش از کل؛ وقتی کارت روشن شد از صفر پر می‌شود */
+function Parts({ parts, run }: { parts: Part[]; run: boolean }) {
+  const pos = parts.map((x) => Math.max(0, Number(x.value || 0)));
+  const sum = pos.reduce((a, b) => a + b, 0);
+  return <span className="mo-parts">
+    <span className="mo-parts-bar" aria-hidden>
+      {parts.map((x, i) => <i key={x.label} className={run ? "in" : ""}
+        style={{ "--c": partColor(i), "--w": sum ? `${(100 * pos[i]) / sum}%` : "0%", "--d": `${150 + i * 140}ms` } as CSSProperties} />)}
+    </span>
+    <span className="mo-parts-legend">
+      {parts.map((x, i) => <span key={x.label} style={{ "--c": partColor(i), "--d": `${250 + i * 110}ms` } as CSSProperties} className={run ? "in" : ""}>
+        <i /><em>{x.label}</em><b>{x.value == null ? "…" : shortToman(x.value)}</b><small>{sum > 0 && x.value != null ? `${fa(Math.round((100 * pos[i]) / sum))}٪` : ""}</small>
+      </span>)}
+    </span>
+  </span>;
+}
 
 export default function ManagerOverview({ go }: { go: (view: string) => void }) {
   const { profile, can, hasModule } = useAuth();
@@ -296,12 +387,15 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
   const network = useLoad(has("sales", "customers") ? `${FIN()}/sales-network` : null);
   const liq = useLoad(has("management", "liquidity") ? `${LIQ()}/summary?horizon_days=30` : null, (j) => j.data);
   const chequesOk = has("management", "cheques", "collections");
-  const rec = useLoad(chequesOk ? `${LIQ()}/received-cheques?horizon_days=30` : null, (j) => j.data);
+  // چک دریافتی: افق ۱۲ ماه (چک‌های آینده)؛ برگشتی و تعیین تکلیف نشده از همان ریز کارت‌های خلاصه مدیریتی
+  const rec = useLoad(chequesOk ? `${LIQ()}/received-cheques?horizon_days=365` : null, (j) => j.data);
+  const stRet = useLoad(chequesOk ? `${LIQ()}/received-cheques/status/returned` : null, (j) => j.data ?? j);
+  const stUnd = useLoad(chequesOk ? `${LIQ()}/received-cheques/status/undetermined` : null, (j) => j.data ?? j);
   const iss = useLoad(chequesOk ? `${LIQ()}/issued-cheques?horizon_days=30` : null, (j) => j.data);
+  const iss365 = useLoad(chequesOk ? `${LIQ()}/issued-cheques?horizon_days=365` : null, (j) => j.data);
   const pay = useLoad(has("management", "payables") ? `${FIN()}/payables` : null, (j) => j.modules);
   // سهم راهکاران (فروش نمایندگان B2B ماه و مطالبات) و وصول نقد و حواله هر دو سیستم، تا هر شاخص جمع راهکاران و کارآمد باشد
   const comb = useLoad(salesOk ? `${FIN()}/manager-combined?year=${cur.year}&month=${cur.month}` : null);
-  const inflAll = useLoad(salesOk ? `${LIQ()}/inflows?base_days=180&channel=all` : null, (j) => j.data);
   const pnlOk = has("pnl");
   const pnlB2b = usePnl("b2b", pnlOk), pnlExp = usePnl("export", pnlOk), pnlHyb = usePnl("hybrid", pnlOk);
   const slowOk = has("management");
@@ -328,18 +422,33 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
   // فروش خالص ماه = کارآمد (همه شعب) + نمایندگان B2B راهکاران + صادرات (معادل ریالی با نرخ اسناد)
   const allNet = net + Number(rkNet || 0) + Number(expNet || 0), allPrevNet = prevNet + Number(rkPrevNet || 0) + Number(expPrevNet || 0);
   const pace = mCur.data && mPrev.data && comb.data && allPrevNet > 0 ? ((allNet / Math.max(1, now.day)) / (allPrevNet / monthDays(prev)) - 1) * 100 : null;
-  // فروش ناخالص ماه (پیش از تخفیف‌ها) = کارآمد + B2B راهکاران + صادرات (صادرات تخفیف جدا ندارد: همان خالص)؛ درخواست باز = فقط کارآمد
+  // فروش ناخالص ماه (پیش از تخفیف‌ها) = کارآمد + B2B راهکاران + صادرات (قیمت پیش از تخفیف)؛ درخواست باز = فقط کارآمد
   const kmCur = comb.data?.karamad?.cur || {};
   const kmGross = kmCur.gross_rial ?? null, rkGross = comb.data?.sales?.cur?.gross_rial ?? null;
-  const allGross = kmGross == null ? null : Number(kmGross) + Number(rkGross || 0) + Number(expNet || 0);
+  const expGross = expCur?.gross_rial ?? expNet;  // ناخالص صادرات = قیمت پیش از تخفیف (InvoiceItem.Price)
+  const allGross = kmGross == null ? null : Number(kmGross) + Number(rkGross || 0) + Number(expGross || 0);
   const openReq = kmCur.open_req_rial ?? null;
-  const curKey = `${cur.year}/${String(cur.month).padStart(2, "0")}`;
-  const rkColl = (inflAll.data?.monthly_trend || []).find((m: any) => m.month === curKey)?.values?.b2b ?? null;
-  const rkDebt = comb.data?.receivables?.open_receivable_rial ?? null;
-  const recBySys = (s2: string) => (rec.data?.overdue?.by_system || []).find((x: any) => x.system === s2)?.definite_rial ?? null;
+  // وصول ماه راهکاران در دو بخش: محصول (نمایندگان، صادرات، سایر مشتریان) و مواد اولیه (backend: manager_combined_service.rahkaran_collections)
+  const rkC = comb.data?.collections, rkProd = rkC?.product, rkRaw = rkC?.raw_material;
+  const rkColl = rkProd?.amount_rial ?? null;
+  // امروز: واریزهای واقعی (comb.today_inflows) و چک‌های پرداختی سررسید امروز
+  const tIn = comb.data?.today_inflows;
+  const tSys = (k: string) => (tIn?.systems || []).find((x: any) => x.key === k);
+  const recToday = rec.data ? Number(rec.data?.kpis?.today?.definite_rial || 0) : null;
+  const issDueToday = (iss.data?.cheques || []).filter((c: any) => c.days_to_due === 0);
+  const issOverdue = (iss.data?.cheques || []).filter((c: any) => c.days_to_due < 0);
+  const issOverdueAmt = issOverdue.reduce((x: number, c: any) => x + Number(c.amount_rial || 0), 0);
+  const seg = (k: string) => (rkProd?.segments || []).find((g: any) => g.key === k)?.amount_rial ?? (rkProd ? 0 : null);
+  // مطالبات باز = مانده حساب و حساب چک برگشتی مشتریان راهکاران (همان عدد «پرونده مشتری») + مانده دفتر کل مشتریان شعب کارآمد
+  const rr = comb.data?.receivables_report;
+  const kmDebt = Number(network.data?.summary?.open_account_receivable_rial || 0);
+  const openRecv = rr && (network.data || network.off) ? Number(rr.balance_rial || 0) + Number(rr.returned_rial || 0) + kmDebt : null;
+  // چک‌های آینده: چک دریافتی سررسیدنشده تا ۱۲ ماه آینده
+  const futCh = rec.data ? Number(rec.data?.kpis?.horizon?.definite_rial || 0) : null;
+  // بدهی تأمین‌کنندگان = مانده بستانکار حساب (خرید بدون چک) + چک‌های پرداختی باز (آینده و سررسیدگذشته)
+  const payBal = pay.data ? Number(pay.data.trade?.credit_balance_rial || 0) + Number(pay.data.nontrade?.credit_balance_rial || 0) : null;
+  const issOpen = iss365.off ? 0 : iss365.data ? Number(iss365.data?.kpis?.horizon?.amount_rial || 0) + Number(iss365.data?.kpis?.overdue?.amount_rial || 0) : null;
   const issBySys = (s2: string) => (iss.data?.horizon_by_system || []).find((x: any) => x.system === s2)?.amount_rial ?? null;
-  /** «راهکاران X · کارآمد Y» زیر هر شاخص ترکیبی */
-  const split = (rk: number | null, km: number | null) => <>راهکاران <b>{rk == null ? "…" : shortToman(rk)}</b> · کارآمد <b>{km == null ? "…" : shortToman(km)}</b></>;
   const t = mCur.data?.totals || {};
   const distPct = mCur.data ? pct(t.distributed_rial, t.sales_rial) : null;
   const collPct = mCur.data ? pct(t.collected_rial, t.distributed_rial) : null;
@@ -349,7 +458,8 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
   const sm = network.data?.summary || {};
   const openAlarms = alarms.filter((a) => a.my_status === "open" || a.my_status === "seen");
   const hot = openAlarms.filter((a) => a.level === "critical" || a.level === "high");
-  const recOverdue = Number(rec.data?.overdue?.definite_rial || 0) + Number(rec.data?.overdue?.other_state_rial || 0);
+  const chan = (c: string) => (rec.data?.by_channel || []).find((x: any) => x.channel === c)?.definite_rial ?? null;
+  const sysAmt = (st: any, label: string) => (st?.by_system || []).find((x: any) => x.label === label)?.amount_rial ?? 0;
   const weeks = useMemo(() => {
     const days: any[] = base?.days || [];
     const out: { label: string; net: number; inflow: number; outflow: number }[] = [];
@@ -394,37 +504,85 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
   const slowItems: any[] = slow.data?.items || [];
 
   // ---------------------------------------------------------------- شاخص‌های شمارنده
+  const P = (label: string, value: number | null | undefined): Part => ({ label, value: value == null ? null : Number(value) });
   const allTiles: Tile[] = [
-    { key: "sales", label: "فروش خالص ماه (همه کانال‌ها)", domain: "فروش", value: mCur.data && comb.data ? allNet / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: <>کارآمد <b>{shortToman(net)}</b> · B2B <b>{rkNet == null ? "…" : shortToman(rkNet)}</b> · صادرات <b>{expNet == null ? "…" : shortToman(expNet)}</b><br />{pace === null ? "در حال مقایسه…" : <span className={pace >= 0 ? "up" : "down"}>{pace >= 0 ? "▲" : "▼"} {nf1.format(Math.abs(pace))}٪ سرعت فروش نسبت به {MONTHS[prev.month - 1]}</span>}</>,
+    { key: "tin", label: "امروز وصول و واریز شد", domain: "مالی", value: tIn ? Number(tIn.amount_rial || 0) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "پول نقد و حواله‌ای که همین امروز واقعاً به حساب‌ها و صندوق ما نشسته؛ چک‌ها جدا شمرده می‌شوند.",
+      parts: tIn ? [P("راهکاران", tSys("rahkaran")?.amount_rial ?? 0), P("کارآمد", tSys("karamad")?.amount_rial ?? 0)] : undefined,
+      foot: tIn ? <>{fa(tIn.count)} واریز
+        {tSys("rahkaran") && !tSys("rahkaran").amount_rial && tSys("rahkaran").last_day_jalali && <> · راهکاران هنوز رسید تأییدشده امروز ندارد</>}
+        {recToday != null && recToday > 0 && <><br />چک سررسید امروز در راه: <b>{shortToman(recToday)}</b></>}</> : null,
+      tone: "good", target: "mo-fin", locked: !salesOk, error: comb.error || (comb.data && !tIn ? "داده واریز امروز نرسید" : "") },
+    { key: "tpay", label: "امروز باید پرداخت کنی", domain: "مالی", value: iss.data ? Number(iss.data?.kpis?.today?.amount_rial || 0) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "چک‌هایی که خودمان داده‌ایم و سررسیدشان امروز است؛ برای پاس شدنشان باید امروز در حساب پول باشد.",
+      foot: iss.data ? <>{fa(iss.data?.kpis?.today?.count)} چک امروز{issOverdueAmt > 0 && <><br />از قبل مانده و پاس‌نشده: <b className="down">{shortToman(issOverdueAmt)}</b> ({fa(issOverdue.length)} چک)</>}</> : null,
+      tone: "follow", target: "mo-fin", locked: !chequesOk, error: iss.error },
+    { key: "sales", label: "فروش خالص ماه", domain: "فروش", value: mCur.data && comb.data ? allNet / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "همه فروش این ماه تا امروز در سه کانال، بعد از کم شدن تخفیف‌ها و برگشتی‌ها.",
+      parts: [P("کارآمد", net), P("نمایندگان B2B", rkNet), P("صادرات", expNet)],
+      foot: pace === null ? "در حال مقایسه با ماه قبل…" : <span className={pace >= 0 ? "up" : "down"}>{pace >= 0 ? "▲" : "▼"} {nf1.format(Math.abs(pace))}٪ سرعت فروش نسبت به {MONTHS[prev.month - 1]}</span>,
       tone: pace === null ? "neutral" : pace >= 0 ? "good" : "watch", target: "mo-sales", locked: !salesOk, error: mCur.error || comb.error },
-    { key: "gross", label: "فروش ناخالص ماه (همه کانال‌ها)", domain: "فروش", value: allGross == null ? null : allGross / 10, format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: <>کارآمد <b>{shortToman(kmGross)}</b> · B2B <b>{rkGross == null ? "…" : shortToman(rkGross)}</b> · صادرات <b>{expNet == null ? "…" : shortToman(expNet)}</b><br />{allGross ? <>تخفیف و برگشت تا خالص: <b>{fa(pct(allGross - allNet, allGross))}٪</b></> : "پیش از تخفیف‌ها"}</>,
+    { key: "gross", label: "فروش ناخالص ماه", domain: "فروش", value: allGross == null ? null : allGross / 10, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "فروش این ماه به قیمت فاکتور، پیش از کم شدن تخفیف‌ها و برگشتی‌ها.",
+      parts: [P("کارآمد", kmGross), P("نمایندگان B2B", rkGross), P("صادرات", expGross)],
+      foot: allGross ? <>تخفیف و برگشت تا خالص: <b>{fa(pct(allGross - allNet, allGross))}٪</b></> : null,
       tone: "neutral", target: "mo-sales", locked: !salesOk, error: comb.error },
-    { key: "openreq", label: "درخواست باز (فاکتورنشده) ماه — کارآمد", domain: "فروش", value: openReq == null ? null : Number(openReq) / 10, format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: openReq == null ? "" : <>{fa(kmCur.open_req_docs)} سند باز از {fa(kmCur.req_docs)} درخواست ماه ({shortToman(kmCur.req_rial)})<br />نرخ تبدیل درخواست به فاکتور <b>{fa(Math.round(Number(kmCur.req_conv || 0) * 100))}٪</b></>,
+    { key: "openreq", label: "سفارش فاکتورنشده ماه", domain: "فروش", value: openReq == null ? null : Number(openReq) / 10, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "سفارش‌هایی که شعب این ماه ثبت کرده‌اند ولی هنوز فاکتور نشده‌اند (کارآمد).",
+      foot: openReq == null ? null : <>{fa(kmCur.open_req_docs)} سند باز از {fa(kmCur.req_docs)} · تبدیل به فاکتور <b>{fa(Math.round(Number(kmCur.req_conv || 0) * 100))}٪</b></>,
       tone: "watch", target: "mo-sales", locked: !salesOk, error: comb.error },
-    { key: "coll", label: "وصول ماه (راهکاران + کارآمد)", domain: "فروش", value: mCur.data && inflAll.data ? (Number(t.collected_rial || 0) + Number(rkColl || 0)) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: <>{split(rkColl, Number(t.collected_rial || 0))}<br />راهکاران: نقد و حواله ماه · کارآمد: وصول فاکتورهای ماه ({fa(collPct)}٪ توزیع‌شده)</>, tone: "neutral", target: "mo-sales", locked: !salesOk, error: mCur.error || inflAll.error },
-    { key: "debt", label: "مطالبات مشتریان (راهکاران + کارآمد)", domain: "فروش", value: network.data && comb.data ? (Number(sm.open_account_receivable_rial || 0) + Number(rkDebt || 0)) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: <>{split(rkDebt, Number(sm.open_account_receivable_rial || 0))}<br />{fa(comb.data?.receivables?.debtor_count)} مشتری بدهکار راهکاران · {fa(sm.active_customer_count)} مشتری فعال شعب</>, tone: "watch", target: "mo-sales", locked: !has("sales", "customers"), error: network.error || comb.error },
-    { key: "recv", label: "چک دریافتی سررسید گذشته (راهکاران + کارآمد)", domain: "مالی", value: rec.data ? recOverdue / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: rec.data ? <>{split(recBySys("rahkaran"), recBySys("karamad"))}{Number(rec.data?.overdue?.other_state_rial || 0) > 0 && <> · وضعیت نامشخص <b>{shortToman(rec.data?.overdue?.other_state_rial)}</b></>}<br />برگشتی باز {shortToman(rec.data?.returned_open?.amount_rial)} · ۷ روز آینده {shortToman(rec.data?.kpis?.next_7_days?.definite_rial)}</> : "", tone: "follow",
-      target: "mo-fin", locked: !chequesOk, error: rec.error },
-    { key: "iss", label: "چک پرداختی ۳۰ روز آینده (راهکاران + کارآمد)", domain: "مالی", value: iss.data ? Number(iss.data?.kpis?.horizon?.amount_rial || 0) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: iss.data ? <>{split(issBySys("rahkaran"), issBySys("karamad"))}<br />{fa(iss.data?.kpis?.horizon?.count)} چک · ۷ روز آینده {shortToman(iss.data?.kpis?.next_7_days?.amount_rial)}</> : "", tone: "neutral",
-      target: "mo-fin", locked: !chequesOk, error: iss.error },
-    { key: "pay", label: "بدهی به تأمین‌کنندگان (راهکاران)", domain: "مالی", value: pay.data ? (Number(pay.data.trade?.credit_balance_rial || 0) + Number(pay.data.nontrade?.credit_balance_rial || 0)) / 10 : null,
-      format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: pay.data ? `پیش‌پرداخت باز ${shortToman(Number(pay.data.trade?.debit_balance_rial || 0) + Number(pay.data.nontrade?.debit_balance_rial || 0))}` : "", tone: "neutral",
-      target: "mo-fin", locked: !has("management", "payables"), error: pay.error },
-    { key: "gp", label: "سود ناخالص فصل (سه کانال)", domain: "مالی", target: "mo-pnl", locked: !pnlOk, error: pnlB2b.error,
+    { key: "coll", label: "وصول ماه — محصولات", domain: "فروش", value: mCur.data && comb.data ? (Number(t.collected_rial || 0) + Number(rkColl || 0)) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "پولی که این ماه بابت فروش محصول، نقد یا حواله، به دستمان رسیده؛ چک و مواد اولیه جدا هستند.",
+      parts: [P("شعب کارآمد", Number(t.collected_rial || 0)), P("نمایندگان B2B", seg("rep")), P("صادرات", seg("export")), ...(seg("other") ? [P("سایر", seg("other"))] : [])],
+      tone: "neutral", target: "mo-sales", locked: !salesOk, error: mCur.error || comb.error },
+    { key: "raw", label: "وصولی مواد اولیه", domain: "فروش", value: rkRaw ? Number(rkRaw.amount_rial || 0) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "پولی که این ماه از فروش مواد اولیه به خریداران مواد گرفته‌ایم.",
+      parts: rkRaw ? Object.entries(rkRaw.by_method || {}).map(([m, v]) => P(m === "cash" ? "نقد" : "حواله", Number(v))) : undefined,
+      foot: rkRaw ? <>{fa(rkRaw.customer_count)} خریدار در {MONTHS[cur.month - 1]}</> : null,
+      tone: "neutral", target: "mo-sales", locked: !salesOk, error: comb.error || (comb.data && !rkC ? "داده وصول راهکاران نرسید" : "") },
+    { key: "fut", label: "چک‌های آینده", domain: "مالی", value: futCh == null ? null : futCh / 10, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "چک‌هایی که از مشتری‌ها گرفته‌ایم و سررسیدشان تا یک سال آینده می‌رسد؛ پولی که در راه است.",
+      parts: rec.data ? [P("نمایندگان", chan("b2b")), P("شعب", chan("hybrid"))] : undefined,
+      foot: rec.data ? <>{fa(rec.data?.kpis?.horizon?.count)} چک · احتمال وصول <b>{fa(Math.round(rec.data?.kpis?.horizon?.reliance_percent || 0))}٪</b></> : null,
+      tone: "neutral", target: "mo-fin", locked: !chequesOk, error: rec.error },
+    { key: "open", label: "مطالبات باز", domain: "مالی", value: openRecv == null ? null : openRecv / 10, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "طلبی که از مشتری‌ها داریم و هنوز نه پولش رسیده نه چکش در دست ماست، به‌اضافه چک‌های برگشتی تسویه‌نشده.",
+      parts: rr ? [P("بدهی نمایندگان", rr.balance_rial), P("برگشتی نمایندگان", rr.returned_rial), P("مشتریان شعب", kmDebt)] : undefined,
+      tone: "watch", target: "mo-sales", locked: !salesOk, error: comb.error || network.error || (comb.data && !rr ? "مانده پرونده مشتری نرسید" : "") },
+    { key: "und", label: "چک‌های تعیین تکلیف نشده", domain: "مالی", value: stUnd.data ? Number(stUnd.data.amount_rial || 0) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "چک‌های مشتری که سررسیدشان گذشته ولی نه پاس شده‌اند نه برگشت خورده‌اند؛ وضعیتشان باید روشن شود.",
+      parts: stUnd.data ? [P("راهکاران", sysAmt(stUnd.data, "راهکاران")), P("کارآمد", sysAmt(stUnd.data, "کارآمد"))] : undefined,
+      foot: stUnd.data ? <>{fa(stUnd.data.count)} چک · {fa(stUnd.data.customer_count)} مشتری</> : null,
+      tone: "follow", target: "mo-fin", locked: !chequesOk, error: stUnd.error },
+    { key: "ret", label: "چک‌های برگشتی", domain: "مالی", value: stRet.data ? Number(stRet.data.amount_rial || 0) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "چک‌های مشتری که برگشت خورده‌اند و هنوز پولشان را نگرفته‌ایم.",
+      parts: stRet.data ? [P("راهکاران", sysAmt(stRet.data, "راهکاران")), P("کارآمد", sysAmt(stRet.data, "کارآمد"))] : undefined,
+      foot: stRet.data ? <>{fa(stRet.data.count)} چک · {fa(stRet.data.customer_count)} مشتری</> : null,
+      tone: "follow", target: "mo-fin", locked: !chequesOk, error: stRet.error },
+    { key: "iss", label: "چک پرداختی ۳۰ روز آینده", domain: "مالی", value: iss.data ? Number(iss.data?.kpis?.horizon?.amount_rial || 0) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "چک‌هایی که خودمان داده‌ایم و تا یک ماه آینده باید پاس شوند؛ پولی که باید آماده باشد.",
+      parts: iss.data ? [P("راهکاران", issBySys("rahkaran")), P("کارآمد", issBySys("karamad"))] : undefined,
+      foot: iss.data ? <>{fa(iss.data?.kpis?.horizon?.count)} چک · هفته آینده <b>{shortToman(iss.data?.kpis?.next_7_days?.amount_rial)}</b></> : null,
+      tone: "neutral", target: "mo-fin", locked: !chequesOk, error: iss.error },
+    { key: "pay", label: "بدهی به تأمین‌کنندگان", domain: "مالی", value: payBal != null && issOpen != null ? (payBal + issOpen) / 10 : null, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "کل بدهی ما بابت خرید: هم چک‌هایی که به تأمین‌کننده‌ها داده‌ایم و هنوز پاس نشده، هم خریدهایی که هنوز چکی بابتشان نداده‌ایم.",
+      parts: [P("چک‌های داده‌شده", issOpen), P("خرید بدون چک", payBal)],
+      tone: "neutral", target: "mo-fin", locked: !has("management", "payables"), error: pay.error || iss365.error },
+    { key: "paync", label: "بدهی باز بدون چک", domain: "مالی", value: payBal == null ? null : payBal / 10, format: (v) => shortToman(v * 10), unit: "تومان",
+      about: "جنس و خدمتی که خریده‌ایم ولی هنوز نه پولش را داده‌ایم نه چکی بابتش.",
+      parts: pay.data ? [P("تأمین‌کنندگان تجاری", pay.data.trade?.credit_balance_rial), P("سایر طلبکاران", pay.data.nontrade?.credit_balance_rial)] : undefined,
+      foot: pay.data ? <>{fa(Number(pay.data.trade?.creditor_count || 0) + Number(pay.data.nontrade?.creditor_count || 0))} طلبکار · پیش‌پرداخت باز {shortToman(Number(pay.data.trade?.debit_balance_rial || 0) + Number(pay.data.nontrade?.debit_balance_rial || 0))}</> : null,
+      tone: "watch", target: "mo-fin", locked: !has("management", "payables"), error: pay.error },
+    { key: "gp", label: "سود ناخالص فصل", domain: "مالی", target: "mo-pnl", locked: !pnlOk, error: pnlB2b.error,
       value: pnlChannels.every((c) => c.rep) ? pnlChannels.reduce((x, c) => x + (pnlP0(c.rep, "gp") || 0), 0) * 1e5 : null,
       format: (v) => shortToman(v * 10), unit: "تومان",
-      hint: pnlNet ? <>{split(((pnlP0(pnlB2b.data?.report, "gp") || 0) + (pnlP0(pnlExp.data?.report, "gp") || 0)) * 1e6, (pnlP0(pnlHyb.data?.report, "gp") || 0) * 1e6)}<br />حاشیه <b>{fa(pct(pnlGp, pnlNet))}٪</b> · با بهای استاندارد <b className="up">{fa(pct(pnlGpStd, pnlNet))}٪</b></> : "", tone: "good" },
+      about: "سود این فصل بعد از کم کردن بهای تمام‌شده کالا از فروش، در سه کانال.",
+      parts: pnlNet ? [P("هیبرید", (pnlP0(pnlHyb.data?.report, "gp") || 0) * 1e6), P("B2B", (pnlP0(pnlB2b.data?.report, "gp") || 0) * 1e6), P("صادرات", (pnlP0(pnlExp.data?.report, "gp") || 0) * 1e6)] : undefined,
+      foot: pnlNet ? <>حاشیه <b>{fa(pct(pnlGp, pnlNet))}٪</b> · با بهای استاندارد <b className="up">{fa(pct(pnlGpStd, pnlNet))}٪</b></> : null, tone: "good" },
     { key: "slow", label: "فرصت‌های بهبود روندها", domain: "روند", target: "mo-slow", locked: !slowOk, error: slow.error,
       value: slow.data ? slowItems.filter((x: any) => x.severity === "critical").length : null, format: (v) => fa(Math.round(v)), unit: "مورد با اولویت اول",
-      hint: slow.data ? `${fa(slowItems.length)} روند در سه ماه اخیر، از داده SQL` : "", tone: "follow" },
+      about: "روندهایی در سه ماه اخیر که کند یا بد شده‌اند و ارزش پیگیری دارند.",
+      foot: slow.data ? `${fa(slowItems.length)} روند از داده SQL` : null, tone: "follow" },
   ];
   const tiles = allTiles.filter((x) => !x.locked);
 
@@ -440,10 +598,58 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
     const r = rep?.rows?.find((x: any) => x.canon === "gp");
     return r ? rows(Object.entries(r.values || {}), ([b]: any) => b, ([, v]: any) => Number(v || 0) * 1e6, go) : [];
   };
+  // پرونده هر نفر: نماینده B2B (کد ۷xxxxx تا ۹xxxxx) ← پرونده نماینده؛ بقیه مشتریان راهکاران ← پرونده مشتری مالی؛ شعبه ← پرونده هیبرید
+  const repFile = (code: unknown) => { const k = String(code || "").trim(); return /^[789]\d{5}$/.test(k) ? `/files/rahkaran/${k}` : k ? `/finance/customers?c=${encodeURIComponent(k)}` : undefined; };
+  const hybFile = (name: unknown) => { const n = String(name || "").trim(); return n.includes("هیبرید") ? `/files/hybrids/${encodeURIComponent(n)}` : undefined; };
+  const METHOD: Record<string, string> = { cash: "نقد (صندوق)", bank: "حواله / بانکی" };
+  const sumV = (l: any[], f = "amount_rial") => l.reduce((x, c) => x + Number(c[f] || 0), 0);
+  const groupBy = (l: any[], k: (x: any) => string): [string, any[]][] => {
+    const m = new Map<string, any[]>();
+    l.forEach((x) => { const g = k(x) || "—"; m.set(g, [...(m.get(g) || []), x]); });
+    return [...m.entries()];
+  };
+  /** وصول یک بخش راهکاران: مشتری ← روش دریافت؛ و تفکیک حساب معین و روش */
+  const collTree = (p: any, go: string, who: string): DNode[] => p ? [
+    { key: "cust", label: `به تفکیک ${who}`, value: p.amount_rial, go, note: `${fa(p.customer_count)} ${who}`, children: (p.top_customers || []).map((c: any, i: number) => ({
+      key: `${i}:${c.code}`, label: c.name, value: c.amount_rial, go, file: repFile(c.code), note: `کد ${faDigits(c.code || "—")} · ${fa(c.count)} سند`,
+      children: Object.entries(c.by_method || {}).map(([m, v]) => ({ key: m, label: METHOD[m] || m, value: Number(v), go })) })) },
+    { key: "acc", label: "به تفکیک حساب معین", value: p.amount_rial, go, children: rows(p.by_account, (x) => x.key, (x) => x.amount_rial, go) },
+    { key: "method", label: "به تفکیک روش دریافت", value: p.amount_rial, go, children: Object.entries(p.by_method || {}).map(([m, v]) => ({ key: m, label: METHOD[m] || m, value: Number(v), go })) },
+  ] : [];
+  /** چک‌های برگشتی / تعیین تکلیف نشده: سیستم ← مشتری ← هر چک */
+  const chequeTree = (st: any): DNode[] => {
+    if (!st) return [];
+    const go = "receivedCheques", ch: any[] = st.cheques || [];
+    const sys: DNode[] = (st.by_system || []).map((s: any) => ({ key: `s:${s.label}`, label: s.label, value: Number(s.amount_rial || 0), go, note: `${fa(s.count)} چک`,
+      children: groupBy(ch.filter((c) => c.system_label === s.label), (c) => c.customer_name).map(([name, cs]) => ({
+        key: `c:${name}`, label: name, value: sumV(cs), go, file: cs[0].system === "rahkaran" ? repFile(cs[0].customer_code) : hybFile(cs[0].branch_name),
+        note: `${fa(cs.length)} چک · ${cs[0].branch_name || cs[0].visitor_name || ""}`,
+        children: cs.map((c: any, i: number) => ({ key: `${i}:${c.serial_number}`, label: `چک ${faDigits(c.serial_number || "—")} · سررسید ${faDigits(c.due_date_jalali)}`,
+          value: Number(c.amount_rial || 0), go, note: `${fa(c.days_overdue)} روز گذشته · ${c.status_label}` })) }))
+        .sort((a, b) => b.value - a.value).slice(0, 25) }));
+    return [...sys,
+      { key: "age", label: "به تفکیک مدت گذشته از سررسید", value: Number(st.amount_rial || 0), go, children: rows(st.by_age, (x) => x.label, (x) => x.amount_rial, go, (x) => `${fa(x.count)} چک`) },
+      { key: "status", label: "به تفکیک وضعیت", value: Number(st.amount_rial || 0), go, children: rows(st.by_status, (x) => x.label, (x) => x.amount_rial, go, (x) => `${fa(x.count)} چک`) }];
+  };
+  /** چک‌های پرداختی: ذی‌نفع ← هر چک */
+  const payeeTree = (d: any): DNode[] => groupBy(d?.cheques || [], (c) => c.payee_name).map(([name, cs]) => ({
+    key: `p:${name}`, label: name, value: sumV(cs), go: "issuedCheques", note: `${fa(cs.length)} چک${cs.some((c: any) => c.days_to_due < 0) ? " · سررسیدگذشته دارد" : ""}`,
+    children: cs.map((c: any, i: number) => ({ key: `${i}:${c.serial_number}`, label: `چک ${faDigits(c.serial_number || "—")} · سررسید ${faDigits(c.due_date_jalali)}`, value: Number(c.amount_rial || 0), go: "issuedCheques",
+      note: `${c.bank_name || ""}${c.days_to_due < 0 ? ` · ${fa(-c.days_to_due)} روز گذشته` : ""}` })) })).sort((a, b) => b.value - a.value).slice(0, 25);
+  /** تأمین‌کنندگان طلبکار: تجاری/غیرتجاری ← طرف حساب ← گردش */
+  const creditorTree = (): DNode[] => (["trade", "nontrade"] as const).map((k) => {
+    const m = pay.data?.[k];
+    return { key: k, label: k === "trade" ? "تأمین‌کنندگان تجاری" : "سایر طلبکاران (غیرتجاری)", value: Number(m?.credit_balance_rial || 0), go: "payables", note: m ? `${fa(m.creditor_count)} طلبکار` : undefined,
+      children: (m?.counterparties || []).filter((c: any) => Number(c.credit_balance_rial) > 0).sort((a: any, b: any) => b.credit_balance_rial - a.credit_balance_rial).slice(0, 20).map((c: any) => ({
+        key: `${c.dl_code}`, label: c.title, value: Number(c.credit_balance_rial), go: "payables",
+        note: `کد ${faDigits(c.dl_code)} · آخرین خرید ${faDigits(c.last_invoice_date_jalali || "—")} · آخرین پرداخت ${faDigits(c.last_payment_date_jalali || "—")}`,
+        children: [{ key: "cr", label: "جمع بستانکار (خرید)", value: Number(c.credit_rial || 0), go: "payables" },
+          { key: "dr", label: "جمع بدهکار (پرداخت و چک)", value: Number(c.debit_rial || 0), go: "payables" }] })) };
+  });
   const drills: Record<string, DNode> = {
     sales: { key: "sales", label: `فروش خالص ${MONTHS[cur.month - 1]}`, value: allNet, go: "/sales", children: [
       { key: "hyb", label: "فروش هیبریدها (کارآمد)", value: sumOf(hybBranches, "net_rial"), go: "/hybrid", note: `${fa(hybBranches.length)} هیبرید`,
-        children: rows(hybBranches, (b) => b.branch_name, (b) => b.net_rial, "/hybrid") },
+        children: rows(hybBranches, (b) => b.branch_name, (b) => b.net_rial, "/hybrid").map((x) => ({ ...x, file: hybFile(x.label) })) },
       { key: "kother", label: "سایر شعب کارآمد", value: sumOf(otherBranches, "net_rial"), go: "/sales",
         children: rows(otherBranches, (b) => b.branch_name, (b) => b.net_rial, "/sales") },
       { key: "b2b", label: "نمایندگان B2B (راهکاران)", value: rkNet, go: "/rahkaran", note: `${fa(comb.data?.sales?.cur?.customers)} مشتری خریدار`,
@@ -460,38 +666,94 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
     gross: { key: "gross", label: `فروش ناخالص ${MONTHS[cur.month - 1]}`, value: allGross, go: "/sales", children: [
       { key: "k", label: "شعب کارآمد", value: kmGross, go: "/hybrid", children: rows(kmCur.branches, (b) => b.key, (b) => b.gross_rial, "/hybrid", (b) => `خالص ${shortToman(b.net_rial)}`) },
       { key: "b2b", label: "نمایندگان B2B (راهکاران)", value: rkGross, go: "/rahkaran", note: rkGross && rkNet != null ? `خالص ${shortToman(rkNet)}` : undefined },
-      { key: "exp", label: "صادرات (راهکاران)", value: expNet, go: "/rahkaran/export", note: "بدون تخفیف جدا: همان خالص" },
+      { key: "exp", label: "صادرات (راهکاران)", value: expGross, go: "/rahkaran/export", note: expNet != null ? `خالص ${shortToman(expNet)}` : undefined,
+        children: rows(expCur?.countries, (x) => x.key, (x) => x.net_rial, "/rahkaran/export") },
     ] },
     openreq: { key: "openreq", label: `درخواست باز ${MONTHS[cur.month - 1]} (کارآمد)`, value: openReq, go: "/sales", children:
       rows(kmCur.branches, (b) => b.key, (b) => b.open_req_rial, "/hybrid", (b) => `از درخواست ${shortToman(b.req_rial)} · ${fa(b.req_docs)} سند`) },
-    coll: { key: "coll", label: `وصول ${MONTHS[cur.month - 1]}`, value: Number(t.collected_rial || 0) + Number(rkColl || 0), go: "cashBank", children: [
-      { key: "k", label: "وصول فاکتورهای ماه هیبریدها (کارآمد)", value: Number(t.collected_rial || 0), go: "distribution", note: `${fa(collPct)}٪ از توزیع‌شده`,
-        children: rows(mCur.data?.branches, (b) => b.branch_name, (b) => b.collected_rial, "distribution", (b) => `مانده ${shortToman(b.remaining_rial)}`) },
-      { key: "r", label: "نقد و حواله مشتریان (راهکاران)", value: rkColl, go: "b2bRemittances" },
+    coll: { key: "coll", label: `وصول ${MONTHS[cur.month - 1]} — محصولات`, value: Number(t.collected_rial || 0) + Number(rkColl || 0), go: "cashBank",
+      note: "نقد و حواله؛ چک و مواد اولیه جدا", children: [
+      { key: "k", label: "شعب کارآمد (وصول فاکتورهای ماه)", value: Number(t.collected_rial || 0), go: "distribution", note: `${fa((mCur.data?.branches || []).filter((b: any) => Number(b.collected_rial) > 0).length)} شعبه · ${fa(collPct)}٪ از فاکتورهای توزیع‌شده وصول شده`,
+        children: (mCur.data?.branches || []).filter((b: any) => Number(b.collected_rial) > 0).sort((a: any, b: any) => b.collected_rial - a.collected_rial).map((b: any) => ({
+          key: b.branch_name, label: b.branch_name, value: Number(b.collected_rial || 0), go: "distribution", file: hybFile(b.branch_name), note: `${fa(pct(b.collected_rial, b.distributed_rial))}٪ از توزیع‌شده · مانده ${shortToman(b.remaining_rial)}`,
+          children: [{ key: "s", label: "فروش ماه", value: Number(b.sales_rial || 0), go: "distribution" }, { key: "d", label: "توزیع‌شده", value: Number(b.distributed_rial || 0), go: "distribution" },
+            { key: "c", label: "وصول‌شده", value: Number(b.collected_rial || 0), go: "distribution" }, { key: "r", label: "مانده وصول‌نشده", value: Number(b.remaining_rial || 0), go: "distribution" }] })) },
+      // راهکاران: نمایندگان B2B / صادرات / سایر ← نام هر نفر ← روش دریافت
+      ...(rkProd?.segments || []).filter((g: any) => Number(g.amount_rial) > 0).map((g: any) => {
+        const unit = g.key === "rep" ? "نماینده" : "مشتری";
+        return { key: `seg:${g.key}`, label: g.key === "rep" ? "نمایندگان B2B (راهکاران)" : g.key === "export" ? "صادرات (راهکاران)" : "سایر دریافت‌های مشتری (راهکاران)",
+          value: Number(g.amount_rial || 0), go: g.key === "export" ? "/rahkaran/export" : "/rahkaran",
+          note: `${fa(g.customer_count)} ${unit} · ${fa((g.customers || []).reduce((x: number, c: any) => x + Number(c.count || 0), 0))} سند دریافت`,
+          children: (g.customers || []).map((c: any, i: number) => ({ key: `${i}:${c.code}`, label: c.name, value: Number(c.amount_rial || 0), go: g.key === "export" ? "/rahkaran/export" : "cashBank",
+            file: g.key === "export" ? undefined : repFile(c.code),
+            note: `کد ${faDigits(c.code || "—")} · ${fa(c.count)} سند`,
+            children: Object.entries(c.by_method || {}).map(([m, v]) => ({ key: m, label: METHOD[m] || m, value: Number(v), go: "cashBank" })) })) };
+      }),
     ] },
-    debt: { key: "debt", label: "مطالبات مشتریان", value: Number(sm.open_account_receivable_rial || 0) + Number(rkDebt || 0), go: "customers", children: [
-      { key: "k", label: "مشتریان شعب (کارآمد)", value: Number(sm.open_account_receivable_rial || 0), go: "/files/hybrids",
-        children: rows(network.data?.branches, (b) => b.branch_name, (b) => b.debt?.open_account_receivable_rial, "/files/hybrids") },
-      { key: "r", label: "مشتریان راهکاران", value: rkDebt, go: "/files/rahkaran", note: `${fa(comb.data?.receivables?.debtor_count)} مشتری بدهکار`,
-        children: rows(comb.data?.receivables?.top, (x) => x.key, (x) => x.amount_rial, "customers") },
+    raw: { key: "raw", label: `وصولی مواد اولیه ${MONTHS[cur.month - 1]}`, value: rkRaw?.amount_rial ?? null, go: "cashBank",
+      note: "نقد و حواله معین ۱۲۴۰۴۶ «دریافتنی غیر رسمی (مواد اولیه)» و خریداران مواد روی حساب‌های دریافتنی", children: collTree(rkRaw, "cashBank", "خریدار") },
+    fut: { key: "fut", label: "چک‌های آینده (۱۲ ماه)", value: futCh, go: "receivedCheques", note: "چک دریافتی که سررسیدش نرسیده", children:
+      (rec.data?.by_channel || []).map((c: any) => {
+        const sys = c.channel === "b2b" ? "rahkaran" : "karamad";
+        return { key: c.channel, label: c.channel === "b2b" ? "نمایندگان (راهکاران)" : "شعب (کارآمد)", value: Number(c.definite_rial || 0), go: "receivedCheques",
+          note: `${fa(c.count)} چک · اتکاپذیر ${fa(Math.round(c.reliance_percent || 0))}٪`,
+          children: (rec.data?.customers || []).filter((x: any) => x.system === sys).sort((a: any, b: any) => b.definite_rial - a.definite_rial).slice(0, 25).map((x: any) => ({
+            key: x.customer_key || x.customer_code, label: x.customer_name, value: Number(x.definite_rial || 0), go: "receivedCheques",
+            file: x.system === "rahkaran" ? repFile(x.customer_code) : undefined,
+            note: `${fa(x.count)} چک · نزدیک‌ترین سررسید ${faDigits(x.nearest_due_date_jalali || "—")}`,
+            children: [{ key: "rel", label: "اتکاپذیر (احتمال وصول)", value: Number(x.reliance_rial || 0), go: "receivedCheques" },
+              { key: "risk", label: "ریسک وصول", value: Number(x.collection_risk_rial || 0), go: "receivedCheques" }] })) };
+      }) },
+    open: { key: "open", label: "مطالبات باز", value: openRecv, go: "customers", note: "مانده بدهی + چک برگشتی راهکاران (همان پرونده مشتری) + مانده دفتر کل شعب", children: [
+      { key: "rb", label: "مانده بدهی مشتریان راهکاران", value: Number(rr?.balance_rial || 0), go: "/files/rahkaran", note: rr ? `${fa(rr.debtor_count)} مشتری بدهکار` : undefined,
+        children: (rr?.top || []).filter((x: any) => x.balance_rial > 0).map((x: any) => ({ key: x.code, label: x.name, value: Number(x.balance_rial), go: "/files/rahkaran", file: repFile(x.code),
+          note: `کد ${faDigits(x.code)}${x.open_cheques_rial ? ` · چک باز در دست ${shortToman(x.open_cheques_rial)}` : ""}`,
+          children: [{ key: "b", label: "مانده حساب", value: Number(x.balance_rial || 0), go: "/files/rahkaran" }, { key: "r", label: "چک برگشتی", value: Number(x.returned_rial || 0), go: "/files/rahkaran" },
+            { key: "o", label: "سررسیدگذشته باز", value: Number(x.overdue_rial || 0), go: "/files/rahkaran" }] })) },
+      { key: "rr", label: "حساب چک برگشتی راهکاران", value: Number(rr?.returned_rial || 0), go: "/files/rahkaran",
+        children: rows((rr?.top || []).filter((x: any) => x.returned_rial > 0), (x) => x.name, (x) => x.returned_rial, "/files/rahkaran", (x) => `کد ${faDigits(x.code)}`) },
+      { key: "k", label: "مانده دفتر کل مشتریان شعب (کارآمد)", value: kmDebt, go: "/files/hybrids", note: `${fa(sm.active_customer_count)} مشتری فعال · چک برگشتی داخل همین مانده است`,
+        children: (network.data?.branches || []).filter((b: any) => Number(b.debt?.open_account_receivable_rial) > 0).sort((a: any, b: any) => b.debt.open_account_receivable_rial - a.debt.open_account_receivable_rial).map((b: any) => ({
+          key: b.branch_name, label: b.branch_name, value: Number(b.debt.open_account_receivable_rial), go: "/files/hybrids", file: hybFile(b.branch_name), note: `${fa(b.debt.debtor_customer_count)} مشتری بدهکار`,
+          children: [{ key: "d", label: "مانده بدهی مشتریان", value: Number(b.debt.open_account_receivable_rial || 0), go: "/files/hybrids" },
+            { key: "c", label: "بستانکاری مشتریان (کسر شده)", value: Number(b.debt.customer_credit_rial || 0), go: "/files/hybrids" },
+            { key: "q", label: "چک باز در دست", value: Number(b.open_cheque_amount_rial || 0), go: "/files/hybrids" }] })) },
     ] },
-    recv: { key: "recv", label: "چک دریافتی سررسیدگذشته", value: recOverdue, go: "receivedCheques", children: [
-      { key: "r", label: "راهکاران", value: recBySys("rahkaran"), go: "receivedCheques" },
-      { key: "k", label: "کارآمد", value: recBySys("karamad"), go: "receivedCheques" },
-      { key: "o", label: "وضعیت نامشخص", value: Number(rec.data?.overdue?.other_state_rial || 0), go: "receivedCheques" },
-      { key: "age", label: "به تفکیک مدت تأخیر", value: Number(rec.data?.overdue?.definite_rial || 0), go: "receivedCheques",
-        children: rows(rec.data?.overdue?.age_buckets, (x) => x.label, (x) => x.definite_rial, "receivedCheques", (x) => `${fa(x.count)} چک`) },
-    ] },
+    und: { key: "und", label: "چک‌های تعیین تکلیف نشده", value: stUnd.data?.amount_rial ?? null, go: "receivedCheques", note: stUnd.data?.rule, children: chequeTree(stUnd.data) },
+    ret: { key: "ret", label: "چک‌های برگشتی", value: stRet.data?.amount_rial ?? null, go: "receivedCheques", note: stRet.data?.rule, children: chequeTree(stRet.data) },
     iss: { key: "iss", label: "چک پرداختی ۳۰ روز آینده", value: Number(iss.data?.kpis?.horizon?.amount_rial || 0), go: "issuedCheques", children: [
+      { key: "payee", label: "به تفکیک دریافت‌کننده", value: Number(iss.data?.kpis?.horizon?.amount_rial || 0), go: "issuedCheques",
+        children: payeeTree({ cheques: (iss.data?.cheques || []).filter((c: any) => c.days_to_due >= 0) }) },
       { key: "r", label: "راهکاران", value: issBySys("rahkaran"), go: "issuedCheques" },
       { key: "k", label: "کارآمد", value: issBySys("karamad"), go: "issuedCheques" },
-      { key: "payee", label: "بزرگ‌ترین دریافت‌کنندگان", value: Number(iss.data?.kpis?.horizon?.amount_rial || 0), go: "issuedCheques",
-        children: rows(iss.data?.top_payees, (x) => x.payee_name, (x) => x.amount_rial, "issuedCheques", (x) => `${fa(x.count)} چک`) },
     ] },
-    pay: { key: "pay", label: "بدهی به تأمین‌کنندگان", value: Number(pay.data?.trade?.credit_balance_rial || 0) + Number(pay.data?.nontrade?.credit_balance_rial || 0), go: "payables", children: [
-      { key: "t", label: "تجاری", value: Number(pay.data?.trade?.credit_balance_rial || 0), go: "payables" },
-      { key: "n", label: "غیرتجاری", value: Number(pay.data?.nontrade?.credit_balance_rial || 0), go: "payables" },
+    pay: { key: "pay", label: "بدهی به تأمین‌کنندگان", value: payBal == null ? null : payBal + Number(issOpen || 0), go: "payables", children: [
+      { key: "bal", label: "مانده حساب (خرید بدون چک)", value: payBal, go: "payables", children: creditorTree() },
+      { key: "chq", label: "چک‌های پرداختی باز", value: issOpen, go: "issuedCheques",
+        note: iss365.data ? `آینده ${shortToman(iss365.data?.kpis?.horizon?.amount_rial)} · سررسیدگذشته ${shortToman(iss365.data?.kpis?.overdue?.amount_rial)}` : undefined,
+        children: payeeTree(iss365.data) },
     ] },
+    tin: { key: "tin", label: `وصول و واریز امروز ${faDigits(tIn?.date_jalali || "")}`, value: tIn?.amount_rial ?? null, go: "cashBank",
+      note: "نقد و حواله‌ای که امروز واقعاً وارد صندوق و بانک شده؛ چک دریافتی جداست", children: [
+      ...(tIn?.systems || []).map((sy: any) => ({ key: sy.key, label: sy.label, value: Number(sy.amount_rial || 0), go: "cashBank",
+        note: sy.amount_rial ? `${fa(sy.count)} واریز` : sy.last_day_jalali ? `رسید تأییدشده امروز هنوز نیست · آخرین ${faDigits(sy.last_day_jalali)}` : undefined,
+        children: (sy.groups || []).map((g: any) => ({ key: g.key, label: g.label, value: Number(g.amount_rial || 0), go: "cashBank", note: `${fa(g.count)} واریز`,
+          children: sy.key === "karamad"
+            // کارآمد: شعبه ← مشتری ← نقد/حواله
+            ? groupBy(g.items, (x) => x.branch).map(([br, xs]) => ({ key: `b:${br}`, label: br, value: sumV(xs), go: "/hybrid", file: hybFile(br), note: `${fa(xs.length)} مشتری`,
+                children: xs.map((x: any, i: number) => ({ key: `${i}:${x.code}`, label: x.name, value: Number(x.amount_rial), go: "/hybrid", note: `کد ${faDigits(x.code || "—")}`,
+                  children: Object.entries(x.by_method || {}).map(([m, v]) => ({ key: m, label: METHOD[m] || m, value: Number(v), go: "cashBank" })) })) })).sort((a, b) => b.value - a.value)
+            // راهکاران: مشتری ← نقد/حواله
+            : g.items.map((x: any, i: number) => ({ key: `${i}:${x.code}`, label: x.name, value: Number(x.amount_rial), go: "cashBank", file: repFile(x.code), note: `کد ${faDigits(x.code || "—")} · ${fa(x.count)} سند`,
+                children: Object.entries(x.by_method || {}).map(([m, v]) => ({ key: m, label: METHOD[m] || m, value: Number(v), go: "cashBank" })) })) })) })),
+      ...(recToday ? [{ key: "rec", label: "چک دریافتی سررسید امروز (هنوز جدا، در انتظار وصول)", value: recToday, go: "receivedCheques", note: `${fa(rec.data?.kpis?.today?.count)} چک` }] : []),
+    ] },
+    tpay: { key: "tpay", label: "امروز باید پرداخت کنی", value: Number(iss.data?.kpis?.today?.amount_rial || 0), go: "issuedCheques",
+      note: "چک‌های صادرشده با سررسید امروز؛ موجودی حساب‌ها را برای پاس شدنشان چک کنید", children: [
+      { key: "due", label: "سررسید امروز", value: Number(iss.data?.kpis?.today?.amount_rial || 0), go: "issuedCheques", note: `${fa(issDueToday.length)} چک`, children: payeeTree({ cheques: issDueToday }) },
+      { key: "late", label: "سررسیدگذشته و هنوز پاس‌نشده", value: issOverdueAmt, go: "issuedCheques", note: `${fa(issOverdue.length)} چک`, children: payeeTree({ cheques: issOverdue }) },
+    ] },
+    paync: { key: "paync", label: "بدهی باز بدون چک", value: payBal, go: "payables", note: "جنس و خدمت خریده‌شده که هنوز چکی بابتش داده نشده", children: creditorTree() },
     gp: { key: "gp", label: `سود ناخالص ${pnlPeriod}`, value: pnlGp * 1e6, go: "pnl", children: pnlChannels.map((c) => ({
       key: c.key, label: c.label, value: (pnlP0(c.rep, "gp") || 0) * 1e6, go: "pnl",
       note: pnlP0(c.rep, "net") ? `حاشیه ${fa(pct(pnlP0(c.rep, "gp"), pnlP0(c.rep, "net")))}٪` : undefined,
@@ -583,19 +845,22 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
       <div className="mo-tiles">
         {tiles.map((k, i) => {
           const phase = stage < 0 ? "wait" : i < stage ? "done" : i === stage ? "on" : stage >= tiles.length ? "done" : "wait";
-          return <button key={k.key} type="button" className={`mo-tile ${k.tone || "neutral"} ${phase}`} style={{ animationDelay: `${i * 70}ms` }}
+          return <button key={k.key} type="button" className={`mo-tile ${k.tone || "neutral"} ${phase} ${drill?.[0] === k.key ? "open" : ""}`} style={{ animationDelay: `${i * 70}ms` }}
+            onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); e.currentTarget.style.setProperty("--mx", `${((e.clientX - r.left) / r.width) * 100}%`); e.currentTarget.style.setProperty("--my", `${((e.clientY - r.top) / r.height) * 100}%`); }}
             onClick={() => openDrill(k.key)} aria-expanded={drill?.[0] === k.key} aria-label={`${k.label} — نمایش ریز`}>
             <span className="mo-tile-top"><small>{k.label}</small><em className={k.domain === "مالی" ? "fin" : k.domain === "روند" ? "ops" : "sales"}>{k.domain}</em></span>
             <b>{k.value === null ? (k.error ? <span className="mo-err">{k.error}</span> : <span className="mo-shimmer" />) : <CountUp value={k.value} format={k.format} run={phase !== "wait"} />}</b>
             {k.value !== null && k.unit && <span className="mo-unit">{k.unit}</span>}
-            {k.value !== null && k.hint && <span className="mo-hint">{k.hint}</span>}
+            {k.value !== null && k.about && <span className="mo-about">{k.about}</span>}
+            {k.value !== null && k.parts && k.parts.length > 0 && <Parts parts={k.parts} run={phase !== "wait"} />}
+            {k.value !== null && k.foot && <span className="mo-hint">{k.foot}</span>}
             <span className="mo-tile-go" aria-hidden>{drill?.[0] === k.key ? "▴" : "▾"}</span>
             <i className="mo-tile-glow" aria-hidden />
           </button>;
         })}
       </div>
       <div ref={drillRef}>
-        {drill && drills[drill[0]] && <DrillPanel root={drills[drill[0]]} path={drill} setPath={setDrill} go={go} />}
+        {drill && drills[drill[0]] && <DrillPanel root={drills[drill[0]]} path={drill} setPath={setDrill} go={go} about={allTiles.find((x) => x.key === drill[0])?.about} guide={GUIDES[drill[0]]} />}
       </div>
     </div>
 
@@ -608,7 +873,7 @@ export default function ManagerOverview({ go }: { go: (view: string) => void }) 
           {rec.data && <Stat tone="follow" label="برگشتی باز" value={shortToman(rec.data?.returned_open?.amount_rial)}
             hint={`${fa(rec.data?.returned_open?.count)} چک`} go={goCan("receivedCheques")}
             peek={{ value: shortToman(rec.data?.returned_open?.amount_rial), page: "چک‌های دریافتی",
-              list: { title: "بزرگ‌ترین مشتریان ۳۰ روز آینده", rows: peekRows([...(rec.data?.customers || [])].sort((a: any, b: any) => b.definite_rial - a.definite_rial),
+              list: { title: "بزرگ‌ترین مشتریان ۱۲ ماه آینده", rows: peekRows([...(rec.data?.customers || [])].sort((a: any, b: any) => b.definite_rial - a.definite_rial),
                 (c: any) => c.customer_name, (c: any) => Number(c.definite_rial || 0), (c: any) => `${fa(c.count)} چک`) } }} />}
           {iss.data && <Stat tone="watch" label="پرداختی سررسیدگذشته" value={shortToman(iss.data?.overdue?.amount_rial)}
             hint={`${fa(iss.data?.overdue?.count)} چک · در خروجی امروز`} go={goCan("issuedCheques")}

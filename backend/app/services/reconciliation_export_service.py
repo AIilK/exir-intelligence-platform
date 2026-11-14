@@ -212,8 +212,10 @@ def _add_bank_status_sheet(
     sheet = workbook.create_sheet(title)
     _set_sheet_defaults(sheet)
     sheet.sheet_properties.tabColor = _STATUS_COLORS[status]
-    sheet.append(_BANK_ROW_HEADERS)
-    _style_header(sheet, 1, len(_BANK_ROW_HEADERS))
+    # «بدون سند احتمالی»: ستون آخر «سند مربوط به اختلاف» (مانده روز) نمی‌آید؛ ردیف بدون سند سند مربوطی ندارد
+    headers = _BANK_ROW_HEADERS[:-1] if status == "unposted" else _BANK_ROW_HEADERS
+    sheet.append(headers)
+    _style_header(sheet, 1, len(headers))
 
     rows = [
         row
@@ -221,11 +223,11 @@ def _add_bank_status_sheet(
         if row.get("business_status") == status
     ]
     for row in rows:
-        sheet.append(_bank_row_values(row))
+        sheet.append(_bank_row_values(row)[: len(headers)])
 
     if rows:
-        _apply_table_style(sheet, 2, len(rows) + 1, len(_BANK_ROW_HEADERS))
-        last_column = get_column_letter(len(_BANK_ROW_HEADERS))
+        _apply_table_style(sheet, 2, len(rows) + 1, len(headers))
+        last_column = get_column_letter(len(headers))
         sheet.auto_filter.ref = f"A1:{last_column}{len(rows) + 1}"
         for column in _AMOUNT_COLUMNS:
             for cell in sheet[column][1:]:

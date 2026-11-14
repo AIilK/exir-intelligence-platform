@@ -23,7 +23,8 @@ export type View =
   | "alerts"
   | "history"
   | "performance"
-  | "settings";
+  | "settings"
+  | "whatsapp";
 export type AgentContent =
   string | number | Record<string, unknown> | null | undefined;
 export type Analysis = {

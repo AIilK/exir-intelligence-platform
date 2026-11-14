@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./liquidity.css";
 import { RegCell, chequeNo } from "../cheque-reg";
+import { shortTomanText } from "../money-unit";
 
 type Channel = "all" | "b2b" | "hybrid";
 type Section = "forecast" | "received" | "issued" | "flows" | "payroll";
@@ -14,12 +15,7 @@ const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number = 0) => nf.format(v || 0);
 /** rial → «۱۲٫۳ میلیارد» toman */
-const toman = (rial: number | null | undefined = 0) => {
-  const t = Number(rial || 0) / 10, abs = Math.abs(t);
-  if (abs >= 1e9) return `${nf1.format(t / 1e9)} میلیارد`;
-  if (abs >= 1e6) return `${nf.format(t / 1e6)} میلیون`;
-  return nf.format(t);
-};
+const toman = (rial: number | null | undefined = 0) => shortTomanText(rial);
 /** rial → the exact toman amount with thousands separators («۳٬۱۴۴٬۸۶۹٬۲۵۳») */
 const fullToman = (rial: number | null | undefined = 0) => nf.format(Math.round(Number(rial || 0) / 10));
 const PAYROLL_COLORS: Record<string, string> = {

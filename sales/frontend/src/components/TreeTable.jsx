@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, useApp, fullTitle } from '../lib.jsx'
+import { fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, useApp, fullTitle, useSaved } from '../lib.jsx'
 import { buildXlsx } from '../xlsx.js'
 
 const NUMERIC = new Set(['money', 'int', 'pct', 'num1', 'spark'])
@@ -79,8 +79,8 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
       return kept.size ? kept : defaultOpen()
     })
   }, [idsKey, defaultDepth])
-  const [q, setQ] = useState('')
-  const [sort, setSort] = useState({ key: sortKey, dir: 'desc' })
+  const [q, setQ] = useSaved(`tree:${sortKey}:q`, '')
+  const [sort, setSort] = useSaved(`tree:${sortKey}:sort`, { key: sortKey, dir: 'desc' })
   const maxLevel = Math.max(0, ...nodes.map((n) => n.level))
 
   const children = useMemo(() => {

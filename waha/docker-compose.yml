@@ -1,0 +1,19 @@
+# WAHA (WhatsApp HTTP API) برای ارسال خودکار واتساپ از بک‌اند مالی (backend/app/services/whatsapp).
+# فقط روی 127.0.0.1 باز است؛ بک‌اند از طریق http://127.0.0.1:3010 با کلید WAHA_API_KEY به آن وصل می‌شود.
+# موتور GOWS سبک است و مرورگر لازم ندارد. نشست (اتصال شماره) در پوشه sessions می‌ماند و با ری‌استارت از بین نمی‌رود.
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: exir-waha
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3010:3000"
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY}
+      WHATSAPP_DEFAULT_ENGINE: GOWS
+      WAHA_PRINT_QR: "False"
+      WAHA_LOG_LEVEL: info
+      TZ: Asia/Tehran
+    volumes:
+      - ./sessions:/app/.sessions
+      - ./media:/app/.media

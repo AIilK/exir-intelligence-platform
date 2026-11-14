@@ -1,5 +1,5 @@
 import { Component, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, fullTitle } from '../lib.jsx'
+import { fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, fullTitle, useSaved } from '../lib.jsx'
 import { buildXlsx, colName } from '../xlsx.js'
 
 export function Kpi({ label, value, type = 'money', sub, hint, onClick, active, more }) {
@@ -170,8 +170,10 @@ export function DataTable({ rows, columns: allColumns, unit, onRowClick, pageSiz
   expandedKey, renderExpanded, totals, exportExtras }) {
   // ستون‌های exportOnly فقط در اکسل می‌آیند
   const columns = useMemo(() => allColumns.filter((c) => !c.exportOnly), [allColumns])
-  const [q, setQ] = useState('')
-  const [sort, setSort] = useState(defaultSort || null)
+  // جستجو و مرتب‌سازی هر جدول به‌خاطر می‌ماند (کلید: نام خروجی یا ستون‌هایش)
+  const tableId = exportName || allColumns.slice(0, 3).map((c) => c.key).join('.')
+  const [q, setQ] = useSaved(`dt:${tableId}:q`, '')
+  const [sort, setSort] = useSaved(`dt:${tableId}:sort`, defaultSort || null)
   const [page, setPage] = useState(0)
   useEffect(() => { setPage(0) }, [q, rows])
 

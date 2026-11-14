@@ -22,7 +22,7 @@ def run_daily_customer_intelligence():
 def start_customer_scheduler():
     global _scheduler
     if _scheduler is not None: return _scheduler
-    if not settings.customer_intelligence_scheduler_enabled and not settings.karamad_excel_scan_enabled and not settings.hybrid_risk_weekly_enabled: return None
+    if not settings.customer_intelligence_scheduler_enabled and not settings.karamad_excel_scan_enabled and not settings.hybrid_risk_weekly_enabled and not settings.whatsapp_enabled: return None
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler=BackgroundScheduler(timezone="Asia/Tehran")
     if settings.customer_intelligence_scheduler_enabled:
@@ -33,6 +33,10 @@ def start_customer_scheduler():
         _scheduler.add_job(run_weekly_ai_file_analysis,"cron",day_of_week=settings.hybrid_risk_weekly_day,hour=settings.ai_file_analysis_weekly_hour,minute=settings.ai_file_analysis_weekly_minute,id="weekly_ai_file_analysis",replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=6*3600)
     if settings.karamad_excel_scan_enabled:
         _scheduler.add_job(run_karamad_excel_scan,"interval",minutes=max(1,settings.karamad_excel_scan_minutes),id="karamad_excel_folder_scan",replace_existing=True,max_instances=1,coalesce=True)
+    if settings.whatsapp_enabled:
+        # ارسال واتساپ: هر دقیقه قاعده‌های سررسیده اجرا و صف تأییدشده ارسال می‌شود (app/services/whatsapp/runner.py)
+        from app.services.whatsapp.runner import tick as whatsapp_tick
+        _scheduler.add_job(whatsapp_tick,"interval",minutes=1,id="whatsapp_tick",replace_existing=True,max_instances=1,coalesce=True)
     _scheduler.start(); return _scheduler
 def stop_customer_scheduler():
     global _scheduler

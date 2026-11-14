@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ALERT_TERM_AMOUNT_RIAL, ALERT_TERM_DAYS, chequeTermDays } from "./collections";
 import type { Cheque, Customer, InsightPayload, InsightRecord, TreasuryCheque, View } from "./types";
+import { getMoneyUnit, shortTomanText } from "../money-unit";
 
 export const openInsight = (payload: InsightPayload) => {
   if (typeof window !== "undefined")
@@ -97,6 +98,7 @@ export const fa = (v: number = 0) =>
 // تمام مبالغ Backend بر حسب ریال هستند. تنها نقطه تبدیل رابط کاربری همین
 // تابع است تا هیچ کارت یا نموداری ریال و تومان را با هم مخلوط نکند.
 export const money = (rial: number = 0) => {
+  if (getMoneyUnit() !== "auto") return shortTomanText(rial);
   const toman = Number(rial || 0) / 10,
     abs = Math.abs(toman);
   return abs >= 1e12
@@ -426,6 +428,7 @@ export const menu: [View, string, string][] = [
   ["distribution", "⛟", "توزیع بار"],
   ["performance", "◉", "دقت پیش‌بینی"],
   ["settings", "⚙", "قوانین و اتوماسیون"],
+  ["whatsapp", "✆", "ارسال واتساپ"],
   ["alerts", "🔔", "مرکز الارم‌ها"],
   ["users", "👥", "مدیریت کاربران"],
 ];

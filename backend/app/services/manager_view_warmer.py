@@ -39,6 +39,10 @@ def _paths() -> list[str]:
     paths = [
         "/liquidity/summary?horizon_days=30",
         "/liquidity/received-cheques?horizon_days=30",
+        "/liquidity/received-cheques?horizon_days=365",
+        "/liquidity/received-cheques/status/returned",
+        "/liquidity/received-cheques/status/undetermined",
+        "/liquidity/issued-cheques?horizon_days=365",
         "/liquidity/issued-cheques?horizon_days=30",
         "/liquidity/inflows?base_days=180&channel=all",
         "/liquidity/inflows?base_days=180&channel=hybrid",

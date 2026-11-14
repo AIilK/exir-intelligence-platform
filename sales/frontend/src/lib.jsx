@@ -44,7 +44,7 @@ export const faDigits = (s) => String(s ?? '').replace(/\d/g, (d) => '۰۱۲۳۴
 
 // ---------------------------------------------------------------- filters
 export const EMPTY_FILTERS = {
-  date_from: '', date_to: '', branch: [], supervisor: [], seller: [], brand: [],
+  date_from: '', date_to: '', days: [], branch: [], supervisor: [], seller: [], brand: [],
   category: [], group: [], city: [], payment: [], inv_type: [],
 }
 export const FILTER_LABELS = {
@@ -170,6 +170,17 @@ export function AppProvider({ children }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
 export const useApp = () => useContext(Ctx)
+
+/** useState که مقدارش در همین نشست مرورگر می‌ماند: فیلتر، جستجو و مرتب‌سازی جدول‌ها وقتی کاربر به صفحه برمی‌گردد سر جایش است.
+ *  کلید باید در صفحه یکتا باشد؛ مسیر صفحه خودکار جلویش می‌آید. */
+export function useSaved(key, init) {
+  const k = `exir.f:${typeof window === 'undefined' ? '' : window.location.pathname}:${key}`
+  const [value, setValue] = useState(() => {
+    try { const raw = sessionStorage.getItem(k); return raw == null ? init : JSON.parse(raw) } catch { return init }
+  })
+  useEffect(() => { try { sessionStorage.setItem(k, JSON.stringify(value)) } catch { /* حالت خصوصی */ } }, [k, value])
+  return [value, setValue]
+}
 
 // ---------------------------------------------------------------- api
 export async function fetchJson(url, opts) {

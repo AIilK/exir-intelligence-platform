@@ -1,7 +1,7 @@
 // Tabs shared by the hybrid file and the visitor file (finance data from the Karamad sales network).
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useJson, mt, n0, pct, isNum, faDigits, moneyText, growth, signedPct } from './data.js'
+import { useJson, mt, n0, pct, isNum, faDigits, moneyText, growth, signedPct, mtLabel } from './data.js'
 import { normName } from './model.js'
 import { Card, Pending, Bar, Money, PairBars, Mt } from './ui.jsx'
 
@@ -137,7 +137,7 @@ export function ChequesTab({ file, ch, bucket, go, scopeLabel = 'این هیبر
       <Card title={`ریز چک‌ها — ${ch.buckets.find((b) => b.key === bucket)?.label || ''}`} sub={`${n0(rows.length)} فقره · جمع ${moneyText(rows.reduce((s, x) => s + (x.amount_rial || 0), 0))} · احتمال برگشت از سابقه چک‌های همان مشتری (نشانگر را روی آن نگه دارید)`}>
         <div className="u-table-wrap">
           <table className="u-table">
-            <thead><tr><th>سررسید</th><th>زمان</th><th>مشتری</th>{showVisitor && <th>ویزیتور</th>}<th>بانک</th><th>شماره چک</th><th>مبلغ<small>میلیون تومان</small></th><th>وضعیت</th><th>احتمال برگشت</th></tr></thead>
+            <thead><tr><th>سررسید</th><th>زمان</th><th>مشتری</th>{showVisitor && <th>ویزیتور</th>}<th>بانک</th><th>شماره چک</th><th>مبلغ<small>{mtLabel()}</small></th><th>وضعیت</th><th>احتمال برگشت</th></tr></thead>
             <tbody>
               {rows.slice(0, 300).map((x) => (
                 <tr key={x.cheque_id}>
@@ -204,7 +204,7 @@ export function DebtTab({ file, detailUrl, dso, ids, showVisitors = true }) {
         <Card title="بزرگ‌ترین بدهکاران" sub={`${n0((x.customers || []).length)} مشتری بدهکار · جمع ${moneyText(total)} · ۳۰ مورد اول`}>
           <div className="u-table-wrap">
             <table className="u-table">
-              <thead><tr><th>مشتری</th><th>بدهی<small>میلیون تومان</small></th><th>از چک برگشتی<small>میلیون تومان</small></th><th>قدیمی‌ترین فاکتور پرداخت‌نشده</th><th>آخرین پرداخت</th>{showVisitors && <th>ویزیتور</th>}</tr></thead>
+              <thead><tr><th>مشتری</th><th>بدهی<small>{mtLabel()}</small></th><th>از چک برگشتی<small>{mtLabel()}</small></th><th>قدیمی‌ترین فاکتور پرداخت‌نشده</th><th>آخرین پرداخت</th>{showVisitors && <th>ویزیتور</th>}</tr></thead>
               <tbody>
                 {(x.customers || []).slice(0, 30).map((c) => (
                   <tr key={c.dl_ref}>
@@ -233,7 +233,7 @@ export function InvoicesTab({ file, ids, showVisitor = true }) {
     <Card title={`آخرین فاکتورهای ${faDigits(file.data.current_year_label)} و وضعیت وصول`} sub="مانده و نحوهٔ وصول هر فاکتور از تسویه فاکتور در کارآمد">
       <div className="u-table-wrap">
         <table className="u-table">
-          <thead><tr><th>شماره</th><th>تاریخ</th>{showVisitor && <th>ویزیتور</th>}<th>مبلغ<small>میلیون تومان</small></th><th>وصول‌شده</th><th>مانده<small>میلیون تومان</small></th><th>نحوه وصول</th></tr></thead>
+          <thead><tr><th>شماره</th><th>تاریخ</th>{showVisitor && <th>ویزیتور</th>}<th>مبلغ<small>{mtLabel()}</small></th><th>وصول‌شده</th><th>مانده<small>{mtLabel()}</small></th><th>نحوه وصول</th></tr></thead>
           <tbody>
             {inv.map((x) => (
               <tr key={x.invoice_id}>
@@ -284,13 +284,13 @@ export function VisitorsTable({ visitors, monthBy, chq, Y, limit, title, sub, ac
           <thead><tr>
             <Th k="name" {...p}>ویزیتور</Th>
             <Th k="supervisor" {...p}>سرپرست</Th>
-            <Th k="cur" {...p} className="t-sales" unit="میلیون تومان">فروش {yl}</Th>
-            <Th k="prev" {...p} className="t-sales" unit="میلیون تومان">فروش {pyl}</Th>
-            <Th k="month" {...p} className="t-sales" unit="میلیون تومان">فروش این ماه</Th>
-            <Th k="debtRial" {...p} className="t-fin" unit="میلیون تومان">مطالبات مشتریانش</Th>
+            <Th k="cur" {...p} className="t-sales" unit={mtLabel()}>فروش {yl}</Th>
+            <Th k="prev" {...p} className="t-sales" unit={mtLabel()}>فروش {pyl}</Th>
+            <Th k="month" {...p} className="t-sales" unit={mtLabel()}>فروش این ماه</Th>
+            <Th k="debtRial" {...p} className="t-fin" unit={mtLabel()}>مطالبات مشتریانش</Th>
             <Th k="ratio" {...p} className="t-fin">مطالبات ÷ فروش امسال</Th>
-            <Th k="overdue" {...p} className="t-fin" unit="میلیون تومان">چک سررسید گذشته</Th>
-            <Th k="returned" {...p} className="t-fin" unit="میلیون تومان">چک برگشتی</Th>
+            <Th k="overdue" {...p} className="t-fin" unit={mtLabel()}>چک سررسید گذشته</Th>
+            <Th k="returned" {...p} className="t-fin" unit={mtLabel()}>چک برگشتی</Th>
             <Th k="last_invoice_date_jalali" {...p}>آخرین فاکتور</Th>
           </tr></thead>
           <tbody>

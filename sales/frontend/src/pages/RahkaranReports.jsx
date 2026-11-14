@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useApp, useRkFetch, fmtMoney, fmtInt, faDigits, UNITS, fullTitle } from '../lib.jsx'
+import { useApp, useRkFetch, fmtMoney, fmtInt, faDigits, UNITS, fullTitle, useSaved } from '../lib.jsx'
 import { Card, Loading, ErrorBox, MultiSelect } from '../components/ui.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { buildXlsx } from '../xlsx.js'
@@ -70,7 +70,7 @@ export function CustomerBrand() {
   const period = sp.get('period') || 'YTD'
   const cat = sp.get('cat') || ''
   const products = sp.getAll('product')
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useSaved('search', '')
   const [onlyActive, setOnlyActive] = useState(false)
   const [sel, setSel] = useState(null)
   // مرتب‌سازی با کلیک روی سرستون: col = ستون متنی (province / code / short / brand) یا «برند|معیار» (مثل Total|cash)

@@ -65,6 +65,8 @@ def apply_filters(df: pd.DataFrame | None, f: dict, is_sales: bool) -> pd.DataFr
         m &= df["date"] >= f["date_from"]
     if f.get("date_to"):
         m &= df["date"] <= f["date_to"]
+    if f.get("days"):
+        m &= df["date"].isin(f["days"])
     for key, col in FILTER_FIELDS.items():
         vals = f.get(key)
         if vals and col in df.columns:
@@ -82,7 +84,15 @@ def elapsed_days(ctx: dict, f: dict, tx: pd.DataFrame, rq: pd.DataFrame | None) 
     روزهای دارای داده ملاک نیست، چون چند ثبت در جمعه یا روز بی‌فروش یک شعبه مخرج را عوض می‌کرد."""
     if (f.get("date_from") or f.get("date_to")) and not f.get("default_period"):
         wd, today = ctx.get("workdays"), ctx.get("today")
-        if wd is not None and len(wd):
+        if f.get("days") and wd is not None and len(wd):
+            # روزهای انتخابی: روزهای کاری میان آن‌ها (امروز اگر انتخاب شده، چون کامل نشده، حساب نمی‌شود)
+            wds = set(wd)
+            cut = bool(today and today in f["days"])
+            n = sum(1 for x in f["days"] if x in wds and not (cut and x >= today))
+            if n > 0:
+                f["_cut_today"] = cut
+                return float(n), False
+        elif wd is not None and len(wd):
             lo, hi = f.get("date_from") or "", f.get("date_to") or "9999"
             cut = bool(today and lo < today <= hi)
             n = int(np.searchsorted(wd, today if cut else hi, "left" if cut else "right") - np.searchsorted(wd, lo, "left"))

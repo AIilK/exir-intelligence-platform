@@ -5,15 +5,11 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import "./mini-charts.css";
+import { shortTomanText } from "../money-unit";
 
 const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
-export const shortToman = (rial: number | null | undefined) => {
-  const t = Number(rial || 0) / 10, a = Math.abs(t);
-  if (a >= 1e9) return `${nf1.format(t / 1e9)} میلیارد`;
-  if (a >= 1e6) return `${nf.format(t / 1e6)} میلیون`;
-  return nf.format(t);
-};
+export const shortToman = (rial: number | null | undefined) => shortTomanText(rial);
 const pct = (part: number, total: number) => (total ? `${nf.format(Math.round((100 * part) / total))}٪` : "۰٪");
 
 export const PALETTE = { teal: "#0d9488", amber: "#d97706", violet: "#8b5cf6", slate: "#64748b" };

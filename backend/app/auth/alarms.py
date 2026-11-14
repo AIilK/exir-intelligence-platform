@@ -33,7 +33,8 @@ def _agent_module(user: dict[str, Any]) -> dict[str, str]:
 # صفحه هر ماژول فروش در داشبورد یکپارچه (ماژول‌های فروش view مالی ندارند)
 UNIFIED_ROUTES = {"salesOverview": "/sales", "salesHybrid": "/hybrid", "salesTeam": "/team", "salesProducts": "/products",
                   "salesCustomers": "/files/hybrids", "salesAnalysis": "/analysis", "salesInventory": "/inventory",
-                  "salesB2B": "/rahkaran", "salesExport": "/rahkaran/export"}
+                  "salesB2B": "/rahkaran", "salesExport": "/rahkaran/export",
+                  "contracts": "/contracts"}
 
 
 def _target(mod: str) -> str | None:

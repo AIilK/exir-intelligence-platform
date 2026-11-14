@@ -1,3 +1,4 @@
+import { moneyParts, tableMoney, tableMoneyLabel } from '@finance/money-unit.ts'
 import { useEffect, useState } from 'react'
 import { fetchJson, useApp } from '@sales/lib.jsx'
 
@@ -44,7 +45,9 @@ export const qs = (o) => Object.entries(o).filter(([, v]) => v !== undefined && 
 const nf0 = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 })
 const nf1 = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 1 })
 export const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
-export const mt = (rial) => (isNum(rial) ? nf0.format(rial / 1e7) : '—') // million toman
+export const mt = (rial) => (isNum(rial) ? tableMoney(rial) : '—') // ستون جدول: میلیون تومان، یا واحد انتخابی کاربر
+/** عنوان واحد ستون‌هایی که با mt() پر می‌شوند */
+export const mtLabel = () => tableMoneyLabel()
 export const bt = (rial) => (isNum(rial) ? nf1.format(rial / 1e10) : '—') // billion toman
 const nfFull = new Intl.NumberFormat('fa-IR', { maximumFractionDigits: 0 })
 /** exact amount for hover titles, e.g. «۲۶٬۸۳۱٬۲۳۴٬۵۶۷ تومان» */
@@ -57,11 +60,8 @@ export const faDigits = (s) => String(s ?? '').replace(/\d/g, (d) => '۰۱۲۳۴
 /** Amount with a readable unit: ≥1 billion toman → «۳۱٫۴ میلیارد تومان», else «۸۵۰ میلیون تومان». */
 export function money(rial) {
   if (!isNum(rial)) return { v: '—', u: '' }
-  const t = rial / 10
-  const a = Math.abs(t)
-  if (a >= 1e9) return { v: nf1.format(t / 1e9), u: 'میلیارد تومان' }
-  if (a >= 1e6) return { v: nf0.format(t / 1e6), u: 'میلیون تومان' }
-  return { v: nf0.format(t), u: 'تومان' }
+  const { v, u } = moneyParts(rial)
+  return { v, u: u ? `${u} تومان` : 'تومان' }
 }
 export const moneyText = (rial) => {
   const m = money(rial)

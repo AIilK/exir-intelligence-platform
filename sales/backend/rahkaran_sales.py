@@ -246,11 +246,27 @@ def periods(snap: dict) -> list[dict]:
     return [{"value": "YTD", "label": f"از ابتدای {y}"}] + [{"value": m, "label": m} for m in months]
 
 
+DAYS_RE = r"\d{4}/\d{2}/\d{2}(,\d{4}/\d{2}/\d{2})*"
+
+
+def sale_days(snap: dict) -> list[str]:
+    """همه روزهای دارای فاکتور فروش (برای تقویم فیلتر روزانه)"""
+    df = snap["lines"]
+    return sorted(df.loc[df["kind"].eq("S"), "date"].unique().tolist())
+
+
 def window(snap: dict, period: str) -> tuple[pd.Series, pd.Series, str]:
-    """ماسک دوره و همان دوره در سال قبل (برای ماه جاری و YTD تا همان روز)."""
+    """ماسک دوره و همان دوره در سال قبل (برای ماه جاری و YTD تا همان روز).
+    period: YTD، ماه «1405/08» یا روزهای انتخابی «1405/08/01,1405/08/03»."""
     df, today = snap["lines"], snap["today"]
     y = today[:4]
     ly = str(int(y) - 1)
+    if re.fullmatch(DAYS_RE, period or ""):
+        # روزهای انتخابی (یک یا چند روز، با ویرگول) و همان روزها در سال قبل
+        days = sorted(set(period.split(",")))
+        cur = df["date"].isin(days)
+        prev = df["date"].isin([f"{int(d[:4]) - 1}{d[4:]}" for d in days])
+        return cur, prev, ",".join(days)
     if period == "YTD" or not re.fullmatch(r"\d{4}/\d{2}", period or ""):
         cur = df["date"].str[:4].eq(y)
         prev = df["date"].str[:4].eq(ly) & (df["date"].str[5:] <= today[5:])

@@ -11,6 +11,9 @@ from app.api.treasury import router as treasury_router
 from app.api.v1.finance_dashboard import router as finance_dashboard_router
 from app.api.v1.finance_operations import router as finance_operations_router
 from app.api.v1.liquidity import router as liquidity_router
+from app.api.v1.whatsapp import router as whatsapp_router
+from app.api.v1.staff_contracts import router as staff_contracts_router
+from app.api.v1.global_search import router as global_search_router
 from app.chatbot.router import router as chatbot_router
 from app.auth.router import router as auth_router
 from app.auth.alarms import router as alarms_router
@@ -23,6 +26,8 @@ async def lifespan(app: FastAPI):
     from app.auth.store import init_tables
     init_tables()
     from app.automation.daily_finance_job import start_customer_scheduler, stop_customer_scheduler
+    from app.services.whatsapp import runner as whatsapp_runner
+    whatsapp_runner.startup()  # پیام‌هایی که وسط ارسال مانده بودند دوباره در صف
     start_customer_scheduler()
     from app.services.karamad_sales_network_service import warm_up
     warm_up()
@@ -33,6 +38,8 @@ async def lifespan(app: FastAPI):
     chatbot_warm_up()  # نمایه جستجوی چت‌بات و پرتفوی مشتریان از همان اول آماده باشد
     from app.services import manager_view_warmer
     manager_view_warmer.start()  # همه داده نمای مدیر از همان اول ساخته و تا وقتی کسی صفحه را می‌بیند گرم نگه داشته شود
+    from app.services.staff_contracts import refresh_alarms_async
+    refresh_alarms_async()  # الارم «یک هفته مانده به پایان قرارداد» بعد از هر راه‌اندازی تازه شود
     from app.core.config import settings
     if settings.hybrid_risk_weekly_enabled:
         def _hybrid_risk_catch_up():
@@ -108,6 +115,9 @@ app.include_router(chatbot_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(alarms_router, prefix="/api/v1")
 app.include_router(reminders_router, prefix="/api/v1")
+app.include_router(whatsapp_router, prefix="/api/v1")
+app.include_router(staff_contracts_router, prefix="/api/v1")
+app.include_router(global_search_router, prefix="/api/v1")
 
 @app.get("/")
 def root():

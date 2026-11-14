@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import "./cheque-status-drawer.css";
 import { RegCell, chequeNo } from "../cheque-reg";
+import { shortTomanText } from "../money-unit";
 
 export type ChequeStatusKind = "returned" | "undetermined";
 type Group = { label: string; amount_rial: number; count: number };
@@ -22,12 +23,7 @@ const nf = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
 const fa = (v: number | null | undefined) => nf.format(v || 0);
 const fullToman = (rial: number) => nf.format(Math.round(rial / 10));
-const shortToman = (rial: number) => {
-  const t = rial / 10, a = Math.abs(t);
-  if (a >= 1e9) return `${nf1.format(t / 1e9)} میلیارد`;
-  if (a >= 1e6) return `${nf.format(t / 1e6)} میلیون`;
-  return nf.format(t);
-};
+const shortToman = (rial: number) => shortTomanText(rial);
 const faDigits = (v: string | null | undefined) => String(v || "").replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
 const SYSTEM_COLOR: Record<string, string> = { "راهکاران": "#0d9488", "کارآمد": "#d97706" };
 

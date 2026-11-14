@@ -142,5 +142,239 @@ def overview(year: int, month: int) -> dict[str, Any]:
         out["receivables"] = rahkaran_receivables()
     except Exception as exc:  # noqa: BLE001
         out["errors"].append(f"مطالبات راهکاران: {exc}")
+    try:
+        out["collections"] = rahkaran_collections(year, month)
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"وصول راهکاران: {exc}")
+    try:
+        out["today_inflows"] = today_inflows()
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"وصول امروز: {exc}")
+    try:
+        out["receivables_report"] = receivables_report()
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"مطالبات باز (پرونده مشتری): {exc}")
     return out
 
+
+# ---------------------------------------------------------------- وصول ماه: محصول در برابر مواد اولیه
+RAW_MATERIAL_ACCOUNT = "124046"  # «دریافتنی غیر رسمی (مواد اولیه)»
+EXPORT_ACCOUNT = "123010"  # «حسابهای دریافتنی تجاری ارزی»: مشتریان صادراتی
+SEGMENTS = (("rep", "نمایندگان B2B"), ("export", "صادرات"), ("other", "سایر"))
+
+
+def _is_rep_code(code: str) -> bool:
+    """کد تفصیلی نمایندگان و مشتریان محصول: ۶ رقمی ۷xxxxx تا ۹xxxxx (همان قاعده گزارش مانده واحد مالی)."""
+    return len(code) == 6 and code[0] in "789"
+
+
+def is_raw_material_collection(account_code: str | None, counterpart_code: str | None, counterpart_name: str | None) -> bool:
+    """وصول از خریدار مواد اولیه: هر ورودی معین ۱۲۴۰۴۶ «دریافتنی غیر رسمی (مواد اولیه)»، یا ورودی حساب‌های دریافتنی
+    از طرف حسابی که نماینده/مشتری محصول نیست (کد خارج از ۷xxxxx تا ۹xxxxx) و در نامش «مواد» آمده
+    (مثل «خریدار مواد اولیه» روی معین ۱۲۳۰۰۳)."""
+    if str(account_code or "") == RAW_MATERIAL_ACCOUNT:
+        return True
+    name = str(counterpart_name or "").replace("ي", "ی").replace("ك", "ک")
+    return "مواد" in name and not _is_rep_code(str(counterpart_code or "").strip())
+
+
+def rahkaran_collections(year: int, month: int) -> dict[str, Any]:
+    """وصول ماه راهکاران (نقد و حواله، بدون چک) در دو بخش: محصول (نمایندگان، صادرات، سایر مشتریان) و مواد اولیه.
+    همان حرکت‌های تحلیل نقدینگی (liquidity/cash_movements.py) است؛ محصول = «وصول از مشتری» منهای خریداران مواد."""
+    def load():
+        import jdatetime
+        from collections import defaultdict
+
+        from app.services.liquidity.cash_movements import CashMovementService
+
+        start = jdatetime.date(year, month, 1).togregorian()
+        end = jdatetime.date(year + (month == 12), month % 12 + 1, 1).togregorian()
+        rows, _, _ = CashMovementService()._classified("b2b", False)
+        parts = {"product": defaultdict(float), "raw_material": defaultdict(float)}
+        accounts = {"product": defaultdict(float), "raw_material": defaultdict(float)}
+        customers: dict[str, dict[tuple[str, str], dict[str, Any]]] = {"product": {}, "raw_material": {}}
+        for r in rows:
+            m = r.movement
+            if m.direction != "inflow" or not (start <= m.day < end):
+                continue
+            raw = is_raw_material_collection(m.account_code, m.counterpart_code, m.counterpart_name)
+            if not raw and r.classification.category != "customer_collection":
+                continue
+            kind = "raw_material" if raw else "product"
+            amount = float(r.signed_amount)
+            parts[kind][m.method] += amount
+            accounts[kind][f"{m.account_code or '—'} · {m.account_name or 'نامشخص'}"] += amount
+            key = (str(m.counterpart_code or ""), str(m.counterpart_name or "نامشخص").strip())
+            c = customers[kind].setdefault(key, {"code": key[0], "name": key[1], "amount_rial": 0.0, "count": 0, "by_method": defaultdict(float)})
+            c["amount_rial"] += amount
+            c["count"] += m.count
+            c["by_method"][m.method] += amount
+            c.setdefault("accounts", set()).add(str(m.account_code or ""))
+
+        def segment(c: dict[str, Any]) -> str:
+            """صادرات = دریافت روی معین ارزی ۱۲۳۰۱۰؛ نماینده B2B = کد تفصیلی ۷xxxxx تا ۹xxxxx؛ بقیه = سایر."""
+            if EXPORT_ACCOUNT in c["accounts"]:
+                return "export"
+            return "rep" if _is_rep_code(c["code"]) else "other"
+
+        def clean(x: dict[str, Any]) -> dict[str, Any]:
+            return {"code": x["code"], "name": x["name"], "count": x["count"], "amount_rial": round(x["amount_rial"], 2),
+                    "by_method": {k: round(v, 2) for k, v in x["by_method"].items()}}
+
+        def pack(kind: str) -> dict[str, Any]:
+            top = sorted(customers[kind].values(), key=lambda x: -x["amount_rial"])[:15]
+            return {
+                "amount_rial": round(sum(parts[kind].values()), 2),
+                "by_method": {k: round(v, 2) for k, v in parts[kind].items()},
+                "by_account": [{"key": k, "amount_rial": round(v, 2)} for k, v in sorted(accounts[kind].items(), key=lambda kv: -kv[1])],
+                "customer_count": len(customers[kind]),
+                "top_customers": [clean(x) for x in top],
+            }
+
+        def segments() -> list[dict[str, Any]]:
+            out = []
+            for key, label in SEGMENTS:
+                rows = sorted((c for c in customers["product"].values() if segment(c) == key), key=lambda x: -x["amount_rial"])
+                out.append({"key": key, "label": label, "amount_rial": round(sum(c["amount_rial"] for c in rows), 2),
+                            "customer_count": len(rows), "customers": [clean(c) for c in rows]})
+            return out
+        product = pack("product")
+        product["segments"] = segments()
+        return {"product": product, "raw_material": pack("raw_material"),
+                "rule": "نقد و حواله ماه از راهکاران؛ مواد اولیه = معین ۱۲۴۰۴۶ و خریداران مواد روی حساب‌های دریافتنی؛ بقیه وصول از مشتری = محصول."}
+    return _cached(f"collections:{year}/{month}", load)
+
+
+# ---------------------------------------------------------------- مطالبات باز: همان عدد «پرونده مشتری»
+def receivables_report() -> dict[str, Any]:
+    """مانده بدهی مشتریان راهکاران و حساب چک برگشتی، با همان قاعده گزارش واحد مالی که صفحه «پرونده مشتری» نشان می‌دهد
+    (report_open_account_receivable_rial و report_returned_account_rial)، به‌اضافه بزرگ‌ترین بدهکاران."""
+    def load():
+        from app.services.customer_intelligence_service import CustomerIntelligenceService
+
+        portfolio = CustomerIntelligenceService().collection_portfolio(1000)
+        s = portfolio.get("summary") or {}
+        rows = [c for c in portfolio.get("customers") or [] if (c.get("collection_position") or {}).get("in_receivable_report")]
+
+        def row(c: dict[str, Any]) -> dict[str, Any]:
+            cp = c.get("collection_position") or {}
+            return {"code": str(c.get("counterpart_code") or ""), "name": c.get("counterpart_name") or "—",
+                    "balance_rial": float(cp.get("open_account_receivable_rial") or 0),
+                    "returned_rial": float(cp.get("returned_account_rial") or 0),
+                    "open_cheques_rial": float(cp.get("open_cheque_amount_rial") or 0),
+                    "overdue_rial": float(c.get("overdue_open_amount") or 0),
+                    "last_invoice": c.get("last_invoice_date_jalali")}
+        debtors = sorted((row(c) for c in rows), key=lambda x: -(x["balance_rial"] + x["returned_rial"]))
+        return {"balance_rial": float(s.get("report_open_account_receivable_rial") or 0),
+                "returned_rial": float(s.get("report_returned_account_rial") or 0),
+                "customer_count": int(s.get("report_customer_count") or 0),
+                "debtor_count": sum(1 for d in debtors if d["balance_rial"] + d["returned_rial"] > 0),
+                "top": [d for d in debtors if d["balance_rial"] + d["returned_rial"] > 0][:15]}
+    return _cached("receivables_report", load)
+
+
+
+# ---------------------------------------------------------------- وصول و واریز امروز
+TODAY_GROUPS = (("customer", "وصول مشتریان (نقد و حواله)"), ("returned", "بابت چک برگشتی"), ("raw_material", "خریداران مواد اولیه"),
+                ("cheque", "چک نقدشده (وصول‌کننده)"), ("other", "سایر ورودی‌های عملیاتی"))
+SYSTEM_LABELS = {"rahkaran": "راهکاران", "karamad": "کارآمد"}
+RETURNED_ACCOUNT = "1"  # راهکاران: «حسابهای دریافتنی بابت برگشتی»
+
+# کارآمد: هر واریز (حواله tblDraftD و نقد tblCashD) با شعبه، مشتری و اینکه بابت چک برگشتی بوده یا نه (ReturnChequeRef)
+KARAMAD_TODAY_SQL = text("""
+    SELECT x.[Method], b.[Name] AS [Branch], CAST(dl.[Code] AS nvarchar(50)) AS [Code], dl.[Name] AS [Name],
+           CAST(sl.[Code] AS nvarchar(50)) AS [SL], CASE WHEN x.[ReturnChequeRef] IS NULL THEN 0 ELSE 1 END AS [Returned],
+           MAX(CONCAT(x.[Behalf], N' ', x.[Description])) AS [Behalf], SUM(x.[Amount]) AS [Amount], COUNT_BIG(*) AS [N]
+    FROM (SELECT N'bank' AS [Method], [BranchRef], [DLRef], [SLRef], [ReturnChequeRef], [Price] AS [Amount], [Behalf], [Description]
+          FROM dbo.[tblDraftD] WHERE COALESCE([DraftDate], [BookDate]) = :d
+          UNION ALL
+          SELECT N'cash', [BranchRef], [DLRef], [SLRef], [ReturnChequeRef], [PriceN], [Behalf], [Description]
+          FROM dbo.[tblCashD] WHERE [BookDate] = :d) AS x
+    LEFT JOIN dbo.[tblBranch] b ON b.[ID] = x.[BranchRef]
+    LEFT JOIN dbo.[tblDL] dl ON dl.[ID] = x.[DLRef]
+    LEFT JOIN dbo.[tblSL] sl ON sl.[ID] = x.[SLRef]
+    GROUP BY x.[Method], b.[Name], dl.[Code], dl.[Name], sl.[Code], CASE WHEN x.[ReturnChequeRef] IS NULL THEN 0 ELSE 1 END
+""")
+
+
+def today_inflows() -> dict[str, Any]:
+    """پولی که امروز واقعاً وارد صندوق و بانک شده، هر دو سیستم (نقد و حواله؛ چک دریافتی جداست).
+    راهکاران: رسیدهای تأییدشده (همان تحلیل نقدینگی)؛ رسید امروزِ تأییدنشده بعد از تأیید اضافه می‌شود.
+    کارآمد: واریزهای امروز با شعبه و مشتری. دسته‌بندی حساب‌ها همان account_map است؛ جابه‌جایی بانک‌ها،
+    شرکا، تسویه کالای هیبریدها با شرکت و واریز نامشخص کنار گذاشته می‌شوند."""
+    def load():
+        from collections import defaultdict
+
+        from app.database.karamad_sqlserver import get_karamad_sqlserver_engine
+        from app.services.liquidity.account_map import NOTE_CHEQUE_COLLECTION, classify
+        from app.services.liquidity.cash_movements import _CHEQUE_PHRASES, CashMovementService
+
+        today = date.today()
+        items: dict[tuple, dict[str, Any]] = {}
+
+        def add(system: str, group: str, branch: str | None, code: Any, name: str, method: str, amount: float, count: int) -> None:
+            code = str(code or "").removesuffix(".0")
+            key = (system, group, branch, code, name)
+            it = items.setdefault(key, {"system": system, "group": group, "branch": branch, "code": code, "name": name,
+                                        "amount_rial": 0.0, "count": 0, "by_method": defaultdict(float)})
+            it["amount_rial"] += amount
+            it["count"] += count
+            it["by_method"][method] += amount
+
+        def group_of(cat: str, note: str | None) -> str | None:
+            if note == NOTE_CHEQUE_COLLECTION:
+                return "cheque"
+            return {"customer_collection": "customer", "other_operating_inflow": "other"}.get(cat)
+
+        # راهکاران
+        rows, _, _ = CashMovementService()._classified("b2b", False)
+        rk_days = [r.movement.day for r in rows if r.movement.direction == "inflow"]
+        for r in rows:
+            m = r.movement
+            if m.direction != "inflow" or m.day != today:
+                continue
+            if is_raw_material_collection(m.account_code, m.counterpart_code, m.counterpart_name):
+                group = "raw_material"
+            elif str(m.account_code or "") == RETURNED_ACCOUNT and r.classification.category == "customer_collection":
+                group = "returned"
+            else:
+                group = group_of(r.classification.category, m.note)
+            if group:
+                add("rahkaran", group, None, m.counterpart_code or m.account_code,
+                    (m.counterpart_name or "").strip() or (m.account_name or "نامشخص"), m.method, float(m.amount_rial), m.count)
+
+        # کارآمد
+        with get_karamad_sqlserver_engine().connect() as c:
+            km = c.execute(KARAMAD_TODAY_SQL, {"d": today}).mappings().all()
+        for r in km:
+            behalf = str(r["Behalf"] or "")
+            note = NOTE_CHEQUE_COLLECTION if any(p in behalf for p in _CHEQUE_PHRASES) else None
+            cls = classify("karamad", "inflow", r["SL"], note=note)
+            group = "returned" if r["Returned"] and cls.category == "customer_collection" else group_of(cls.category, note)
+            if group:
+                add("karamad", group, (r["Branch"] or "").strip() or "بدون شعبه", r["Code"], (r["Name"] or "").strip() or "نامشخص",
+                    r["Method"], float(r["Amount"] or 0), int(r["N"] or 0))
+
+        rows_out = sorted(({**x, "amount_rial": round(x["amount_rial"], 2), "by_method": {k: round(v, 2) for k, v in x["by_method"].items()}}
+                           for x in items.values()), key=lambda x: -x["amount_rial"])
+        systems = []
+        for system, label in SYSTEM_LABELS.items():
+            mine = [x for x in rows_out if x["system"] == system]
+            groups = []
+            for g, glabel in TODAY_GROUPS:
+                gr = [x for x in mine if x["group"] == g]
+                if gr:
+                    groups.append({"key": g, "label": glabel, "amount_rial": round(sum(x["amount_rial"] for x in gr), 2),
+                                   "count": sum(x["count"] for x in gr), "items": gr})
+            systems.append({"key": system, "label": label, "amount_rial": round(sum(x["amount_rial"] for x in mine), 2),
+                            "count": sum(x["count"] for x in mine), "groups": groups,
+                            "last_day_jalali": _jalali(max(rk_days)) if system == "rahkaran" and rk_days else None})
+        return {"date_jalali": _jalali(today), "amount_rial": round(sum(x["amount_rial"] for x in rows_out), 2),
+                "count": sum(x["count"] for x in rows_out), "systems": systems}
+    return _cached(f"today:{date.today().isoformat()}", load)
+
+
+def _jalali(d: date) -> str:
+    import jdatetime
+
+    return jdatetime.date.fromgregorian(date=d).strftime("%Y/%m/%d")

@@ -7,6 +7,8 @@ import { AlarmBell, AlarmToasts, startAlarms, stopAlarms } from '@finance/alarms
 import ChatWidget from '@finance/chatbot/chat-widget.tsx'
 import Pet from '@finance/pet/pet.tsx'
 import { useJson, faDigits } from './data.js'
+import TopBar from './TopBar.jsx'
+import { getMoneyUnit, setMoneyUnit } from '@finance/money-unit.ts'
 
 const GROUPS = [
   { id: 'home', items: [{ to: '/', label: 'نمای مدیر', icon: '✦', end: true }] },
@@ -57,6 +59,7 @@ const GROUPS = [
       { to: '/files/rahkaran', label: 'نمایندگان راهکاران', icon: '◉' },
       { to: '/finance/customers', label: 'پرونده مشتری', icon: '◎' },
       { to: '/finance/representatives', label: 'تحلیل نماینده (مالی)', icon: '♙' },
+      { to: '/contracts', label: 'قراردادهای همکاران', icon: '✎' },
     ],
   },
   {
@@ -71,6 +74,7 @@ const GROUPS = [
       { to: '/finance/history', label: 'تاریخچه و مقایسه', icon: '↺' },
       { to: '/finance/performance', label: 'دقت پیش‌بینی', icon: '◉' },
       { to: '/finance/settings', label: 'قوانین و اتوماسیون', icon: '⚙' },
+      { to: '/finance/whatsapp', label: 'ارسال واتساپ', icon: '✆' },
       { to: '/data', label: 'منبع داده فروش', icon: '⇪' },
     ],
   },
@@ -97,6 +101,7 @@ const ROUTE_MODULES = [
   ['/files/rahkaran', ['salesB2B', 'customers']],
   ['/reconciliation', ['reconciliation']],
   ['/reports', ['excelReports']],
+  ['/contracts', ['contracts']],
   ['/detail', SALES_ALL],
 ]
 
@@ -199,10 +204,46 @@ function groupOf(pathname) {
   return best?.id
 }
 
+/** مورد منویی که صفحه فعلی زیر آن است (دقیق‌ترین تطابق مسیر) */
+function itemOf(pathname) {
+  let best = null
+  for (const g of GROUPS) {
+    for (const it of g.items) {
+      const hit = it.to === pathname || (it.to !== '/' && pathname.startsWith(`${it.to}/`))
+      if (hit && (!best || it.to.length > best.to.length)) best = it
+    }
+  }
+  return best
+}
+
+const FREQUENT_MIN_VISITS = 3   // صفحه‌ای که دست‌کم این‌قدر باز شده در «پرکاربردها» می‌آید
+const FREQUENT_MAX = 5
+
 export default function Shell() {
   const auth = useAuth()
   const { pathname } = useLocation()
   const busy = useBusy()
+  const { setUnit: setSalesUnit } = useApp()
+  // واحد پول کل برنامه؛ جدول‌های فروش واحد خودشان (useApp) را دارند که با همین کلید هم‌گام می‌شود («خودکار» ← میلیون)
+  const [unit, setUnit] = useState(getMoneyUnit)
+  useEffect(() => { if (unit !== 'auto') setSalesUnit(unit) }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+  const changeUnit = (u) => { setMoneyUnit(u); setUnit(u); setSalesUnit(u === 'auto' ? 'million' : u) }
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canOpen(it.to, auth) && !(it.to === '/finance/alerts' && auth.profile.alarms_hidden)) })).filter((g) => g.items.length)
+  const pages = groups.flatMap((g) => g.items.map((it) => ({ to: it.to, label: it.label, group: g.label || '' })))
+  // شمارنده بازدید هر صفحه برای همین کاربر (فقط در همین مرورگر) ← بخش «پرکاربردها» بالای منو
+  const visitKey = `exir.visits:${auth.profile.user.username}`
+  const [visits, setVisits] = useState(() => { try { return JSON.parse(localStorage.getItem(visitKey) || '{}') } catch { return {} } })
+  useEffect(() => {
+    const it = itemOf(pathname)
+    if (!it || it.to === '/') return
+    setVisits((v) => {
+      const next = { ...v, [it.to]: (v[it.to] || 0) + 1 }
+      try { localStorage.setItem(visitKey, JSON.stringify(next)) } catch { /* حالت خصوصی */ }
+      return next
+    })
+  }, [pathname, visitKey])
+  const frequent = groups.flatMap((g) => g.items).filter((it) => it.to !== '/' && (visits[it.to] || 0) >= FREQUENT_MIN_VISITS)
+    .sort((a, b) => visits[b.to] - visits[a.to]).slice(0, FREQUENT_MAX)
   const [menuOpen, setMenuOpen] = useState(false)
   // منوی آکاردئونی: با کلیک روی هر سرفصل ماژول‌های ریزش باز می‌شود و بقیه جمع می‌شوند
   const [openGroup, setOpenGroup] = useState(() => groupOf(pathname))
@@ -215,7 +256,7 @@ export default function Shell() {
           <i>ا</i>
           <div><b>اکسیر کادوس</b><small>Management Command Center</small></div>
         </div>
-        {GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canOpen(it.to, auth) && !(it.to === '/finance/alerts' && auth.profile.alarms_hidden)) })).filter((g) => g.items.length).map((g, gi) => {
+        {groups.map((g, gi) => {
           const open = !g.label || openGroup === g.id
           const links = g.items.map((it, i) => (
             <NavLink key={it.to} to={it.to} end={it.end} style={{ '--i': i }} tabIndex={open ? undefined : -1}>
@@ -232,6 +273,12 @@ export default function Shell() {
                 </button>
                 <div className="u-nav-body"><div>{links}</div></div>
               </> : links}
+              {g.id === 'home' && frequent.length >= 2 && (
+                <div className="u-nav-frequent" aria-label="پرکاربردها">
+                  <small>پرکاربردهای شما</small>
+                  {frequent.map((it) => <NavLink key={`f:${it.to}`} to={it.to} end={it.end}><i aria-hidden>{it.icon}</i>{it.label}</NavLink>)}
+                </div>
+              )}
             </nav>
           )
         })}
@@ -241,7 +288,9 @@ export default function Shell() {
       <main className={`u-main ${busy ? 'busy' : ''}`}>
         {busy && <div className="u-loadbar" role="progressbar" aria-label="در حال بروزرسانی" />}
         <button className="u-menu-btn" onClick={() => setMenuOpen(!menuOpen)} aria-label="منو">☰</button>
-        {canOpen(pathname, auth) ? <Outlet />
+        <TopBar pages={pages} unit={unit} onUnit={changeUnit} />
+        {/* key = واحد پول: با عوض شدن واحد، صفحه از نو ساخته می‌شود تا همه مبالغ با واحد تازه نوشته شوند */}
+        {canOpen(pathname, auth) ? <div key={unit} className="u-unit-scope"><Outlet /></div>
           : pathname === '/' ? <Navigate to={GROUPS.flatMap((g) => g.items).find((it) => canOpen(it.to, auth))?.to || '/finance/alerts'} replace />
             : <div className="u-noaccess"><b>به این بخش دسترسی ندارید</b><span>برای دسترسی با مدیر سیستم هماهنگ کنید.</span><Link className="u-btn" to="/">بازگشت</Link></div>}
         <ShellChat pathname={pathname} />

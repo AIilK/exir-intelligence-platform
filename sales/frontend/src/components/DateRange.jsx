@@ -28,7 +28,7 @@ function summary(from, to, months, cur) {
 }
 
 /** label: عنوان دکمه؛ curHint: توضیح میانبر «ماه جاری» (null = بدون توضیح) */
-export default function DateRange({ filters, setFilters, meta, label = 'تاریخ', curHint = null }) {
+export default function DateRange({ filters, setFilters, meta, label = 'تاریخ', curHint = null, daysActive = false }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState('month')
   const [pending, setPending] = useState(null)   // روز شروع انتخاب‌شده در تقویم، منتظر روز پایان
@@ -115,7 +115,7 @@ export default function DateRange({ filters, setFilters, meta, label = 'تاری
   return (
     <div className={`ms dr ${from || to ? 'on' : ''}`} ref={ref}>
       <button className="ms-btn dr-btn" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <span className="ms-label">{label}:</span> <span className="ms-val">{summary(from, to, months, cur)}</span> <span className="caret">▾</span>
+        <span className="ms-label">{label}:</span> <span className="ms-val">{daysActive ? 'روزهای انتخابی' : summary(from, to, months, cur)}</span> <span className="caret">▾</span>
       </button>
       {open && (
         <div className="ms-pop dr-pop" role="dialog" aria-label="انتخاب بازه تاریخ">

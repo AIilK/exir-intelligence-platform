@@ -24,6 +24,7 @@ import LiquidityPage from "./liquidity/liquidity-page";
 import InventoryPricingPage from "./inventory-pricing/inventory-pricing-page";
 import PurchaseDocsPage from "./purchase-docs/purchase-docs-page";
 import PnlPage from "./pnl/pnl-page";
+import WhatsAppPage from "./whatsapp/whatsapp-page";
 import ChatWidget from "./chatbot/chat-widget";
 import { useChatLink } from "./chatbot/chat-link";
 import PayablesPage from "./payables/payables-page";
@@ -190,6 +191,15 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
   const cheques = pack?.data?.cheques?.cheques || [],
     reps = pack?.data?.representatives?.representatives || [],
     manager = pack?.management_summary?.analysis;
+
+  // «/finance/customers?c=کد» (جستجوی سراسری و دکمه «پرونده» نمای مدیر): پرونده همان مشتری مستقیم باز می‌شود
+  const urlCustomer = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("c");
+  useEffect(() => {
+    if (view !== "customers" || !urlCustomer || !customers.length) return;
+    const hit = customers.find((x: any) => String(x.counterpart_code || "").trim() === urlCustomer);
+    if (hit) setSelected(hit);
+  }, [view, urlCustomer, customers]);
+
   return (
     <main className="fd enterprise">
       <aside>
@@ -296,6 +306,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
         {view === "inventoryPricing" && <InventoryPricingPage />}
         {view === "purchaseDocs" && <PurchaseDocsPage />}
         {view === "pnl" && <PnlPage />}
+        {view === "whatsapp" && <WhatsAppPage />}
         {/* چت‌بات: کدش در app/chatbot. در داشبورد یکپارچه (view کنترل‌شده) خود پوسته یک چت‌بات برای همه صفحه‌ها دارد. */}
         {/* حیوان خانگی (در داشبورد یکپارچه خود پوسته آن را دارد) */}
         {!onViewChange && <Pet onGo={(v) => setView(v as View)} />}

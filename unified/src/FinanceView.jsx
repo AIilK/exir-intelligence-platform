@@ -12,7 +12,7 @@ const VIEWS = new Set([
   'overview', 'management', 'sales', 'users', 'customers', 'cheques', 'receivedCheques', 'issuedCheques', 'liquidity',
   'inventoryPricing', 'purchaseDocs', 'payables', 'pnl',
   'cashBank', 'companyPayments', 'collections', 'distribution',
-  'representatives', 'alerts', 'history', 'performance', 'settings',
+  'representatives', 'alerts', 'history', 'performance', 'settings', 'whatsapp',
 ])
 
 // customer-facing finance pages → the combined files that put the same customers next to their sales

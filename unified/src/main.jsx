@@ -30,6 +30,7 @@ const RahkaranList = () => import('./pages/RahkaranList.jsx')
 const RahkaranFile = () => import('./pages/RahkaranFile.jsx')
 const FinanceView = () => import('./FinanceView.jsx')
 const Reconciliation = () => import('./pages/Reconciliation.jsx')
+const Contracts = () => import('./pages/Contracts.jsx')
 const ExcelReports = () => import('./pages/ExcelReports.jsx')
 const SalesOverview = () => import('@sales/pages/Overview.jsx')
 const Hybrid = () => import('@sales/pages/Hybrid.jsx')
@@ -67,6 +68,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="files/rahkaran/:code" element={page(RahkaranFile)} />
             <Route path="finance/:view" element={page(FinanceView)} />
             <Route path="reconciliation" element={page(Reconciliation)} />
+            <Route path="contracts" element={page(Contracts)} />
             <Route path="reports" element={page(ExcelReports)} />
             <Route element={<SalesFrame />}>
               <Route path="sales" element={page(SalesOverview)} />

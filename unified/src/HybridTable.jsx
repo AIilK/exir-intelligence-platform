@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useSaved } from '@sales/lib.jsx'
 import { Link } from 'react-router-dom'
-import { mt, n0, signedPct, isNum, faDigits } from './data.js'
+import { mt, n0, signedPct, isNum, faDigits, mtLabel } from './data.js'
 import { LEVEL } from './model.js'
 import { Bar, Mt } from './ui.jsx'
 
@@ -13,20 +14,20 @@ const growthCls = (g) => (isNum(g) ? (g >= 0 ? 't-good' : 't-bad') : 't-muted')
  * Click a header to sort; amounts in million toman (stated in the headers).
  */
 export default function HybridTable({ rows, prevLabel, year, limit }) {
-  const [sort, setSort] = useState({ key: 'rank', dir: 1 })
+  const [sort, setSort] = useSaved('hybrids:sort', { key: 'rank', dir: 1 })
   const hasYtd = rows.some((r) => isNum(r.ytdNet))
   const maxDso = Math.max(150, ...rows.map((r) => r.dso || 0))
   const cols = [
     { key: 'name', label: 'هیبرید' },
     ...(hasYtd ? [
-      { key: 'ytdNet', label: `فروش ${year ? faDigits(year) : 'امسال'} تا امروز`, unit: 'میلیون تومان', tone: 't-sales' },
+      { key: 'ytdNet', label: `فروش ${year ? faDigits(year) : 'امسال'} تا امروز`, unit: mtLabel(), tone: 't-sales' },
       { key: 'ytdGrowth', label: `نسبت به همین بازه ${year ? faDigits(year - 1) : 'پارسال'}`, tone: 't-sales' },
-      { key: 'fullPrevNet', label: `فروش کل ${year ? faDigits(year - 1) : 'پارسال'}`, unit: 'میلیون تومان', tone: 't-sales' },
+      { key: 'fullPrevNet', label: `فروش کل ${year ? faDigits(year - 1) : 'پارسال'}`, unit: mtLabel(), tone: 't-sales' },
     ] : []),
-    { key: 'salesNet', label: 'فروش این ماه', unit: 'میلیون تومان', tone: 't-sales' },
+    { key: 'salesNet', label: 'فروش این ماه', unit: mtLabel(), tone: 't-sales' },
     { key: 'growth', label: `نسبت به همین بازه ${prevLabel || 'ماه قبل'}`, tone: 't-sales' },
-    { key: 'debt', label: 'مطالبات باز', unit: 'میلیون تومان', tone: 't-fin' },
-    { key: 'openCheques', label: 'چک باز در دست', unit: 'میلیون تومان', tone: 't-fin' },
+    { key: 'debt', label: 'مطالبات باز', unit: mtLabel(), tone: 't-fin' },
+    { key: 'openCheques', label: 'چک باز در دست', unit: mtLabel(), tone: 't-fin' },
     { key: 'dso', label: 'دوره وصول', unit: 'روز', tone: 't-fin', title: 'مطالبات باز ÷ میانگین فروش روزانه امسال' },
     { key: 'rank', label: 'وضعیت' },
   ]

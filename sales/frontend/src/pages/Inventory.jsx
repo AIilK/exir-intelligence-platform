@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useApp, useFetch, sendJson, fetchJson, fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, isNum, UNITS } from '../lib.jsx'
+import { useApp, useFetch, sendJson, fetchJson, fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, isNum, UNITS, useSaved } from '../lib.jsx'
 import { Card, Loading, ErrorBox, Tabs, Kpi, DataTable, MultiSelect } from '../components/ui.jsx'
 import { Chart, HBar, baseOption, useTheme } from '../components/Chart.jsx'
 import { brandColor } from '../brands.js'
@@ -265,9 +265,9 @@ function FactoryTab() {
   const { data, error, setData } = useFetch(`/api/inventory/factory?v=${rkVersion}`)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
-  const [brand, setBrand] = useState('')
-  const [group, setGroup] = useState('')
-  const [store, setStore] = useState('')
+  const [brand, setBrand] = useSaved('brand', '')
+  const [group, setGroup] = useSaved('group', '')
+  const [store, setStore] = useSaved('store', '')
   const brands = useMemo(() => (data ? [...new Set(data.rows.map((r) => r.brand))].sort() : []), [data])
   const groups = useMemo(() => (data ? [...new Set(data.rows.map((r) => r.category))].sort() : []), [data])
   const rows = useMemo(() => (!data ? [] : data.rows.filter((r) => (!brand || r.brand === brand) && (!group || r.category === group)

@@ -1,0 +1,78 @@
+/* «ارسال واتساپ» — scoped به .wa-page؛ هم‌خوان با تم تیره صفحه‌های دیگر (مثل .pd-page). */
+.wa-page{--wa-text:#e6f2f2;--wa-muted:#8ea4af;--wa-line:#243847;--wa-surface:#0f1d2a;--wa-accent:#25d366;--wa-good:#0d9488;--wa-watch:#d97706;--wa-bad:#e11d48;color:var(--wa-text);display:grid;gap:14px}
+.wa-page code{background:#132636;border-radius:6px;padding:1px 6px;font-size:12px}
+.wa-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.wa-tabs button{display:grid;gap:2px;text-align:right;background:var(--wa-surface);border:1px solid var(--wa-line);border-radius:12px;padding:10px 16px;color:var(--wa-text);cursor:pointer;font:inherit;font-size:15px;font-weight:700}
+.wa-tabs button small{color:var(--wa-muted);font-weight:normal;font-size:11px}
+.wa-tabs button.active{border-color:var(--wa-accent);background:#103024;box-shadow:0 0 0 1px var(--wa-accent)}
+.wa-banner{border-radius:11px;padding:10px 14px;font-size:13px;line-height:1.9;border:1px solid}
+.wa-banner.warn{background:#2b2210;border-color:#7c5a12;color:#fde68a}
+.wa-banner.info{background:#0f2733;border-color:#1e5a74;color:#bae6fd}
+.wa-banner.bad{background:#2c1019;border-color:#7f1d3a;color:#fecdd3;cursor:pointer}
+.wa-section{display:grid;gap:12px}
+.wa-muted{color:var(--wa-muted);font-size:12px;line-height:1.9;margin:0}
+.wa-ok{color:#86efac;font-size:12px;margin:0}
+.wa-bad{color:#fda4af;font-size:12px;margin:4px 0}
+.wa-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.wa-kpi{display:grid;gap:3px;background:var(--wa-surface);border:1px solid var(--wa-line);border-top:3px solid #64748b;border-radius:12px;padding:11px 14px}
+.wa-kpi small,.wa-kpi span{color:var(--wa-muted);font-size:12px}
+.wa-kpi b{font-size:20px}
+.wa-kpi.good{border-top-color:var(--wa-accent)}
+.wa-kpi.watch{border-top-color:var(--wa-watch)}
+.wa-grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.wa-card{display:grid;gap:10px;align-content:start;background:var(--wa-surface);border:1px solid var(--wa-line);border-radius:14px;padding:14px 16px}
+.wa-card h3{margin:0;font-size:16px}
+.wa-card label,.wa-row label{display:grid;gap:4px;font-size:12px;color:var(--wa-muted)}
+.wa-card label small{font-size:11px;color:#64808c}
+.wa-page input:not([type=checkbox]),.wa-page select,.wa-page textarea{background:#0b1621;color:var(--wa-text);border:1px solid var(--wa-line);border-radius:9px;padding:7px 10px;font:inherit;font-size:13px}
+.wa-page textarea{resize:vertical;line-height:1.8}
+.wa-page select[multiple]{min-height:84px;min-width:170px}
+.wa-qr{width:260px;height:260px;background:#fff;border-radius:12px;padding:8px;justify-self:center}
+.wa-btn{background:#128c4a;color:#fff;border:0;border-radius:9px;padding:8px 14px;cursor:pointer;font:inherit;font-size:13px;min-height:0;justify-self:start}
+.wa-btn.ghost{background:#1c3140;color:#cfe3e6}
+.wa-btn.danger{background:#4c1424;color:#fecdd3}
+.wa-btn:disabled{opacity:.45;cursor:default}
+.wa-link{background:none;border:0;color:#7dd3fc;cursor:pointer;font:inherit;font-size:14px;min-height:0;padding:2px 6px}
+.wa-rule{border-right:4px solid #475569}
+.wa-rule.on{border-right-color:var(--wa-accent)}
+.wa-rule-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.wa-title{flex:1;min-width:220px;font-weight:700;font-size:15px!important}
+.wa-chip{background:#13283a;border-radius:20px;padding:3px 10px;font-size:11px;color:#a5c4cf}
+.wa-switch{display:flex!important;align-items:center;gap:6px;cursor:pointer;color:var(--wa-text)!important;font-size:12px}
+.wa-row{display:flex;gap:14px;flex-wrap:wrap;align-items:end}
+.wa-days{display:flex;gap:4px;flex-wrap:wrap}
+.wa-days button{background:#0b1621;border:1px solid var(--wa-line);color:var(--wa-muted);border-radius:8px;padding:6px 9px;font:inherit;font-size:12px;cursor:pointer;min-height:0}
+.wa-days button.active{background:#103024;border-color:var(--wa-accent);color:#bbf7d0}
+.wa-time{display:flex!important;align-items:center;gap:4px}
+.wa-time input{width:64px;text-align:center}
+.wa-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.wa-add{display:flex;gap:8px;align-items:center}
+.wa-preview{display:grid;gap:8px;border-top:1px dashed var(--wa-line);padding-top:10px}
+.wa-preview-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.wa-preview-head small{color:var(--wa-muted);flex:1}
+.wa-preview summary{cursor:pointer;color:#fbbf24;font-size:12px}
+.wa-msgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px;max-height:520px;overflow:auto}
+.wa-msg{background:#0b1621;border:1px solid var(--wa-line);border-radius:10px;padding:8px 10px;font-size:12px}
+.wa-msg small{color:var(--wa-muted)}
+.wa-page pre{white-space:pre-wrap;font:inherit;font-size:12.5px;line-height:1.9;margin:6px 0 0;background:#0e2a1d;border-radius:10px;padding:8px 10px;color:#dcfce7}
+.wa-seg{display:flex;flex-wrap:wrap;background:var(--wa-surface);border:1px solid var(--wa-line);border-radius:11px;padding:3px;gap:2px;justify-self:start}
+.wa-seg button{border:0;background:transparent;color:var(--wa-muted);padding:7px 12px;border-radius:8px;cursor:pointer;font:inherit;font-size:12px;min-height:0}
+.wa-seg button small{opacity:.8;margin-right:3px}
+.wa-seg button.active{background:#103024;color:#bbf7d0}
+.wa-table{overflow:auto;background:var(--wa-surface);border:1px solid var(--wa-line);border-radius:12px}
+.wa-table table{width:100%;border-collapse:collapse;font-size:12.5px}
+.wa-table th{position:sticky;top:0;background:#132433;color:var(--wa-muted);font-weight:normal;text-align:right;padding:8px 10px;white-space:nowrap}
+.wa-table td{padding:7px 10px;border-top:1px solid var(--wa-line);vertical-align:top}
+.wa-table td small{display:block;color:var(--wa-muted);font-size:11px}
+.wa-table tbody tr:not(.wa-detail){cursor:pointer}
+.wa-table tbody tr:not(.wa-detail):hover,.wa-table tr.open{background:#13283a}
+.wa-detail td{background:#0b1621}
+.wa-detail a{color:#7dd3fc;font-size:12px;display:inline-block;margin-top:6px}
+.wa-empty{text-align:center;color:var(--wa-muted);padding:24px!important}
+.wa-st{display:inline-block;border-radius:20px;padding:2px 9px;font-size:11px;background:#1e293b;color:#cbd5e1}
+.wa-st.pending{background:#3a2a0b;color:#fde68a}
+.wa-st.approved,.wa-st.sending{background:#0f2f45;color:#bae6fd}
+.wa-st.sent{background:#0e3a24;color:#bbf7d0}
+.wa-st.failed,.wa-st.no_whatsapp{background:#3f1020;color:#fecdd3}
+.wa-form{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));align-items:end}
+@media (max-width:640px){.wa-tabs button{flex:1 1 45%}.wa-qr{width:220px;height:220px}}

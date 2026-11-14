@@ -3,7 +3,7 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { sendChatLink } from '@finance/chatbot/chat-link.ts'
-import { useJson, n0, pct, isNum, faDigits, moneyText, monthName } from './data.js'
+import { useJson, n0, pct, isNum, faDigits, moneyText, monthName, mtLabel } from './data.js'
 import { normName } from './model.js'
 import { Card, Pending, Bar, Money, Mt } from './ui.jsx'
 import { VisitorName } from './fileTabs.jsx'
@@ -115,7 +115,7 @@ export function DistributionTab({ d, ids }) {
             {!d.distributors.length ? <div className="u-pending">موزعی برای این هیبرید ثبت نشده است.</div> : (
               <div className="u-table-wrap">
                 <table className="u-table">
-                  <thead><tr><th>موزع</th><th>خروج</th><th>فاکتور</th><th>مبلغ<small>میلیون تومان</small></th><th>میانگین تا خروج</th><th>آخرین خروج</th></tr></thead>
+                  <thead><tr><th>موزع</th><th>خروج</th><th>فاکتور</th><th>مبلغ<small>{mtLabel()}</small></th><th>میانگین تا خروج</th><th>آخرین خروج</th></tr></thead>
                   <tbody>
                     {d.distributors.map((x) => (
                       <tr key={x.deliver_name}>
@@ -133,7 +133,7 @@ export function DistributionTab({ d, ids }) {
         <Card title={`فاکتورهای توزیع‌نشده (${n0(d.undistributed.length)})`} sub={`قدیمی‌ترین اول · جمع ${moneyText(sumOf(d.undistributed, 'amount_rial'))} · بیش از ${n0(STALE_DAYS)} روز قرمز`}>
           <div className="u-table-wrap">
             <table className="u-table">
-              <thead><tr><th>شماره</th><th>تاریخ فاکتور</th><th>انتظار</th><th>مشتری</th><th>ویزیتور</th><th>مبلغ<small>میلیون تومان</small></th></tr></thead>
+              <thead><tr><th>شماره</th><th>تاریخ فاکتور</th><th>انتظار</th><th>مشتری</th><th>ویزیتور</th><th>مبلغ<small>{mtLabel()}</small></th></tr></thead>
               <tbody>
                 {d.undistributed.slice(0, 200).map((x) => (
                   <tr key={x.invoice_id}>
@@ -154,7 +154,7 @@ export function DistributionTab({ d, ids }) {
         <Card title={`مشتریان با مانده وصول‌نشده ${d.ym ? monthName(`${d.ym.year}/${String(d.ym.month).padStart(2, '0')}`) : ''}`} sub="فاکتورهای توزیع‌شده این ماه که هنوز وصول نشده‌اند">
           <div className="u-table-wrap">
             <table className="u-table">
-              <thead><tr><th>مشتری</th><th>توزیع‌شده<small>میلیون تومان</small></th><th>وصول‌شده<small>میلیون تومان</small></th><th>مانده<small>میلیون تومان</small></th></tr></thead>
+              <thead><tr><th>مشتری</th><th>توزیع‌شده<small>{mtLabel()}</small></th><th>وصول‌شده<small>{mtLabel()}</small></th><th>مانده<small>{mtLabel()}</small></th></tr></thead>
               <tbody>
                 {custs.slice(0, 100).map((c) => (
                   <tr key={`${c.dl_ref}-${c.customer_code}`}>

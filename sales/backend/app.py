@@ -234,6 +234,10 @@ def filters(req: Request) -> dict:
         vals = q.getlist(k)
         if vals:
             f[k] = vals
+    days = sorted({x for x in q.getlist("days") if re.fullmatch(r"\d{4}/\d{2}/\d{2}", x)})
+    if days:
+        # فیلتر روزانه: فقط همین روزها؛ بازه تاریخ = اولین تا آخرین روز (برای ماه تحقق و محاسبات بازه‌ای)
+        f.update(days=days, date_from=days[0], date_to=days[-1])
     if not f["date_from"] and not f["date_to"] and STATE["data"] is not None:
         # بدون فیلتر تاریخ = ماه جاری (با پیش‌بینی پایان ماه)
         m = STATE["data"]["meta"]
@@ -943,7 +947,9 @@ def _dates(f: dict) -> list[str]:
     d = STATE["data"]
     both = pd.concat([d["sales"]["date"], d["requests"]["date"]]) if d["requests"] is not None else d["sales"]["date"]
     ds = sorted(both.unique())
-    return [x for x in ds if (not f.get("date_from") or x >= f["date_from"]) and (not f.get("date_to") or x <= f["date_to"])]
+    keep = set(f["days"]) if f.get("days") else None
+    return [x for x in ds if (not f.get("date_from") or x >= f["date_from"]) and (not f.get("date_to") or x <= f["date_to"])
+            and (keep is None or x in keep)]
 
 
 @app.get("/api/report_tree")
@@ -1546,7 +1552,7 @@ def _by_product(snap: dict, req: Request) -> dict:
 def _rk_payload(snap: dict, out: dict) -> dict:
     """جدول‌های DataFrame به رکورد، به‌علاوه زمان خواندن و وضعیت لایو"""
     out = {k: A.records(v) if isinstance(v, pd.DataFrame) else v for k, v in out.items()}
-    return {**out, "today": snap["today"], "since": snap["since"], "periods": RS.periods(snap),
+    return {**out, "today": snap["today"], "since": snap["since"], "periods": RS.periods(snap), "sale_days": RS.sale_days(snap),
             "fetched": _ts(snap["fetched"]), "live": RK_SALES.is_live()}
 
 

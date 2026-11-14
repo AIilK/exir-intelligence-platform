@@ -502,3 +502,55 @@ html[data-wallpaper]:not([data-wallpaper="none"]) .u-app .fin-scope.fin-embedded
 .u-attn-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
 .u-attn-head p { margin: 0; font-size: 12.5px; color: var(--xo-muted, inherit); flex: 1 1 320px; line-height: 1.9; }
 .u-attn .u-table-wrap { margin-top: 12px; }
+
+/* قراردادهای همکاران */
+.u-contract-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; align-items: center; }
+.u-contract-form input, .u-contract-table input { background: var(--u-surface-2); border: 1px solid var(--u-border-2); border-radius: 9px; color: var(--u-text); padding: 7px 10px; min-height: 36px; font: inherit; width: 100%; box-sizing: border-box; }
+.u-contract-table .u-contract-acts { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.u-contract-table .u-contract-acts .u-btn { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+.u-contract-left { display: block; width: 110px; height: 6px; border-radius: 99px; background: var(--u-surface-3); overflow: hidden; margin-bottom: 4px; }
+.u-contract-left i { display: block; height: 100%; border-radius: inherit; background: var(--u-fin); transition: width .8s cubic-bezier(.2,.8,.2,1); }
+.u-contract-table tr.st-week .u-contract-left i { background: var(--u-bad-t); }
+.u-contract-table tr.st-month .u-contract-left i { background: var(--u-warn-t); }
+.u-contract-table tr.st-week td:first-child, .u-contract-table tr.st-ended td:first-child { box-shadow: inset -3px 0 0 var(--u-bad-t); }
+.u-contract-table tr.st-month td:first-child { box-shadow: inset -3px 0 0 var(--u-warn-t); }
+.u-contract-table tr.st-week { background: #44171b33; }
+
+/* ---------------------------------------------------------------- نوار بالا: جستجوی سراسری، واحد پول، خروجی اکسل */
+.u-unit-scope { display: contents; }
+.u-topbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; position: relative; z-index: 15; }
+.u-gsearch { position: relative; flex: 1 1 320px; max-width: 620px; display: flex; align-items: center; gap: 8px; background: var(--u-surface); border: 1px solid var(--u-border-2); border-radius: 12px; padding: 0 12px; min-height: 42px; transition: border-color .2s, box-shadow .2s; }
+.u-gsearch:focus-within { border-color: var(--u-fin); box-shadow: 0 0 0 3px #2dd4bf22; }
+.u-gsearch > span { color: var(--u-muted); font-size: 18px; }
+.u-gsearch input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--u-text); font: inherit; font-size: 13.5px; padding: 9px 0; }
+.u-gsearch kbd { font: 10.5px ui-monospace, monospace; color: var(--u-muted); border: 1px solid var(--u-border-2); border-radius: 6px; padding: 2px 6px; direction: ltr; }
+.u-gsearch-list { position: absolute; inset-inline: 0; top: calc(100% + 6px); background: var(--u-surface); border: 1px solid var(--u-border-2); border-radius: 14px; box-shadow: 0 22px 50px #000a; padding: 6px; max-height: min(70vh, 520px); overflow: auto; display: grid; gap: 2px; animation: u-gs-in .18s ease-out both; }
+@keyframes u-gs-in { from { opacity: 0; transform: translateY(-6px); } }
+.u-gsearch-list button { display: grid; grid-template-columns: 104px 1fr 16px; gap: 10px; align-items: center; text-align: right; background: transparent; border: 0; border-radius: 10px; padding: 8px 10px; color: var(--u-text); font: inherit; cursor: pointer; }
+.u-gsearch-list button.on { background: var(--u-surface-3); }
+.u-gsearch-list em { font-style: normal; font-size: 10.5px; color: #99f6e4; background: #0f3a37; border-radius: 99px; padding: 2px 8px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.u-gsearch-list span { display: grid; min-width: 0; }
+.u-gsearch-list b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.u-gsearch-list small { font-size: 11px; color: var(--u-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.u-gsearch-list i { font-style: normal; color: var(--u-muted); }
+.u-gsearch-list p { margin: 0; padding: 10px 12px; font-size: 12.5px; color: var(--u-muted); }
+.u-unit { display: flex; align-items: center; gap: 2px; background: var(--u-surface); border: 1px solid var(--u-border-2); border-radius: 12px; padding: 3px; min-height: 42px; box-sizing: border-box; }
+.u-unit small { font-size: 11px; color: var(--u-muted); padding: 0 8px; }
+.u-unit button { background: transparent; border: 0; color: var(--u-text-2); font: inherit; font-size: 12.5px; border-radius: 9px; padding: 6px 11px; cursor: pointer; min-height: 34px; }
+.u-unit button:hover { color: var(--u-text); }
+.u-unit button.on { background: var(--u-fin); color: #04221f; font-weight: 700; }
+.u-xl-btn { min-height: 42px; white-space: nowrap; }
+@media (max-width: 900px) { .u-topbar { padding-inline-start: 52px; } .u-gsearch kbd, .u-unit small { display: none; } }
+/* پرکاربردها */
+.u-nav-frequent { display: grid; gap: 2px; margin: 8px 0 4px; padding: 8px 0 6px; border-block: 1px dashed var(--u-border); }
+.u-nav-frequent small { font-size: 10.5px; color: var(--u-muted); padding: 0 12px 4px; }
+
+/* ---------------------------------------------------------------- جدول‌ها: سرستون و ستون اول ثابت */
+.u-table-wrap { overflow: auto; max-height: max(360px, calc(100vh - 96px)); }
+.u-table thead th { position: sticky; top: 0; z-index: 3; background: var(--u-surface-3); }
+.u-table th:first-child, .u-table td:first-child { position: sticky; inset-inline-start: 0; z-index: 2; background: var(--u-surface); }
+.u-table thead th:first-child { z-index: 4; background: var(--u-surface-3); }
+.u-table tbody tr:hover td:first-child { background: var(--u-surface-2); }
+/* صفحه‌های فروش و مالی: همان رفتار برای ظرف‌های جدولشان (رنگ زمینه از خود همان صفحه) */
+.u-main .table-scroll, .u-main .tree-scroll, .u-main .table-wrap, .u-main .pay-table-wrap, .u-main .pnl-table-wrap { max-height: max(360px, calc(100vh - 96px)); overflow: auto; }
+.u-main .table-scroll > table > thead th, .u-main .table-wrap > table > thead th, .u-main .pay-table-wrap > table > thead th { position: sticky; top: 0; z-index: 3; }

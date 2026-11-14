@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useApp, useRkFetch, faDigits } from '../lib.jsx'
+import { useApp, useRkFetch, faDigits, useSaved } from '../lib.jsx'
 import { Card, Loading, ErrorBox, DataTable, Kpi } from '../components/ui.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { CustomerDetail } from './Rahkaran.jsx'
@@ -60,9 +60,9 @@ function HowItWorks() {
 export default function Reorder() {
   const { unit } = useApp()
   const nav = useNavigate()
-  const [brand, setBrand] = useState('')
-  const [province, setProvince] = useState('')
-  const [status, setStatus] = useState('')
+  const [brand, setBrand] = useSaved('brand', '')
+  const [province, setProvince] = useSaved('province', '')
+  const [status, setStatus] = useSaved('status', '')
   const [sel, setSel] = useState(null)
   const ref = useRef(null)
   const { data, loading, error } = useRkFetch(`/api/rk_sales/reorder?${q({ brand, province })}`)
@@ -78,6 +78,7 @@ export default function Reorder() {
     { key: 'province', label: 'استان' },
     { key: 'status_fa', label: 'وضعیت', render: (r) => <Pill r={r} /> },
     { key: 'last_order', label: 'آخرین سفارش', type: 'date' },
+    { key: 'last_invoice', label: 'آخرین فاکتور', type: 'date', hint: 'تاریخ آخرین فاکتور فروش این کد' },
     { key: 'elapsed', label: 'روز گذشته', type: 'int', hint: 'روز از آخرین سفارش (بدون فروردین)' },
     { key: 'cycle', label: 'چرخه (روز)', type: 'int', hint: 'معمولاً هر چند روز یک بار سفارش می‌دهد' },
     { key: 'ratio', label: 'نسبت', type: 'num1', hint: 'روز گذشته ÷ چرخه' },

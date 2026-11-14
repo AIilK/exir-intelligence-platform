@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
+import { useSaved } from '@sales/lib.jsx'
 import { Link } from 'react-router-dom'
-import { n0, pct, signedPct, growth, isNum, moneyText, faDigits, mt } from '../data.js'
+import { n0, pct, signedPct, growth, isNum, moneyText, faDigits, mt, mtLabel } from '../data.js'
 import { PageHead, Card, Pending, Kpi, Mt } from '../ui.jsx'
 import { Th, sorter } from '../fileTabs.jsx'
 import { useRahkaranReps, rahkaranPath, REP_RISK } from '../rahkaran.js'
@@ -38,9 +39,9 @@ const sum = (rows, k) => rows.reduce((s, r) => s + (isNum(r[k]) && r[k] > 0 ? r[
 /** Rahkaran B2B reps (پرونده‌ها / نمایندگان راهکاران): sales from the sales dashboard, receivables and cheques from finance. */
 export default function RahkaranList() {
   const { sales, fin, rows, today } = useRahkaranReps()
-  const [q, setQ] = useState('')
-  const [brand, setBrand] = useState('')
-  const [sort, setSort] = useState({ key: 'net', dir: -1 })
+  const [q, setQ] = useSaved('q', '')
+  const [brand, setBrand] = useSaved('brand', '')
+  const [sort, setSort] = useSaved('sort', { key: 'net', dir: -1 })
   const brands = useMemo(() => [...new Set((rows || []).map((r) => r.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fa')), [rows])
   const scoped = rows?.filter((r) => !brand || r.brand === brand)
   const shown = scoped?.filter((r) => !q.trim() || `${r.name} ${r.code} ${r.city} ${r.province}`.includes(q.trim())).sort(sorter(sort))
@@ -87,7 +88,7 @@ export default function RahkaranList() {
       </section>
 
       <Card title={`همه نمایندگان (${n0(shown?.length ?? 0)})`}
-        sub="روی عنوان هر ستون بزنید تا مرتب شود · مبالغ به میلیون تومان · فروش از داشبورد فروش (راهکاران)، مطالبات و چک از داشبورد مالی"
+        sub="روی عنوان هر ستون بزنید تا مرتب شود · مبالغ به واحد انتخابی بالای صفحه · فروش از داشبورد فروش (راهکاران)، مطالبات و چک از داشبورد مالی"
         action={<>
           <label className="u-search"><span>جستجو</span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="نام، کد، شهر یا استان…" /></label>
           <button className="u-btn" disabled={!shown?.length} onClick={() => exportReps(shown, yl, pyl)}
@@ -100,13 +101,13 @@ export default function RahkaranList() {
                 <Th k="name" {...sp}>نماینده</Th>
                 <Th k="brand" {...sp}>برند</Th>
                 <Th k="province" {...sp}>استان</Th>
-                <Th k="net" {...sp} unit="میلیون تومان">فروش {yl}</Th>
+                <Th k="net" {...sp} unit={mtLabel()}>فروش {yl}</Th>
                 <Th k="lastDate" {...sp}>آخرین خرید</Th>
-                <Th k="debt" {...sp} unit="میلیون تومان">مطالبات</Th>
+                <Th k="debt" {...sp} unit={mtLabel()}>مطالبات</Th>
                 <Th k="dso" {...sp}>دوره وصول</Th>
-                <Th k="openCheques" {...sp} unit="میلیون تومان">چک باز</Th>
-                <Th k="overdue" {...sp} unit="میلیون تومان">سررسید گذشته</Th>
-                <Th k="returned" {...sp} unit="میلیون تومان">برگشتی باز</Th>
+                <Th k="openCheques" {...sp} unit={mtLabel()}>چک باز</Th>
+                <Th k="overdue" {...sp} unit={mtLabel()}>سررسید گذشته</Th>
+                <Th k="returned" {...sp} unit={mtLabel()}>برگشتی باز</Th>
                 <Th k="riskRank" {...sp}>ریسک</Th>
               </tr></thead>
               <tbody>
