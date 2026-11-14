@@ -139,4 +139,24 @@ A unified intelligence platform connecting Finance, Sales, Warehouse, Production
 
 *Built for practical, explainable enterprise AI.*
 
+
+## 🖥️ Platform Preview
+
+### 📊 Management Command Center
+
+![Management Dashboard](docs/images/management-dashboard.svg)
+
+### 💳 Finance & Treasury Intelligence
+
+![Treasury Dashboard](docs/images/treasury-dashboard.svg)
+
+### 📈 Sales Intelligence
+
+![Sales Dashboard](docs/images/sales-dashboard.svg)
+
+### 🤖 AI-Powered Assistant
+
+![AI Assistant](docs/images/ai-assistant.svg)
+
+
 </div>
