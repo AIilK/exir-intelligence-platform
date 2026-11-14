@@ -23,7 +23,23 @@ Design principle: Financial figures are calculated by backend services and expli
 🖥️ Platform preview
 <!-- Add actual screenshots to docs/images/ with the filenames below. Remove these comments once images are uploaded. -->Management dashboard	Treasury intelligence
 	
+## 🖥️ Platform Preview
 
+Explore the EXIR Intelligence Platform through its key modules.
+
+### 📊 Management Command Center
+
+![Management Dashboard](docs/images/management-dashboard.svg)
+
+### 💳 Finance & Treasury Intelligence
+
+![Treasury Dashboard](docs/images/treasury-dashboard.svg)
+
+### 📈 Sales Intelligence
+
+![Sales Dashboard](docs/images/sales-dashboard.svg)
+
+###
 
 Sales intelligence	AI assistant
 	
