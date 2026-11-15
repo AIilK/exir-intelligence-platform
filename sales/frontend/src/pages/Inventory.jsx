@@ -19,11 +19,10 @@ const TABS = [
 // زیرنمای تب «کالاها»
 const ITEM_VIEWS = [
   { value: 'all', label: 'همه کالاها' },
-  { value: 'idle', label: 'راکد، مازاد و نامنظم (برگشتی)' },
   { value: 'supplier', label: 'تأمین‌کنندگان' },
 ]
 // پیوندهای قدیمی (تب‌های ادغام‌شده) به تب جدید
-const OLD_TABS = { branches: ['summary'], all: ['items', 'all'], supplier: ['items', 'supplier'], idle: ['items', 'idle'] }
+const OLD_TABS = { branches: ['summary'], all: ['items', 'all'], supplier: ['items', 'supplier'], idle: ['items', 'all'] }
 // تب‌های سطح شرکت (همه شعب)؛ بقیه تب‌ها برای شعبه انتخاب‌شده‌اند
 const GLOBAL_TABS = new Set(['factory', 'remit'])
 const BRANCH_KEY = 'sd.invBranch'
@@ -84,7 +83,6 @@ export default function Inventory() {
   const [err, setErr] = useState(null)
   // فیلتر وضعیت جدول سفارش و نوع فهرست راکد/مازاد؛ کارت‌ها با کلیک آن‌ها را تنظیم می‌کنند
   const [status, setStatus] = useState('all')
-  const [idle, setIdle] = useState('all')
   // انتخاب خالی شعبه = شعبه پیش‌فرض؛ با عوض شدن شعب، فیلتر انبار پاک می‌شود (انبارها مال شعب قبلی‌اند)
   const setSel = (v) => {
     const b = v.length ? v : (brList?.default ? [brList.default] : [])
@@ -95,7 +93,7 @@ export default function Inventory() {
   const setBranch = (b) => setSel([b])
   const go = (t, extra) => {
     if (t === 'all') { setStatus(extra || 'all'); setView('all'); t = 'items' }
-    if (t === 'idle') { setIdle(extra); setView('idle'); t = 'items' }
+    if (t === 'idle') { setStatus(extra || 'all'); setView('all'); t = 'items' }
     setSp({ tab: t })
   }
   // انتخاب شعبه از جدول همه شعب: بخش «شعبه انتخاب‌شده» همان پایین صفحه عوض می‌شود
@@ -154,7 +152,6 @@ export default function Inventory() {
                   <div className="inv-summary-head"><Tabs tabs={ITEM_VIEWS} value={view} onChange={setView} /></div>
                   {view === 'all' && <AllTab data={data} status={status} setStatus={setStatus} />}
                   {view === 'supplier' && <SupplierTab data={data} />}
-                  {view === 'idle' && <IdleTab data={data} kind={idle} setKind={setIdle} />}
                 </>
               )}
               {tab === 'settings' && <SettingsTab data={data} setData={setData} />}
@@ -808,6 +805,7 @@ function ItemDetail({ data, row, onClose }) {
   return (
     <Card title={row.product} subtitle={`${row.supplier} · ${row.brand} · ${row.category} · کد ${faDigits(row.code)}`} className="span2"
       actions={<button className="btn ghost" onClick={onClose}>بستن</button>}>
+      {data.selected?.length > 1 && <BranchPart key={row.code} data={data} code={row.code} />}
       <div className="inv-why">
         <StatusPill s={row.status} labels={data.status_label} />
         {Array.isArray(row.why) ? (
@@ -839,58 +837,49 @@ function ItemDetail({ data, row, onClose }) {
   )
 }
 
-// چند هیبرید انتخاب شده: موجودی و وضعیت هر کالا در هر شعبه (هر شعبه جدا محاسبه شده)، زیر «همه کالاها»
-// جدا از داده اصلی خوانده می‌شود تا جدول «همه کالاها» منتظر محاسبه تک‌تک شعب نماند
-function BranchSplit({ data, rows }) {
+// آخرین شارژ (آخرین فاکتور خرید کالا به شعبه) و فروش از آن روز
+const chargeCols = (many) => [
+  { key: 'charge_date', label: 'آخرین شارژ', type: 'date',
+    hint: 'آخرین فاکتور خرید (ورود بار) این کالا به شعبه از ابتدای سال مالی قبل؛ اضافات انبارگردانی و انتقال‌ها شارژ حساب نشده‌اند'
+      + (many ? '. چند شعبه: آخرین تاریخ بین شعب' : '') },
+  { key: 'charge_qty', label: 'تعداد شارژ', type: 'int',
+    hint: 'تعداد خریداری‌شده در روز آخرین شارژ' + (many ? '؛ چند شعبه: جمع آخرین شارژ هر شعبه' : '') },
+  { key: 'charge_sold', label: 'فروش از آخرین شارژ', type: 'int',
+    hint: 'فروش منهای برگشت از فروش، از روز آخرین شارژ تا امروز' + (many ? '؛ چند شعبه: جمع فروش هر شعبه از شارژ خودش' : '') },
+  { key: 'charge_pct', label: 'فروش‌رفته از شارژ', type: 'pct', hint: 'فروش از آخرین شارژ ÷ تعداد شارژ' },
+]
+
+// چند هیبرید انتخاب شده: همین کالا در هر شعبه (هر شعبه جدا محاسبه شده، مثل وقتی تنها انتخاب شود)، بالای جزئیات کالا
+function BranchPart({ data, code }) {
+  const { unit } = useApp()
   const stores = data.store_filtered ? data.stores.filter((x) => x.selected).map((x) => x.id) : []
-  const q = [...data.selected.map((b) => `branch=${encodeURIComponent(b)}`), ...stores.map((x) => `store=${x}`)].join('&')
+  const q = [...data.selected.map((b) => `branch=${encodeURIComponent(b)}`), ...stores.map((x) => `store=${x}`), `code=${encodeURIComponent(code)}`].join('&')
   const { data: br, error } = useFetch(`/api/inventory/branch-rows?${q}`)
   if (error) return <ErrorBox error={error} />
-  if (!br) return <Card title="به تفکیک شعبه" subtitle={`محاسبه جدای ${faDigits(data.selected.length)} شعبه…`}><Loading /></Card>
-  return <BranchSplitTable data={data} rows={rows} br={br} />
-}
-
-function BranchSplitTable({ data, rows, br }) {
-  const { unit } = useApp()
-  const table = useMemo(() => rows.flatMap((p) => {
-    const by = Object.fromEntries((br.rows[p.code] || []).map((r) => [r.branch, r]))
-    // با بیش از ۳ شعبه، شعبه‌ای که این کالا را ندارد (نه موجودی نه فروش) ردیف خالی نمی‌گیرد تا جدول شلوغ نشود
-    const many = data.selected.length > 3
-    return data.selected.filter((b) => !many || by[b] || br.errors?.[b]).map((b) => ({
-      key: `${p.code}|${b}`, code: p.code, product: p.product, brand: p.brand, branch: b,
-      ...(by[b] || { status: null, note: br.errors?.[b] || 'موجودی و فروش ندارد' }),
-    })).map((r) => (isIdle(r) ? r : { ...r, ...Object.fromEntries(CHARGE_KEYS.map((k) => [k, null])) }))
-  }), [rows, br, data.selected])
+  if (!br) return <div className="muted small">محاسبه جدای {faDigits(data.selected.length)} شعبه…</div>
+  const by = Object.fromEntries((br.rows[code] || []).map((r) => [r.branch, r]))
+  const rows = data.selected.map((b) => ({ key: b, branch: b, ...(by[b] || { status: null, note: br.errors?.[b] || 'موجودی و فروش ندارد' }) }))
   return (
-    <Card title="به تفکیک شعبه" subtitle="هر کالا در هر شعبه انتخاب‌شده؛ وضعیت با موجودی و فروش همان شعبه حساب شده (مثل وقتی آن شعبه تنها انتخاب شود)">
-      <DataTable rows={table} unit={unit} pageSize={30} dense exportName="inventory-by-branch" defaultSort={{ key: 'stock', dir: 'desc' }}
+    <div>
+      <h4 style={{ margin: '0 0 6px' }}>به تفکیک شعبه</h4>
+      <DataTable rows={rows} unit={unit} pageSize={30} dense search={false} exportName={`inventory-${code}-by-branch`} defaultSort={{ key: 'stock', dir: 'desc' }}
         columns={[
-          { key: 'code', label: 'کد کالا' },
-          { key: 'product', label: 'کالا' },
-          { key: 'brand', label: 'برند' },
           { key: 'branch', label: 'شعبه' },
           { key: 'status', label: 'وضعیت در همین شعبه', csv: (r) => data.status_label[r.status] || r.note || '',
             render: (r) => (r.status ? <StatusPill s={r.status} labels={data.status_label} low={r.c_low} /> : <span className="muted">{r.note}</span>) },
           { key: 'stock', label: 'موجودی', type: 'int' },
+          { key: 'value', label: 'ارزش موجودی', type: 'money' },
           { key: 'open_req', label: 'درخواست باز', type: 'int' },
           { key: 'mean', label: 'فروش ماهانه', type: 'int' },
+          { key: 'cover_months', label: 'پوشش (ماه)', type: 'num1' },
           { key: 'order', label: 'سفارش پیشنهادی', type: 'int' },
           { key: 'abc', label: 'ABC' },
-          ...chargeCols,
+          { key: 'last_sale', label: 'آخرین فروش', type: 'date' },
+          ...chargeCols(false),
         ]} />
-    </Card>
+    </div>
   )
 }
-
-// آخرین شارژ (آخرین فاکتور خرید کالا به شعبه) و فروش از آن روز؛ فقط برای کالاهای راکد، مازاد و نامنظمِ برگشتی
-const CHARGE_KEYS = ['charge_date', 'charge_qty', 'charge_sold', 'charge_pct']
-const isIdle = (r) => r.status === 'dead' || r.status === 'excess' || !!r.ret_irr
-const chargeCols = [
-  { key: 'charge_date', label: 'آخرین شارژ', type: 'date', hint: 'آخرین فاکتور خرید (ورود بار) این کالا به شعبه از ابتدای سال مالی قبل؛ اضافات انبارگردانی و انتقال‌ها شارژ حساب نشده‌اند' },
-  { key: 'charge_qty', label: 'مقدار شارژ', type: 'int', hint: 'تعداد خریداری‌شده در روز آخرین شارژ' },
-  { key: 'charge_sold', label: 'فروش از آخرین شارژ', type: 'int', hint: 'فروش منهای برگشت از فروش، از روز آخرین شارژ تا امروز' },
-  { key: 'charge_pct', label: 'فروش‌رفته از شارژ', type: 'pct', hint: 'فروش از آخرین شارژ ÷ مقدار شارژ' },
-]
 
 // ستون فروش تعدادی از ابتدای سال جاری؛ کنار کمترین / میانگین / بیشترین فروش ماهانه
 const ytdCol = (data) => ({
@@ -941,11 +930,11 @@ function AllTab({ data, status, setStatus }) {
             { key: 'order_value', label: 'ارزش سفارش', type: 'money' },
             { key: 'open_req', label: 'درخواست باز', type: 'int' },
             { key: 'last_sale', label: 'آخرین فروش', type: 'date' },
+            ...chargeCols(data.selected?.length > 1),
             { key: 'trend', label: 'روند ۳ ماه', type: 'pct' },
           ]} />
       </Card>
       {sel && <ItemDetail data={data} row={sel} onClose={() => setSel(null)} />}
-      {data.selected?.length > 1 && <BranchSplit data={data} rows={rows} />}
     </>
   )
 }
@@ -971,48 +960,6 @@ function SupplierTab({ data }) {
           { key: 'buy_sell', label: 'خرید ÷ فروش', type: 'num1', render: (r) => <span className={r.buy_sell > 1.5 ? 'neg-text' : ''}>{fmtNum1(r.buy_sell)}</span> },
         ]} />
     </Card>
-  )
-}
-
-// ---------------------------------------------------------------- راکد و مازاد: پیشنهاد برگشت
-function IdleTab({ data, kind, setKind }) {
-  const { unit } = useApp()
-  const [sel, setSel] = useState(null)
-  const s = data.settings
-  const all = useMemo(() => data.rows.filter(isIdle), [data])
-  const kindOf = (r) => (r.ret_irr ? 'c' : r.status)
-  const rows = useMemo(() => (kind === 'all' ? all : all.filter((r) => kindOf(r) === kind)), [all, kind])
-  const sum = (k, rs = rows) => rs.reduce((a, r) => a + (r[k] || 0), 0)
-  const cnt = (st) => all.filter((r) => kindOf(r) === st).length
-  return (
-    <>
-      <div className="kpis">
-        <Kpi label="ارزش موجودی این فهرست" value={sum('value')} sub={`${fmtInt(rows.length)} کالا · ${fmtInt(sum('stock'))} عدد`} />
-        <Kpi label="می‌ماند" value={sum('value') - sum('ret_value')} sub="برای فروش پیش‌بینی‌شده تا نوبت‌های بعد" />
-      </div>
-      <Card title="راکد، مازاد و نامنظم: پیشنهاد برگشت"
-        subtitle={`راکد: ${fmtInt(s.dead_days)} روز نه فروش داشته نه خرید؛ ${fmtInt(s.return_keep_dead)} عدد برای قفسه می‌ماند. مازاد: بیش از ${faDigits(s.excess_months)} ماه پوشش؛ پیش‌بینی فروش ${faDigits(s.return_keep_months)} ماه آینده (A و B) یا ${faDigits(s.return_keep_months_c)} ماه (C) می‌ماند و برگشت به کارتن کامل رو به پایین گرد می‌شود. نامنظم: کالای C یا بدون سابقه کافی با بیش از ${faDigits(s.excess_months)} ماه پوشش؛ C ${faDigits(s.return_keep_months_c)} ماه فروش و بدون سابقه ${fmtInt(s.return_keep_dead)} عدد برای قفسه نگه می‌دارد. درخواست باز همیشه می‌ماند. قبل از برگشت، موجودی را شمارش کنید.`}
-        actions={<Tabs tabs={[{ value: 'all', label: `همه (${fmtInt(all.length)})` }, { value: 'dead', label: `راکد (${fmtInt(cnt('dead'))})` }, { value: 'excess', label: `مازاد (${fmtInt(cnt('excess'))})` }, { value: 'c', label: `نامنظم (${fmtInt(cnt('c'))})` }]} value={kind} onChange={setKind} />}>
-        <DataTable rows={rows} unit={unit} pageSize={25} dense exportName={`inventory-return-${kind}`} defaultSort={{ key: 'ret_qty', dir: 'desc' }} onRowClick={setSel}
-          columns={[
-            { key: 'status', label: 'وضعیت', csv: (r) => data.status_label[r.status], render: (r) => <StatusPill s={r.status} labels={data.status_label} /> },
-            { key: 'code', label: 'کد کالا' },
-            { key: 'product', label: 'کالا' },
-            { key: 'category', label: 'گروه کالا' },
-            { key: 'abc', label: 'ABC' },
-            { key: 'last_sale', label: 'آخرین فروش', type: 'date' },
-            { key: 'idle_days', label: 'روز بدون فروش', type: 'int' },
-            ...(data.selected.length > 1 ? [] : chargeCols),
-            { key: 'mean', label: 'فروش ماهانه', type: 'int' },
-            { key: 'stock', label: 'موجودی', type: 'int' },
-            { key: 'ret_keep', label: 'نگه‌داشت', type: 'int', hint: 'مازاد: پیش‌بینی فروش ماه‌های نگه‌داشت + درخواست باز؛ راکد: تعداد ثابت برای قفسه + درخواست باز' },
-            { key: 'ret_qty', label: 'برگشت (عدد)', type: 'int' },
-            { key: 'ret_cartons', label: 'برگشت (کارتن)', type: 'num1' },
-            { key: 'bought_90', label: 'خرید ۹۰ روز', type: 'int', hint: 'اگر تازه خریده شده، علت سفارش زیاد بررسی شود' },
-          ]} />
-      </Card>
-      {sel && <ItemDetail data={data} row={sel} onClose={() => setSel(null)} />}
-    </>
   )
 }
 

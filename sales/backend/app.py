@@ -1278,9 +1278,9 @@ def inventory(branch: list[str] | None = Query(None), store: list[int] | None = 
 
 
 @app.get("/api/inventory/branch-rows")
-def inventory_branch_rows(branch: list[str] | None = Query(None), store: list[int] | None = Query(None)):
+def inventory_branch_rows(branch: list[str] | None = Query(None), store: list[int] | None = Query(None), code: str | None = None):
     """چند شعبه با هم: موجودی و وضعیت هر کالا در هر شعبه، هر شعبه جدا محاسبه می‌شود (همان کنترل موجودی تک‌شعبه).
-    جدا از /api/inventory خوانده می‌شود تا جدول اصلی منتظر محاسبه تک‌تک شعب نماند.
+    جدا از /api/inventory خوانده می‌شود تا جدول اصلی منتظر محاسبه تک‌تک شعب نماند. code: فقط همین کالا (جزئیات کالا).
     خروجی: {کد کالا: [{شعبه، موجودی، وضعیت، ...}]}؛ شعبه‌ای که محاسبه‌اش ممکن نیست (سابقه کم) با خطا می‌آید."""
     d = STATE["data"]
     ctx()
@@ -1290,7 +1290,8 @@ def inventory_branch_rows(branch: list[str] | None = Query(None), store: list[in
         return {"rows": {}, "errors": {}}
     out: dict[str, list] = {}
     errors = {}
-    keep = ["code", "stock", "status", "c_low", "abc", "mean", "order", "open_req", "ret_irr", "charge_date", "charge_qty", "charge_sold", "charge_pct"]
+    keep = ["code", "stock", "value", "status", "c_low", "abc", "mean", "cover_months", "order", "open_req", "last_sale",
+            "charge_date", "charge_qty", "charge_sold", "charge_pct"]
     for b in sel:
         try:
             ids = {x["id"] for x in INV_SRC.get(b)["stores"]}
@@ -1300,6 +1301,8 @@ def inventory_branch_rows(branch: list[str] | None = Query(None), store: list[in
             errors[b] = str(e)
             continue
         rows = rows[[c for c in keep if c in rows]]
+        if code:
+            rows = rows[rows["code"].astype(str) == str(code)]
         for rec in A.records(rows):
             out.setdefault(str(rec["code"]), []).append({"branch": b, **rec})
     return {"rows": out, "errors": errors}

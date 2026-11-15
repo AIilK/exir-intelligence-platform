@@ -639,10 +639,11 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = N
     df["buy_days"] = [days.diff(d, today) if isinstance(d, str) else None for d in df["last_buy"]]
     dead = ((df["stock"] > 0) & (df["idle_days"].isna() | (df["idle_days"].fillna(0) > s["dead_days"]))
             & (df["buy_days"].isna() | (df["buy_days"].fillna(0) > s["dead_days"])))
-    # آخرین شارژ (فقط برای یک شعبه؛ در انتخاب چند شعبه، جدول «به تفکیک شعبه» آن را برای هر شعبه نشان می‌دهد)
+    # آخرین شارژ هر شعبه جدا؛ برای چند شعبه با هم: تاریخ = آخرین شارژ بین شعب، مقدار و فروش = جمع آخرین شارژ
+    # هر شعبه و فروش همان شعبه از شارژ خودش (برای یک شعبه همان عدد خود شعبه است)
     ch = src.get("charge")
-    if ch is not None and len(src.get("bids") or []) == 1:
-        ch = ch.drop_duplicates("code", keep="last").set_index("code")
+    if ch is not None and len(ch):
+        ch = ch.groupby("code").agg(date=("date", "max"), qty=("qty", "sum"), sold=("sold", "sum"))
         df["charge_date"], df["charge_qty"], df["charge_sold"] = (ch[k].reindex(codes) for k in ("date", "qty", "sold"))
     else:
         df["charge_date"], df["charge_qty"], df["charge_sold"] = None, np.nan, np.nan
