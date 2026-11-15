@@ -19,7 +19,7 @@ const TABS = [
 // زیرنمای تب «کالاها»
 const ITEM_VIEWS = [
   { value: 'all', label: 'همه کالاها' },
-  { value: 'idle', label: 'راکد و مازاد (برگشتی)' },
+  { value: 'idle', label: 'راکد، مازاد و نامنظم (برگشتی)' },
   { value: 'supplier', label: 'تأمین‌کنندگان' },
 ]
 // پیوندهای قدیمی (تب‌های ادغام‌شده) به تب جدید
@@ -111,18 +111,13 @@ export default function Inventory() {
   const global = GLOBAL_TABS.has(tab)
   return (
     <>
-      <PageHead title="موجودی و سفارش"
-        desc={tab === 'factory' ? 'موجودی انبارهای کارخانه از راهکاران، کنار جمع موجودی شعب هیبرید از کارآمد. فقط خوانده می‌شود.'
-          : tab === 'remit' ? 'حواله‌های فروش ثبت‌شده زنجیره‌ای و اینترنتی در راهکاران، با پیشنهاد تأیید هر کالا از موجودی و فروش همان شعبه در کارآمد. فقط خوانده می‌شود.'
-          : tab === 'summary' ? 'وضعیت انبار و سفارش همه شعب هیبرید و، پایین‌تر، شعبه انتخاب‌شده. موجودی و ارزش انبار از کارآمد.'
-          : data ? `${(data.selected || []).map(lbl).join('، ')} — هشدار کمبود، پیشنهاد سفارش (حداکثر دو سفارش در ماه) و کالاهای راکد. موجودی از کارآمد فقط خوانده می‌شود${data.rahkaran?.ok ? '؛ سفارش و بار در راه کارخانه از راهکاران' : ''}.`
-            : 'هشدار کمبود، پیشنهاد سفارش و کالاهای راکد'}>
+      <PageHead title="موجودی و سفارش">
         <Tabs tabs={TABS} value={tab} onChange={(v) => setSp({ tab: v })} />
       </PageHead>
       {/* فیلتر شعبه برای کل صفحه: در همه زیرتب‌ها دیده می‌شود و انتخاب آن همه را تغییر می‌دهد */}
       {tab !== 'remit' && <div className="plan-bar">
         {/* مقدار = انتخاب کاربر (نه شعبه داده قبلی)، تا تا رسیدن داده شعبه جدید به عقب برنگردد */}
-        <MultiSelect label="شعبه" value={cur} onChange={setSel}
+        <MultiSelect label="شعبه" value={cur} onChange={setSel} selectAll
           options={(branches.length ? branches : cur).map((b) => ({ value: b, label: lbl(b) }))} />
         {!global && <MultiSelect label="انبار" value={stores} onChange={setStores} options={storeOpts} />}
         {loadingBranch && <span className="pill st-none">در حال خواندن {curLabel}…</span>}
@@ -151,7 +146,7 @@ export default function Inventory() {
           {(error || err) && <ErrorBox error={error || err} />}
           {!data ? (!error && <Loading />) : (
             <>
-              {tab !== 'settings' && <OrderBar data={data} onRefresh={refresh} busy={busy} />}
+              {tab === 'order' && <OrderBar data={data} onRefresh={refresh} busy={busy} />}
               {tab === 'summary' && <SummaryTab data={data} go={go} />}
               {tab === 'order' && <OrderTab data={data} />}
               {tab === 'items' && (
@@ -845,12 +840,23 @@ function ItemDetail({ data, row, onClose }) {
 }
 
 // چند هیبرید انتخاب شده: موجودی و وضعیت هر کالا در هر شعبه (هر شعبه جدا محاسبه شده)، زیر «همه کالاها»
+// جدا از داده اصلی خوانده می‌شود تا جدول «همه کالاها» منتظر محاسبه تک‌تک شعب نماند
 function BranchSplit({ data, rows }) {
+  const stores = data.store_filtered ? data.stores.filter((x) => x.selected).map((x) => x.id) : []
+  const q = [...data.selected.map((b) => `branch=${encodeURIComponent(b)}`), ...stores.map((x) => `store=${x}`)].join('&')
+  const { data: br, error } = useFetch(`/api/inventory/branch-rows?${q}`)
+  if (error) return <ErrorBox error={error} />
+  if (!br) return <Card title="به تفکیک شعبه" subtitle={`محاسبه جدای ${faDigits(data.selected.length)} شعبه…`}><Loading /></Card>
+  return <BranchSplitTable data={data} rows={rows} br={br} />
+}
+
+function BranchSplitTable({ data, rows, br }) {
   const { unit } = useApp()
-  const br = data.branch_rows
   const table = useMemo(() => rows.flatMap((p) => {
     const by = Object.fromEntries((br.rows[p.code] || []).map((r) => [r.branch, r]))
-    return data.selected.map((b) => ({
+    // با بیش از ۳ شعبه، شعبه‌ای که این کالا را ندارد (نه موجودی نه فروش) ردیف خالی نمی‌گیرد تا جدول شلوغ نشود
+    const many = data.selected.length > 3
+    return data.selected.filter((b) => !many || by[b] || br.errors?.[b]).map((b) => ({
       key: `${p.code}|${b}`, code: p.code, product: p.product, brand: p.brand, branch: b,
       ...(by[b] || { status: null, note: br.errors?.[b] || 'موجودی و فروش ندارد' }),
     })).map((r) => (isIdle(r) ? r : { ...r, ...Object.fromEntries(CHARGE_KEYS.map((k) => [k, null])) }))
@@ -876,9 +882,9 @@ function BranchSplit({ data, rows }) {
   )
 }
 
-// آخرین شارژ (آخرین فاکتور خرید کالا به شعبه) و فروش از آن روز؛ فقط برای کالاهای راکد و مازاد
+// آخرین شارژ (آخرین فاکتور خرید کالا به شعبه) و فروش از آن روز؛ فقط برای کالاهای راکد، مازاد و نامنظمِ برگشتی
 const CHARGE_KEYS = ['charge_date', 'charge_qty', 'charge_sold', 'charge_pct']
-const isIdle = (r) => r.status === 'dead' || r.status === 'excess'
+const isIdle = (r) => r.status === 'dead' || r.status === 'excess' || !!r.ret_irr
 const chargeCols = [
   { key: 'charge_date', label: 'آخرین شارژ', type: 'date', hint: 'آخرین فاکتور خرید (ورود بار) این کالا به شعبه از ابتدای سال مالی قبل؛ اضافات انبارگردانی و انتقال‌ها شارژ حساب نشده‌اند' },
   { key: 'charge_qty', label: 'مقدار شارژ', type: 'int', hint: 'تعداد خریداری‌شده در روز آخرین شارژ' },
@@ -939,7 +945,7 @@ function AllTab({ data, status, setStatus }) {
           ]} />
       </Card>
       {sel && <ItemDetail data={data} row={sel} onClose={() => setSel(null)} />}
-      {data.branch_rows && <BranchSplit data={data} rows={rows} />}
+      {data.selected?.length > 1 && <BranchSplit data={data} rows={rows} />}
     </>
   )
 }
@@ -973,19 +979,20 @@ function IdleTab({ data, kind, setKind }) {
   const { unit } = useApp()
   const [sel, setSel] = useState(null)
   const s = data.settings
-  const all = useMemo(() => data.rows.filter((r) => r.status === 'dead' || r.status === 'excess'), [data])
-  const rows = useMemo(() => (kind === 'all' ? all : all.filter((r) => r.status === kind)), [all, kind])
+  const all = useMemo(() => data.rows.filter(isIdle), [data])
+  const kindOf = (r) => (r.ret_irr ? 'c' : r.status)
+  const rows = useMemo(() => (kind === 'all' ? all : all.filter((r) => kindOf(r) === kind)), [all, kind])
   const sum = (k, rs = rows) => rs.reduce((a, r) => a + (r[k] || 0), 0)
-  const cnt = (st) => all.filter((r) => r.status === st).length
+  const cnt = (st) => all.filter((r) => kindOf(r) === st).length
   return (
     <>
       <div className="kpis">
         <Kpi label="ارزش موجودی این فهرست" value={sum('value')} sub={`${fmtInt(rows.length)} کالا · ${fmtInt(sum('stock'))} عدد`} />
         <Kpi label="می‌ماند" value={sum('value') - sum('ret_value')} sub="برای فروش پیش‌بینی‌شده تا نوبت‌های بعد" />
       </div>
-      <Card title="راکد و مازاد — پیشنهاد برگشت"
-        subtitle={`راکد: ${fmtInt(s.dead_days)} روز نه فروش داشته نه خرید؛ ${fmtInt(s.return_keep_dead)} عدد برای قفسه می‌ماند. مازاد: بیش از ${faDigits(s.excess_months)} ماه پوشش؛ پیش‌بینی فروش ${faDigits(s.return_keep_months)} ماه آینده (A و B) یا ${faDigits(s.return_keep_months_c)} ماه (C) می‌ماند و برگشت به کارتن کامل رو به پایین گرد می‌شود. درخواست باز همیشه می‌ماند. قبل از برگشت، موجودی را شمارش کنید.`}
-        actions={<Tabs tabs={[{ value: 'all', label: `همه (${fmtInt(all.length)})` }, { value: 'dead', label: `راکد (${fmtInt(cnt('dead'))})` }, { value: 'excess', label: `مازاد (${fmtInt(cnt('excess'))})` }]} value={kind} onChange={setKind} />}>
+      <Card title="راکد، مازاد و نامنظم: پیشنهاد برگشت"
+        subtitle={`راکد: ${fmtInt(s.dead_days)} روز نه فروش داشته نه خرید؛ ${fmtInt(s.return_keep_dead)} عدد برای قفسه می‌ماند. مازاد: بیش از ${faDigits(s.excess_months)} ماه پوشش؛ پیش‌بینی فروش ${faDigits(s.return_keep_months)} ماه آینده (A و B) یا ${faDigits(s.return_keep_months_c)} ماه (C) می‌ماند و برگشت به کارتن کامل رو به پایین گرد می‌شود. نامنظم: کالای C یا بدون سابقه کافی با بیش از ${faDigits(s.excess_months)} ماه پوشش؛ C ${faDigits(s.return_keep_months_c)} ماه فروش و بدون سابقه ${fmtInt(s.return_keep_dead)} عدد برای قفسه نگه می‌دارد. درخواست باز همیشه می‌ماند. قبل از برگشت، موجودی را شمارش کنید.`}
+        actions={<Tabs tabs={[{ value: 'all', label: `همه (${fmtInt(all.length)})` }, { value: 'dead', label: `راکد (${fmtInt(cnt('dead'))})` }, { value: 'excess', label: `مازاد (${fmtInt(cnt('excess'))})` }, { value: 'c', label: `نامنظم (${fmtInt(cnt('c'))})` }]} value={kind} onChange={setKind} />}>
         <DataTable rows={rows} unit={unit} pageSize={25} dense exportName={`inventory-return-${kind}`} defaultSort={{ key: 'ret_qty', dir: 'desc' }} onRowClick={setSel}
           columns={[
             { key: 'status', label: 'وضعیت', csv: (r) => data.status_label[r.status], render: (r) => <StatusPill s={r.status} labels={data.status_label} /> },

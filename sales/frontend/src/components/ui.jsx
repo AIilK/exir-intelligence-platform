@@ -303,7 +303,7 @@ const isNeg = (v, type) => NUMERIC.has(type) && typeof v === 'number' && v < 0
 export const NONE = '__none__'   // allMode: هیچ موردی انتخاب نشده (خالی = همه)
 
 /** allMode (مثل فیلتر اکسل): همه پیش‌فرض تیک دارند، «انتخاب همه» و برداشتن تیک هر مورد؛ value خالی = همه، [NONE] = هیچ */
-export function MultiSelect({ label, options, value, onChange, allMode = false }) {
+export function MultiSelect({ label, options, value, onChange, allMode = false, selectAll = false }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef(null)
@@ -344,6 +344,7 @@ export function MultiSelect({ label, options, value, onChange, allMode = false }
         <div className="ms-pop">
           <input className="input" autoFocus placeholder="جستجو…" value={q} onChange={(e) => setQ(e.target.value)} />
           {!allMode && <div className="ms-actions">
+            {selectAll && <button className="link" onClick={() => onChange(all)}>انتخاب همه</button>}
             <button className="link" onClick={() => onChange([])}>پاک کردن</button>
             {q && <button className="link" onClick={() => onChange([...new Set([...value, ...shown.map((o) => o.value)])])}>انتخاب نتایج</button>}
           </div>}

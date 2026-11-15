@@ -1239,6 +1239,29 @@ def _inv_selection(d, cfg, branch, store) -> tuple[list[str], list[int] | None]:
     return sel, [int(x) for x in store] if store else None
 
 
+# نتیجه محاسبه هر انتخاب (شعبه یا چند شعبه + انبار) نگه داشته می‌شود تا با هر به‌روزرسانی لایو فروش (stamp، هر دقیقه)
+# انتخاب همه هیبریدها از نو (حدود ۲۰ محاسبه) ساخته نشود. موجودی مثل قبل لایو است: با هر بار خواندن دوباره موجودی
+# از کارآمد (live_stock، هر ۱ تا ۵ دقیقه) نتیجه باطل می‌شود؛ تغییر فقط فروش تا ۵ دقیقه همان نتیجه را نگه می‌دارد.
+# عوض شدن تنظیمات یا خواندن دوباره کامل داده کارآمد (snap) هم کش را باطل می‌کند
+INV_MEMO: dict = {}
+INV_MEMO_SECONDS = 300
+
+
+def _inv_compute(d: dict, cfg: dict, sel, stores: list[int] | None = None, refresh: bool = False) -> dict:
+    names = (sel,) if isinstance(sel, str) else tuple(sel)
+    src = INV_SRC.get(list(names) if len(names) > 1 else names[0], force=refresh, stores=stores)
+    key = (names, tuple(sorted(stores)) if stores else None, id(INV_SRC.snap),
+           json.dumps(cfg.get("inventory") or {}, sort_keys=True), json.dumps(cfg.get("plan") or {}, sort_keys=True))
+    hit = INV_MEMO.get(key)
+    if hit and not refresh and hit[2] == src["fetched"] and (time.time() - hit[0] < INV_MEMO_SECONDS or hit[1] == STATE["stamp"]):
+        return hit[3]
+    r = INV.compute(d, src, cfg, branch=list(names) if len(names) > 1 else names[0])
+    if len(INV_MEMO) > 32:
+        INV_MEMO.clear()
+    INV_MEMO[key] = (time.time(), STATE["stamp"], src["fetched"], r)
+    return r
+
+
 @app.get("/api/inventory")
 def inventory(branch: list[str] | None = Query(None), store: list[int] | None = Query(None), refresh: bool = False):
     d = STATE["data"]
@@ -1247,34 +1270,36 @@ def inventory(branch: list[str] | None = Query(None), store: list[int] | None = 
     branches = INV.inventory_branches(d)
     sel, stores = _inv_selection(d, cfg, branch, store)
     try:
-        src = INV_SRC.get(sel, force=refresh, stores=stores)
-        r = INV.compute(d, src, cfg, branch=sel)
+        r = _inv_compute(d, cfg, sel, stores, refresh)
     except loader.DataError as e:
         raise HTTPException(409, str(e))
     return {**r, "rows": A.records(r["rows"]), "suppliers": A.records(r["suppliers"]), "branches": branches,
-            "labels": INV.branch_labels(branches), "branch_rows": _inv_branch_rows(d, cfg, sel, stores, set(r["rows"]["code"]))}
+            "labels": INV.branch_labels(branches)}
 
 
-def _inv_branch_rows(d: dict, cfg: dict, sel: list[str], stores: list[int] | None, codes: set) -> dict | None:
+@app.get("/api/inventory/branch-rows")
+def inventory_branch_rows(branch: list[str] | None = Query(None), store: list[int] | None = Query(None)):
     """چند شعبه با هم: موجودی و وضعیت هر کالا در هر شعبه، هر شعبه جدا محاسبه می‌شود (همان کنترل موجودی تک‌شعبه).
+    جدا از /api/inventory خوانده می‌شود تا جدول اصلی منتظر محاسبه تک‌تک شعب نماند.
     خروجی: {کد کالا: [{شعبه، موجودی، وضعیت، ...}]}؛ شعبه‌ای که محاسبه‌اش ممکن نیست (سابقه کم) با خطا می‌آید."""
+    d = STATE["data"]
+    ctx()
+    cfg = read_config()
+    sel, stores = _inv_selection(d, cfg, branch, store)
     if len(sel) < 2:
-        return None
+        return {"rows": {}, "errors": {}}
     out: dict[str, list] = {}
     errors = {}
-    keep = ["code", "stock", "status", "c_low", "abc", "mean", "order", "open_req", "charge_date", "charge_qty", "charge_sold", "charge_pct"]
+    keep = ["code", "stock", "status", "c_low", "abc", "mean", "order", "open_req", "ret_irr", "charge_date", "charge_qty", "charge_sold", "charge_pct"]
     for b in sel:
         try:
-            bsrc = INV_SRC.get(b)
-            ids = {x["id"] for x in bsrc["stores"]}
+            ids = {x["id"] for x in INV_SRC.get(b)["stores"]}
             mine = [x for x in stores or [] if x in ids]
-            if mine:
-                bsrc = INV_SRC.get(b, stores=mine)
-            rows = INV.compute(d, bsrc, cfg, branch=b)["rows"]
+            rows = _inv_compute(d, cfg, b, mine or None)["rows"]
         except loader.DataError as e:
             errors[b] = str(e)
             continue
-        rows = rows[rows["code"].isin(codes)][[c for c in keep if c in rows]]
+        rows = rows[[c for c in keep if c in rows]]
         for rec in A.records(rows):
             out.setdefault(str(rec["code"]), []).append({"branch": b, **rec})
     return {"rows": out, "errors": errors}

@@ -21,6 +21,7 @@ from __future__ import annotations
 import bisect
 import math
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import warnings
 from datetime import datetime
@@ -67,6 +68,7 @@ DEFAULTS = {
 }
 _MEMO: dict = {}
 CACHE_MINUTES = 30
+AVG_PRICE_WORKERS = 6     # اتصال هم‌زمان به کارآمد برای میانگین قیمت شعب
 ABC_CUTS = (0.80, 0.95)
 STATUS_LABEL = {"red": "تمام می‌شود قبل از رسیدن بار", "orange": "سفارش در نوبت بعد", "ok": "کافی",
                 "excess": "مازاد", "dead": "راکد", "c": "نامنظم (سفارش با درخواست)", "nodata": "سابقه ناکافی"}
@@ -140,17 +142,17 @@ class InventorySource:
         self.lock = threading.Lock()
 
     def _load(self):
-        cn = sql_source.connect(sql_source.settings(sql_source.read_env(self.env_file)))
-        try:
-            br = _read(cn, "SELECT ID, Name FROM dbo.tblBranch", [])
-            stores = _read(cn, "SELECT ID, BranchRef, Name, IsWastage FROM dbo.tblStore", [])
-            stock = _read(cn, STOCK_SQL, [])
-            goods = _read(cn, GOODS_SQL, [])
-            price = _read(cn, PRICE_SQL, [])
-            purch = _read(cn, PURCH_SQL, [])
-            charge = _read(cn, CHARGE_SQL, [])
-        finally:
-            cn.close()
+        # هر کوئری با اتصال جدا و هم‌زمان (پشت سر هم ۱۰ تا ۲۰ ثانیه می‌شد)
+        def one(sql):
+            cn = sql_source.connect(sql_source.settings(sql_source.read_env(self.env_file)))
+            try:
+                return _read(cn, sql, [])
+            finally:
+                cn.close()
+        sqls = ["SELECT ID, Name FROM dbo.tblBranch", "SELECT ID, BranchRef, Name, IsWastage FROM dbo.tblStore",
+                STOCK_SQL, GOODS_SQL, PRICE_SQL, PURCH_SQL, CHARGE_SQL]
+        with ThreadPoolExecutor(max_workers=len(sqls)) as ex:
+            br, stores, stock, goods, price, purch, charge = ex.map(one, sqls)
         for df in (goods, price, purch, charge):
             df["code"] = df["code"].map(loader._clean_code)
         br["name"] = br["Name"].map(loader._clean_text)
@@ -219,7 +221,7 @@ class InventorySource:
         c["stock"] = st[~st["waste"]].groupby("code")["qty"].sum()
         c["waste"] = st[st["waste"]].groupby("code")["qty"].sum()
         if "_avg" not in c:
-            c["_avg"] = {b: self._avg_price(b) for b in c["bids"]}
+            c["_avg"] = self._avg_prices(c["bids"])
         if len(c["bids"]) == 1:
             c["avg_price"] = c["_avg"][c["bids"][0]]
             return
@@ -269,6 +271,17 @@ class InventorySource:
                 self._slice_stock(c, stock)
                 c["fetched"] = now
         return True
+
+    def _avg_prices(self, bids: list[int]) -> dict:
+        """میانگین قیمت چند شعبه: هر شعبه یک بار در هر چرخه موجودی خوانده می‌شود (کش روی snap)؛
+        شعب نخوانده با چند اتصال هم‌زمان (هر کوئری کارآمد حدود ۱ ثانیه، برای همه هیبریدها پشت سر هم ۲۰ ثانیه می‌شد)"""
+        cache = self.snap.setdefault("avg", {})
+        miss = [b for b in bids if b not in cache]
+        if miss:
+            with ThreadPoolExecutor(max_workers=min(AVG_PRICE_WORKERS, len(miss))) as ex:
+                for b, s in zip(miss, ex.map(self._avg_price, miss)):
+                    cache[b] = s
+        return {b: cache[b] for b in bids}
 
     def _avg_price(self, bid: int) -> pd.Series:
         """میانگین قیمت خرید کالاهای شعبه از funGoodsAvgPrice کارآمد (ارزش انبار گزارش کارآمد)."""
@@ -447,9 +460,13 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = N
     sold = sales[~sales["is_return"]]
     gross_b = sold[sold["month"].isin(base_months)].groupby("product_code", observed=True)["qty"].sum()
     ret_b = -sales[sales["is_return"] & sales["month"].isin(base_months)].groupby("product_code", observed=True)["qty"].sum()
+    # نام، برند و گروه هر کالا = رایج‌ترین مقدار در فروش‌ها (با شمارش گروهی؛ value_counts کالا به کالا نصف زمان محاسبه بود)
+    def most(col):
+        n = sales.groupby(["product_code", col], observed=True).size()
+        n = n[n > 0].sort_values(ascending=False, kind="stable")
+        return n[~n.index.get_level_values(0).duplicated()].reset_index(level=1)[col]
+    info = pd.DataFrame({c: most(c) for c in ("product", "brand", "category")})
     mode = lambda x: x.value_counts().index[0]
-    info = sales.groupby("product_code", observed=True).agg(product=("product", mode), brand=("brand", mode),
-                                                              category=("category", mode))
     # مشتریان: تعداد و سهم بزرگ‌ترین مشتری در ماه‌های پایه
     cb = sold[sold["month"].isin(base_months)].groupby(["product_code", "customer_code"], observed=True)["qty"].sum()
     cb = cb[cb > 0]
@@ -673,13 +690,18 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = N
         w = days.months_in(today, days.add(today, int(round(months * 30))))
         return sum(fc(m)[0].clip(lower=0) * v for m, v in w.items())
     keep_m = np.where(df["abc"].isin(["A", "B"]), float(s["return_keep_months"]), float(s["return_keep_months_c"]))
-    df["ret_keep"] = np.ceil(np.where(df["status"] == "dead", float(s["return_keep_dead"]),
+    # نامنظم (C) و سابقه ناکافی هم مثل مازاد پیشنهاد برگشت می‌گیرند، فقط وقتی پوشش بیش از excess_months ماه است:
+    # C یک ماه فروش (return_keep_months_c) نگه می‌دارد؛ سابقه ناکافی (پیش‌بینی ندارد) مثل راکد تعداد ثابت قفسه
+    shelf = df["status"].isin(["dead", "nodata"])
+    irr = df["status"].isin(["c", "nodata"]) & (df["cover_months"] > s["excess_months"])
+    df["ret_keep"] = np.ceil(np.where(shelf, float(s["return_keep_dead"]),
         np.where(df["abc"].isin(["A", "B"]), demand(float(s["return_keep_months"])), demand(float(s["return_keep_months_c"]))))
         + df["open_req"].clip(lower=0))
-    df["ret_keep_months"] = np.where(df["status"] == "dead", 0.0, keep_m)
+    df["ret_keep_months"] = np.where(shelf, 0.0, keep_m)
     over = (df["stock"].clip(lower=0) - df["ret_keep"]).clip(lower=0)
     full = np.where(df["unity"] > 1, np.floor(over / df["unity"]) * df["unity"], np.floor(over))
-    df["ret_qty"] = np.select([df["status"] == "dead", df["status"] == "excess"], [np.floor(over), full], 0.0)
+    df["ret_qty"] = np.select([df["status"] == "dead", (df["status"] == "excess") | irr], [np.floor(over), full], 0.0)
+    df["ret_irr"] = irr
     df["ret_cartons"] = np.where(df["unity"] > 1, df["ret_qty"] / df["unity"], np.nan)
     df["ret_value"] = df["ret_qty"] * df["avg_price"]
 
@@ -782,7 +804,7 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = N
             "top_cust", "ly_cur", "ly_next", "cur_month", "ytd", "daily", "cover_days", "cover_months", "runout", "order_by",
             "last_sale", "idle_days", "last_buy", "buy_days", "charge_date", "charge_qty", "charge_sold", "charge_pct", "sf_now", "bought_90", "sold_90", "rk_open", "rk_transit", "incoming", "open_since",
             "factory_stock", "factory_free", "factory_short", "c_low",
-            "ret_keep", "ret_keep_months", "ret_qty", "ret_cartons", "ret_value", "why"]
+            "ret_keep", "ret_keep_months", "ret_irr", "ret_qty", "ret_cartons", "ret_value", "why"]
     out = df.reset_index()[cols].replace([np.inf, -np.inf], np.nan)
     hist_months = [m for m in months if m >= PL.month_add(cur, -12)]
     H = mq.reindex(index=codes, fill_value=0.0)[hist_months]
@@ -818,8 +840,11 @@ def _why(r, s, review, arr0, arr1, nxt, use_in=False) -> list:
         return [["وضعیت", f"{last}؛ {buy}؛ {_n(r.stock)} عدد در انبار مانده است."],
                 ["برگشت", f"{_n(r.ret_keep)} عدد می‌ماند ({_n(s['return_keep_dead'])} عدد برای قفسه"
                  + (f" + {_n(r.open_req)} درخواست باز" if r.open_req > 0 else "") + f")؛ {_n(r.ret_qty)} عدد برگشت."]]
+    ret = ([["برگشت", f"{_n(r.ret_keep)} عدد می‌ماند (" + (f"{_n(s['return_keep_dead'])} عدد برای قفسه" if r.status == "nodata"
+                       else f"{s['return_keep_months_c']:g} ماه فروش") + (f" + {_n(r.open_req)} درخواست باز" if r.open_req > 0 else "")
+                       + f")؛ {_n(r.ret_qty)} عدد برگشت (به کارتن کامل رو به پایین)."]] if getattr(r, "ret_irr", False) and r.ret_qty > 0 else [])
     if r.status == "nodata":
-        return [["وضعیت", "در ماه‌های سالم اخیر فروشی نداشته؛ برای پیش‌بینی سابقه کافی نیست."]]
+        return [["وضعیت", "در ماه‌های سالم اخیر فروشی نداشته؛ برای پیش‌بینی سابقه کافی نیست."]] + ret
     if r.abc == "C" and r.c_low:
         return [["وضعیت", f"کالای کم‌فروش ولی منظم (گروه C): در {_n(r.months_sold)} ماه از ماه‌های پایه فروش داشته."],
                 ["فروش ماهانه", f"میانگین {_n(r.mean)} عدد (کمترین {_n(r.min)}، بیشترین {_n(r.max)})."],
@@ -836,7 +861,7 @@ def _why(r, s, review, arr0, arr1, nxt, use_in=False) -> list:
                     ["پیشنهاد", f"فقط کسری درخواست سفارش شود: {_n(r.req_short)} عدد."]]
         return [["وضعیت", why_c],
                 ["فروش ماهانه", f"بین {_n(r.min)} و {_n(r.max)} عدد."],
-                ["پیشنهاد", "هشدار خودکار ندارد؛ سفارش بر اساس درخواست مشتری."]]
+                ["پیشنهاد", "هشدار خودکار ندارد؛ سفارش بر اساس درخواست مشتری."]] + ret
     lines = [["فروش ماهانه", f"میانگین {_n(r.mean)} عدد (کمترین {_n(r.min)}، بیشترین {_n(r.max)})؛ فروش خالص، پس از کسر برگشتی."],
              ["ضریب فصل", f"این ماه {r.sf_now:.2f} و ماه بعد {r.sf_next:.2f}."]]
     if r.ly_next_used:
