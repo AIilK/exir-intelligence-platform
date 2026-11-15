@@ -316,7 +316,7 @@ function PeriodNote({ contest, period, narrowed, lastDate, late }) {
       <span style={chip} className="muted">{fmtInt(contest.products.length)} کالا</span>
       {late?.qty > 0 && <span style={chip} className="muted"
         title="درخواست‌هایی که پیش از شروع بازه ثبت شده‌اند ولی داخل بازه فاکتور شده‌اند هم حساب می‌شوند (تاریخ فاکتور از کارآمد)">
-        شامل {fmtInt(late.qty)} عدد درخواست قبل از {period ? short(period.from) : 'بازه'} که در بازه فاکتور شده</span>}
+        شامل {fmtInt(late.qty)} عدد درخواست هیبرید مرکزی قبل از {period ? short(period.from) : 'بازه'} که در بازه فاکتور شده</span>}
       {late?.error && <span style={{ ...chip, background: 'var(--warn-bg, var(--surface-2))' }} title={late.error}>
         درخواست‌های قبل از بازه که در بازه فاکتور شده‌اند حساب نشد (کارآمد در دسترس نبود)</span>}
     </span>

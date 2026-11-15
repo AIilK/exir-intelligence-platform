@@ -2131,13 +2131,13 @@ def contest_data(cid: str, vat: str = "0", date_from: str | None = None, date_to
 
 # درخواست‌هایی که پیش از شروع بازه انتخابی ولی از شروع خود مسابقه به بعد ثبت شده‌اند (مثلاً ۱ تا ۹ آبان وقتی بازه
 # از ۱۰ آبان است) و داخل بازه انتخابی فاکتور شده‌اند. درخواست پیش از شروع مسابقه (مثلاً مهر) حساب نمی‌شود.
-# تاریخ فاکتور در داده درخواست داشبورد نیست، پس جدا از کارآمد خوانده می‌شود؛ نتیجه چند دقیقه نگه داشته می‌شود
+# این قانون فقط برای هیبرید مرکزی است. تاریخ فاکتور در داده درخواست داشبورد نیست، پس جدا از کارآمد خوانده می‌شود؛ نتیجه چند دقیقه نگه داشته می‌شود
 CONTEST_LATE_SQL = """
 SELECT DISTINCT v.ID AS inv_id, v.GoodsCode AS code
 FROM dbo.vwFactorDLinesFull v
 JOIN dbo.tblCalendar cf ON cf.GregorianDate = v.FactorFDateE
 JOIN dbo.tblCalendar cd ON cd.GregorianDate = v.DateE
-WHERE v.FactorStatus = 1 AND v.BranchName LIKE N'%هیبرید%'
+WHERE v.FactorStatus = 1 AND v.BranchName LIKE N'%هیبرید%' AND v.BranchName LIKE N'%مرکزی%'
   AND cf.PersianDate BETWEEN ? AND ? AND cd.PersianDate >= ? AND cd.PersianDate < ?
   AND v.DateE >= (SELECT MIN(GregorianDate) FROM dbo.tblCalendar WHERE PersianDate = ?)"""
 CONTEST_LATE: dict = {}
