@@ -632,7 +632,9 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
     if excl:
         sales = sales[~sales["branch"].map(bkey).isin(excl)]
         requests = requests[~requests["branch"].map(bkey).isin(excl)] if requests is not None else None
-    match = match_sellers(visitors, sales)
+    # تطبیق با فاکتور و درخواست هر دو: ویزیتوری که این ماه فقط درخواست دارد (هنوز فاکتور نشده) هم پیدا شود
+    cols = ["seller_key", "seller", "seller_code", "branch"]
+    match = match_sellers(visitors, pd.concat([sales[cols]] + ([requests[cols]] if requests is not None else []), ignore_index=True))
     ms = sales[sales["date"].str.startswith(month)]
     mr = requests[requests["date"].str.startswith(month)] if requests is not None else None
     keys = {m["key"] for m in match.values()}
