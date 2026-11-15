@@ -631,9 +631,9 @@ def _same(a: Any, b: str | None) -> bool:
     return not b or _norm(a) == _norm(b)
 
 
-# دو اکسل جمعی هیبریدها (کارت آخر صفحه گزارش‌ساز): ۷ هیبرید منتخب، و همه هیبریدهای دیگر
+# سه اکسل جمعی هیبریدها: ۷ هیبرید منتخب، سایر هیبریدها و همه هیبریدها
 HYBRID_GROUP_A = ("اصفهان", "یزد", "کرمانشاه", "مازندران", "گیلان", "مرکزی", "آذربایجان غربی")
-HYBRID_GROUPS = {"a": "هیبریدهای " + "، ".join(HYBRID_GROUP_A), "b": "سایر هیبریدها"}
+HYBRID_GROUPS = {"a": "هیبریدهای " + "، ".join(HYBRID_GROUP_A), "b": "سایر هیبریدها", "all": "همه هیبریدها"}
 
 
 def _hybrid_region(name: Any) -> str:
@@ -644,6 +644,8 @@ def _hybrid_region(name: Any) -> str:
 def in_hybrid_group(group: str, name: Any) -> bool:
     if "هیبرید" not in _norm(name):
         return False
+    if group == "all":
+        return True
     a = {_norm(x) for x in HYBRID_GROUP_A}
     return (_hybrid_region(name) in a) == (group == "a")
 

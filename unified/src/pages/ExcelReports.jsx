@@ -20,9 +20,10 @@ const GROUP_A = ['اصفهان', 'یزد', 'کرمانشاه', 'مازندران
 const HYBRID_GROUPS = [
   { key: 'a', title: `اکسل جمعی ${GROUP_A.length} هیبرید: ${GROUP_A.join('، ')}` },
   { key: 'b', title: 'اکسل جمعی سایر هیبریدها' },
+  { key: 'all', title: 'اکسل جمعی همه هیبریدها' },
 ]
 const region = (b) => String(b || '').replace(/[يى]/g, 'ی').replace(/ك/g, 'ک').replace(/^هیبریدی?\s*/, '').trim()
-const inGroup = (key, b) => String(b || '').includes('هیبرید') && GROUP_A.includes(region(b)) === (key === 'a')
+const inGroup = (key, b) => String(b || '').includes('هیبرید') && (key === 'all' || GROUP_A.includes(region(b)) === (key === 'a'))
 
 /** دانلود فایل با کوکی ورود (همان مبدأ، از Proxy پورت 5180) */
 async function download(url, fallbackName) {
@@ -311,7 +312,7 @@ export default function ExcelReports() {
           }} />
       )}
 
-      {/* دو اکسل جمعی ثابت: ۷ هیبرید منتخب و بقیه هیبریدها (هر کدام: کارت جمع گروه، بعد کارت هر هیبرید) */}
+      {/* سه اکسل جمعی ثابت: ۷ هیبرید منتخب، بقیه هیبریدها و همه هیبریدها (هر کدام: کارت جمع گروه، بعد کارت هر هیبرید) */}
       {valid && opts.people !== null && (
         <section className="u-card xr-stage">
           <div className="xr-stage-head">
