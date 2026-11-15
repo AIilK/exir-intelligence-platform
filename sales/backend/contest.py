@@ -162,10 +162,12 @@ def _match_targets(c: dict, roster: pd.DataFrame) -> tuple[dict, list[dict]]:
 
 def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of, vat: bool,
             period: tuple[str, str] | None = None, supervisors: list[tuple[str, str]] | None = None,
-            visitor_sups: dict[tuple[str, str], str] | None = None) -> dict:
+            visitor_sups: dict[tuple[str, str], str] | None = None, late: set | None = None) -> dict:
     """ردیف‌های فروشنده × کالا از درخواست‌ها (برای فیلتر و تجمیع در صفحه) و تارگت فروشندگان.
     period: بخشی از بازه مسابقه؛ فهرست فروشندگان (تطبیق تارگت) همیشه از کل بازه مسابقه است.
-    supervisors: (شعبه، نام) سرپرستان لیست ماه؛ در فهرست خودکار تارگت پیش‌فرض نمی‌آیند."""
+    supervisors: (شعبه، نام) سرپرستان لیست ماه؛ در فهرست خودکار تارگت پیش‌فرض نمی‌آیند.
+    late: (شناسه درخواست، کد کالا) درخواست‌هایی که از شروع مسابقه تا پیش از شروع بازه ثبت و داخل بازه فاکتور شده‌اند (از کارآمد)؛
+    این‌ها هم حساب می‌شوند (تعداد و فاکتورشده)، چون فروششان در همین بازه انجام شده است."""
     lo, hi = period or (c["date_from"], c["date_to"])
     tiers = {_norm(k): v for k, v in (c.get("tiers") or {}).items()}
     hyb_of = lambda df: df[df["branch"].astype(str).str.contains("هیبرید") & (df["date"] <= c["date_to"])]
@@ -178,13 +180,22 @@ def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of
     roster = hyb[hyb["date"] >= since].sort_values("date").drop_duplicates("seller_key", keep="last")[
         ["branch", "seller_key", "seller", "seller_code", "supervisor"]]
     s = req if req is not None else hyb.iloc[0:0]
-    s = s[(s["date"] >= lo) & (s["date"] <= hi) & s["product_code"].isin(c["products"])]
+    s = s[s["product_code"].isin(c["products"]) & (s["date"] <= hi)]
+    s = s[s["date"] >= c["date_from"]]  # درخواست پیش از شروع مسابقه هرگز حساب نمی‌شود
+    early = s["date"] < lo
+    late_m = pd.Series(False, index=s.index)
+    if late and early.any():
+        e = s[early]
+        late_m.loc[e.index] = pd.Series(list(zip(e["inv_id"].astype(str), e["product_code"].astype(str))), index=e.index).isin(late)
+    s = s[~early | late_m]
+    late_m = late_m.reindex(s.index)
     if "is_sample" in s:
         s = s[~s["is_sample"]]
     if vat:
         s = s.assign(net=s["payable"])
     # status: 0 درخواست باز، 1 فاکتور شده (باطل‌شده‌ها در خواندن حذف شده‌اند)
-    s = s.assign(done_qty=s["qty"].where(s["status"] == 1, 0) if "status" in s else 0)
+    # درخواست قبل از بازه که داخل بازه فاکتور شده، همیشه فاکتورشده است (وضعیت ماه بسته‌شده در کش ممکن است قدیمی باشد)
+    s = s.assign(done_qty=s["qty"].where((s["status"] == 1) | late_m, 0) if "status" in s else s["qty"].where(late_m, 0))
     g = s.groupby(["branch", "seller_key", "product_code"], observed=True).agg(
         seller=("seller", "first"), seller_code=("seller_code", "first"), supervisor=("supervisor", "first"),
         product=("product", "first"), category=("category", "first"), brand=("brand", "first"),
@@ -266,11 +277,14 @@ def compute(c: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, tier_of
         for x in rows + people:
             x["supervisor"] = sup_of(x["branch"], x.get("seller_code"), x.get("supervisor"))
     # (مسابقه بدون tier_targets مثل قبل همه درخواست‌ها را نشان می‌دهد)
+    ls = s[late_m]
     if tt:
         keys = {p["seller_key"] for p in people}
         rows = [r for r in rows if r["seller_key"] in keys]
+        ls = ls[ls["seller_key"].isin(keys)]
     days = sorted(s["date"].unique())
-    return {"rows": rows, "people": people, "last_date": days[-1] if days else None}
+    return {"rows": rows, "people": people, "last_date": days[-1] if days else None,
+            "late": {"qty": float(ls["qty"].sum()), "requests": int(ls["inv_id"].nunique()), "on": late is not None}}
 
 
 def seller_totals(rows: list[dict]) -> dict:

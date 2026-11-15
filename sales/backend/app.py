@@ -2119,9 +2119,45 @@ def contest_data(cid: str, vat: str = "0", date_from: str | None = None, date_to
     sups = [(s.get("branch"), s.get("name")) for s in plan.get("supervisors") or []]
     # سرپرست هر ویزیتور در همان لیست (برای شعبه‌های چندسرپرستی مثل تهران و اصفهان)
     vsup = {(v.get("branch"), str(v.get("code") or "")): v.get("supervisor") for v in plan.get("visitors") or [] if v.get("supervisor")}
-    r = CT.compute(c, d["sales"], d.get("requests"), tf, vat == "1", (lo, hi), sups, vsup)
+    late, late_error = _contest_late(c["date_from"], lo, hi)
+    r = CT.compute(c, d["sales"], d.get("requests"), tf, vat == "1", (lo, hi), sups, vsup, late)
+    r["late"]["error"] = late_error
     # ورود به مسابقه و درصد تحقق در صفحه از درخواست‌های همین بازه (و کالاهای انتخاب‌شده) حساب می‌شود
     return {"contest": c, "period": {"from": lo, "to": hi}, **r}
+
+
+# درخواست‌هایی که پیش از شروع بازه انتخابی ولی از شروع خود مسابقه به بعد ثبت شده‌اند (مثلاً ۱ تا ۹ آبان وقتی بازه
+# از ۱۰ آبان است) و داخل بازه انتخابی فاکتور شده‌اند. درخواست پیش از شروع مسابقه (مثلاً مهر) حساب نمی‌شود.
+# تاریخ فاکتور در داده درخواست داشبورد نیست، پس جدا از کارآمد خوانده می‌شود؛ نتیجه چند دقیقه نگه داشته می‌شود
+CONTEST_LATE_SQL = """
+SELECT DISTINCT v.ID AS inv_id, v.GoodsCode AS code
+FROM dbo.vwFactorDLinesFull v
+JOIN dbo.tblCalendar cf ON cf.GregorianDate = v.FactorFDateE
+JOIN dbo.tblCalendar cd ON cd.GregorianDate = v.DateE
+WHERE v.FactorStatus = 1 AND v.BranchName LIKE N'%هیبرید%'
+  AND cf.PersianDate BETWEEN ? AND ? AND cd.PersianDate >= ? AND cd.PersianDate < ?
+  AND v.DateE >= (SELECT MIN(GregorianDate) FROM dbo.tblCalendar WHERE PersianDate = ?)"""
+CONTEST_LATE: dict = {}
+CONTEST_LATE_SECONDS = 300
+
+
+def _contest_late(start: str, lo: str, hi: str) -> tuple[set | None, str | None]:
+    if lo <= start:  # بازه از شروع مسابقه است: درخواست قبل از آن حساب نمی‌شود
+        return set(), None
+    hit = CONTEST_LATE.get((start, lo, hi))
+    if hit and time.time() - hit[0] < CONTEST_LATE_SECONDS:
+        return hit[1], None
+    try:
+        cn = sql_source.connect(sql_source.settings(sql_source.read_env(ENV_FILE)))
+        try:
+            df = INV._read(cn, CONTEST_LATE_SQL, [lo, hi, start, lo, start])
+        finally:
+            cn.close()
+    except Exception as e:  # noqa: BLE001 — بدون کارآمد، مسابقه فقط با تاریخ درخواست حساب می‌شود
+        return (hit[1] if hit else None), f"درخواست‌های قبل از بازه که داخل بازه فاکتور شده‌اند خوانده نشد: {e}"
+    late = {(str(i), loader._clean_code(cd)) for i, cd in zip(df["inv_id"], df["code"])}
+    CONTEST_LATE[(start, lo, hi)] = (time.time(), late)
+    return late, None
 
 
 # ---------------------------------------------------------------- frontend

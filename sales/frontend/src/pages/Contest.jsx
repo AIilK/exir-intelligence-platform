@@ -205,7 +205,7 @@ function ContestView({ contest, unit, vat }) {
     <>
       <div className="filterbar">
         <DayRange contest={contest} value={dr} onChange={setDr} today={meta?.file?.today} />
-        <PeriodNote contest={contest} period={data.period} narrowed={!!(dr.date_from || dr.date_to)} lastDate={data.last_date} />
+        <PeriodNote contest={contest} period={data.period} narrowed={!!(dr.date_from || dr.date_to)} lastDate={data.last_date} late={data.late} />
         {FILTERS.map(([k, label]) => (
           <MultiSelect key={k} label={label} value={f[k] || []} options={options[k] || []} allMode={k === 'product_code'}
             onChange={(v) => setF((x) => ({ ...x, [k]: v }))} />
@@ -304,7 +304,7 @@ function DayRange({ contest, value, onChange, today }) {
 }
 
 /** خلاصه بازه به شکل برچسب: «مسابقه: ۱ آبان تا ۳۰ آبان» · «نمایش: فقط ۱۰ آبان · شنبه» · «آخرین درخواست» · «تعداد کالا» */
-function PeriodNote({ contest, period, narrowed, lastDate }) {
+function PeriodNote({ contest, period, narrowed, lastDate, late }) {
   const short = (s) => { const d = parseDate(s); return d ? `${faDigits(d.jd)} ${MONTH_NAMES[d.jm - 1]}` : faDigits(s) }
   const span = (a, b) => (a === b ? `فقط ${dayName(a)}` : `${short(a)} تا ${short(b)}`)
   const chip = { padding: '3px 10px', borderRadius: 999, background: 'var(--surface-2)', whiteSpace: 'nowrap' }
@@ -314,6 +314,11 @@ function PeriodNote({ contest, period, narrowed, lastDate }) {
       {narrowed && period && <span style={{ ...chip, background: 'var(--accent)', color: '#fff' }}>نمایش: {span(period.from, period.to)}</span>}
       <span style={chip} className="muted">{lastDate ? `آخرین درخواست: ${short(lastDate)}` : 'در این بازه درخواستی نیست'}</span>
       <span style={chip} className="muted">{fmtInt(contest.products.length)} کالا</span>
+      {late?.qty > 0 && <span style={chip} className="muted"
+        title="درخواست‌هایی که پیش از شروع بازه ثبت شده‌اند ولی داخل بازه فاکتور شده‌اند هم حساب می‌شوند (تاریخ فاکتور از کارآمد)">
+        شامل {fmtInt(late.qty)} عدد درخواست قبل از {period ? short(period.from) : 'بازه'} که در بازه فاکتور شده</span>}
+      {late?.error && <span style={{ ...chip, background: 'var(--warn-bg, var(--surface-2))' }} title={late.error}>
+        درخواست‌های قبل از بازه که در بازه فاکتور شده‌اند حساب نشد (کارآمد در دسترس نبود)</span>}
     </span>
   )
 }
