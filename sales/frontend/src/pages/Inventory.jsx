@@ -995,7 +995,6 @@ function IdleTab({ data, kind, setKind }) {
             { key: 'abc', label: 'ABC' },
             { key: 'last_sale', label: 'آخرین فروش', type: 'date' },
             { key: 'idle_days', label: 'روز بدون فروش', type: 'int' },
-            { key: 'last_buy', label: 'آخرین خرید', type: 'date', hint: 'در ۱۸۰ روز اخیر؛ خالی یعنی خرید اخیر ندارد' },
             ...(data.selected.length > 1 ? [] : chargeCols),
             { key: 'mean', label: 'فروش ماهانه', type: 'int' },
             { key: 'stock', label: 'موجودی', type: 'int' },
