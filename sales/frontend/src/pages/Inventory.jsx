@@ -844,6 +844,48 @@ function ItemDetail({ data, row, onClose }) {
   )
 }
 
+// چند هیبرید انتخاب شده: موجودی و وضعیت هر کالا در هر شعبه (هر شعبه جدا محاسبه شده)، زیر «همه کالاها»
+function BranchSplit({ data, rows }) {
+  const { unit } = useApp()
+  const br = data.branch_rows
+  const table = useMemo(() => rows.flatMap((p) => {
+    const by = Object.fromEntries((br.rows[p.code] || []).map((r) => [r.branch, r]))
+    return data.selected.map((b) => ({
+      key: `${p.code}|${b}`, code: p.code, product: p.product, brand: p.brand, branch: b,
+      ...(by[b] || { status: null, note: br.errors?.[b] || 'موجودی و فروش ندارد' }),
+    })).map((r) => (isIdle(r) ? r : { ...r, ...Object.fromEntries(CHARGE_KEYS.map((k) => [k, null])) }))
+  }), [rows, br, data.selected])
+  return (
+    <Card title="به تفکیک شعبه" subtitle="هر کالا در هر شعبه انتخاب‌شده؛ وضعیت با موجودی و فروش همان شعبه حساب شده (مثل وقتی آن شعبه تنها انتخاب شود)">
+      <DataTable rows={table} unit={unit} pageSize={30} dense exportName="inventory-by-branch" defaultSort={{ key: 'stock', dir: 'desc' }}
+        columns={[
+          { key: 'code', label: 'کد کالا' },
+          { key: 'product', label: 'کالا' },
+          { key: 'brand', label: 'برند' },
+          { key: 'branch', label: 'شعبه' },
+          { key: 'status', label: 'وضعیت در همین شعبه', csv: (r) => data.status_label[r.status] || r.note || '',
+            render: (r) => (r.status ? <StatusPill s={r.status} labels={data.status_label} low={r.c_low} /> : <span className="muted">{r.note}</span>) },
+          { key: 'stock', label: 'موجودی', type: 'int' },
+          { key: 'open_req', label: 'درخواست باز', type: 'int' },
+          { key: 'mean', label: 'فروش ماهانه', type: 'int' },
+          { key: 'order', label: 'سفارش پیشنهادی', type: 'int' },
+          { key: 'abc', label: 'ABC' },
+          ...chargeCols,
+        ]} />
+    </Card>
+  )
+}
+
+// آخرین شارژ (آخرین فاکتور خرید کالا به شعبه) و فروش از آن روز؛ فقط برای کالاهای راکد و مازاد
+const CHARGE_KEYS = ['charge_date', 'charge_qty', 'charge_sold', 'charge_pct']
+const isIdle = (r) => r.status === 'dead' || r.status === 'excess'
+const chargeCols = [
+  { key: 'charge_date', label: 'آخرین شارژ', type: 'date', hint: 'آخرین فاکتور خرید (ورود بار) این کالا به شعبه از ابتدای سال مالی قبل؛ اضافات انبارگردانی و انتقال‌ها شارژ حساب نشده‌اند' },
+  { key: 'charge_qty', label: 'مقدار شارژ', type: 'int', hint: 'تعداد خریداری‌شده در روز آخرین شارژ' },
+  { key: 'charge_sold', label: 'فروش از آخرین شارژ', type: 'int', hint: 'فروش منهای برگشت از فروش، از روز آخرین شارژ تا امروز' },
+  { key: 'charge_pct', label: 'فروش‌رفته از شارژ', type: 'pct', hint: 'فروش از آخرین شارژ ÷ مقدار شارژ' },
+]
+
 // ستون فروش تعدادی از ابتدای سال جاری؛ کنار کمترین / میانگین / بیشترین فروش ماهانه
 const ytdCol = (data) => ({
   key: 'ytd', label: `فروش از ابتدای ${data.ytd_from ? faDigits(data.ytd_from.slice(0, 4)) : 'سال'}`, type: 'int',
@@ -897,6 +939,7 @@ function AllTab({ data, status, setStatus }) {
           ]} />
       </Card>
       {sel && <ItemDetail data={data} row={sel} onClose={() => setSel(null)} />}
+      {data.branch_rows && <BranchSplit data={data} rows={rows} />}
     </>
   )
 }
@@ -953,6 +996,7 @@ function IdleTab({ data, kind, setKind }) {
             { key: 'last_sale', label: 'آخرین فروش', type: 'date' },
             { key: 'idle_days', label: 'روز بدون فروش', type: 'int' },
             { key: 'last_buy', label: 'آخرین خرید', type: 'date', hint: 'در ۱۸۰ روز اخیر؛ خالی یعنی خرید اخیر ندارد' },
+            ...(data.selected.length > 1 ? [] : chargeCols),
             { key: 'mean', label: 'فروش ماهانه', type: 'int' },
             { key: 'stock', label: 'موجودی', type: 'int' },
             { key: 'ret_keep', label: 'نگه‌داشت', type: 'int', hint: 'مازاد: پیش‌بینی فروش ماه‌های نگه‌داشت + درخواست باز؛ راکد: تعداد ثابت برای قفسه + درخواست باز' },

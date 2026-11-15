@@ -97,6 +97,19 @@ SELECT k.BranchRef AS bid, g.Code AS code, c.PersianDate AS date, CONVERT(char(1
 FROM dbo.tblFactorKLines l JOIN dbo.tblFactorK k ON k.ID = l.FactorRef JOIN dbo.tblGoods g ON g.ID = l.GoodsRef
 JOIN dbo.tblCalendar c ON c.GregorianDate = k.DateE
 WHERE k.DateE >= DATEADD(day, -180, CAST(GETDATE() AS date))"""
+# آخرین شارژ هر کالا در هر شعبه = آخرین روز فاکتور خرید (Kind K در vwStockLines، همان tblFactorK) در سال مالی جاری و قبلی؛
+# «اضافات» انبارگردانی و انتقال‌ها (Kind I) شارژ نیستند. فروش از آخرین شارژ = فروش (F) منهای برگشت از فروش (B)
+# از همان روز شارژ تا امروز
+CHARGE_SQL = """
+WITH L AS (SELECT BranchRef AS bid, GoodsRef, Kind, DateE, TotalT FROM dbo.vwStockLines
+           WHERE FiscalYear >= (SELECT MAX(FiscalYear) FROM dbo.vwStockFull) - 1 AND Kind IN ('K', 'F', 'B')),
+C AS (SELECT bid, GoodsRef, MAX(DateE) AS d FROM L WHERE Kind = 'K' GROUP BY bid, GoodsRef)
+SELECT C.bid, g.Code AS code, cal.PersianDate AS date,
+       SUM(CASE WHEN L.Kind = 'K' AND L.DateE = C.d THEN L.TotalT ELSE 0 END) AS qty,
+       SUM(CASE WHEN L.Kind = 'F' THEN L.TotalT WHEN L.Kind = 'B' THEN -L.TotalT ELSE 0 END) AS sold
+FROM C JOIN L ON L.bid = C.bid AND L.GoodsRef = C.GoodsRef AND L.DateE >= C.d
+JOIN dbo.tblGoods g ON g.ID = C.GoodsRef JOIN dbo.tblCalendar cal ON cal.GregorianDate = C.d
+GROUP BY C.bid, g.Code, cal.PersianDate"""
 
 
 def settings(cfg: dict) -> dict:
@@ -135,21 +148,24 @@ class InventorySource:
             goods = _read(cn, GOODS_SQL, [])
             price = _read(cn, PRICE_SQL, [])
             purch = _read(cn, PURCH_SQL, [])
+            charge = _read(cn, CHARGE_SQL, [])
         finally:
             cn.close()
-        for df in (goods, price, purch):
+        for df in (goods, price, purch, charge):
             df["code"] = df["code"].map(loader._clean_code)
         br["name"] = br["Name"].map(loader._clean_text)
         stores["name"] = stores["Name"].map(loader._clean_text)
         stores["waste"] = is_waste_store(stores["name"])
         stock = self._prep_stock(stock, stores)
         purch["qty"] = pd.to_numeric(purch["qty"], errors="coerce").fillna(0.0)
+        for k in ("qty", "sold"):
+            charge[k] = pd.to_numeric(charge[k], errors="coerce").fillna(0.0)
         for k in ("name", "supplier", "brand", "grp"):
             goods[k] = goods[k].map(loader._clean_text)
         now = time.time()
         self.snap = {"fetched": now, "stock_at": now, "branches": dict(zip(br["name"], br["ID"].astype(int))), "stores": stores,
                      "stock": stock, "goods": goods.drop_duplicates("code").set_index("code"),
-                     "price": price.sort_values("d"), "purch": purch, "rk": None, "rk_error": None}
+                     "price": price.sort_values("d"), "purch": purch, "charge": charge, "rk": None, "rk_error": None}
         self.per_branch = {}
         # راهکاران اختیاری است: اگر تنظیم نشده یا در دسترس نیست، کنترل موجودی فقط با کارآمد ادامه می‌دهد
         if RK.settings(self.read_cfg())["use_in_branches"] and RK.configured(self.env_file):
@@ -186,7 +202,8 @@ class InventorySource:
                              "selected": sel is None or int(r.ID) in sel} for r in bstores.itertuples()],
                  "goods": sn["goods"],
                  "price": own.combine_first(self._any_price()).astype(float),
-                 "purch": sn["purch"][sn["purch"]["bid"].isin(bids)]}
+                 "purch": sn["purch"][sn["purch"]["bid"].isin(bids)],
+                 "charge": sn["charge"][sn["charge"]["bid"].isin(bids)]}
             self._slice_stock(c, sn["stock"])
             c["rk"] = self._rk_merge([self._rk_branch(b, sn["purch"][sn["purch"]["bid"] == sn["branches"][b]]) for b in names])
             c["rk_error"] = sn["rk_error"]
@@ -605,6 +622,14 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = N
     df["buy_days"] = [days.diff(d, today) if isinstance(d, str) else None for d in df["last_buy"]]
     dead = ((df["stock"] > 0) & (df["idle_days"].isna() | (df["idle_days"].fillna(0) > s["dead_days"]))
             & (df["buy_days"].isna() | (df["buy_days"].fillna(0) > s["dead_days"])))
+    # آخرین شارژ (فقط برای یک شعبه؛ در انتخاب چند شعبه، جدول «به تفکیک شعبه» آن را برای هر شعبه نشان می‌دهد)
+    ch = src.get("charge")
+    if ch is not None and len(src.get("bids") or []) == 1:
+        ch = ch.drop_duplicates("code", keep="last").set_index("code")
+        df["charge_date"], df["charge_qty"], df["charge_sold"] = (ch[k].reindex(codes) for k in ("date", "qty", "sold"))
+    else:
+        df["charge_date"], df["charge_qty"], df["charge_sold"] = None, np.nan, np.nan
+    df["charge_pct"] = np.where(df["charge_qty"] > 0, df["charge_sold"] / df["charge_qty"].replace(0, np.nan), np.nan)
     st = np.select(
         [ab & (df["net_avail"] < df["need"]), ab & (df["net_avail"] < df["target"]), dead,
          ab & (df["cover_months"] > s["excess_months"]), ab,
@@ -755,7 +780,7 @@ def compute(data: dict, src: dict, cfg: dict, branch: str | list[str] | None = N
             "need", "target", "safety", "safety_pct", "order", "cartons", "unity", "order_value", "price", "value",
             "base", "mean", "median", "min", "max", "months_sold", "cv", "trend", "ret_rate", "n_cust", "top_share",
             "top_cust", "ly_cur", "ly_next", "cur_month", "ytd", "daily", "cover_days", "cover_months", "runout", "order_by",
-            "last_sale", "idle_days", "last_buy", "buy_days", "sf_now", "bought_90", "sold_90", "rk_open", "rk_transit", "incoming", "open_since",
+            "last_sale", "idle_days", "last_buy", "buy_days", "charge_date", "charge_qty", "charge_sold", "charge_pct", "sf_now", "bought_90", "sold_90", "rk_open", "rk_transit", "incoming", "open_since",
             "factory_stock", "factory_free", "factory_short", "c_low",
             "ret_keep", "ret_keep_months", "ret_qty", "ret_cartons", "ret_value", "why"]
     out = df.reset_index()[cols].replace([np.inf, -np.inf], np.nan)

@@ -1252,7 +1252,32 @@ def inventory(branch: list[str] | None = Query(None), store: list[int] | None = 
     except loader.DataError as e:
         raise HTTPException(409, str(e))
     return {**r, "rows": A.records(r["rows"]), "suppliers": A.records(r["suppliers"]), "branches": branches,
-            "labels": INV.branch_labels(branches)}
+            "labels": INV.branch_labels(branches), "branch_rows": _inv_branch_rows(d, cfg, sel, stores, set(r["rows"]["code"]))}
+
+
+def _inv_branch_rows(d: dict, cfg: dict, sel: list[str], stores: list[int] | None, codes: set) -> dict | None:
+    """چند شعبه با هم: موجودی و وضعیت هر کالا در هر شعبه، هر شعبه جدا محاسبه می‌شود (همان کنترل موجودی تک‌شعبه).
+    خروجی: {کد کالا: [{شعبه، موجودی، وضعیت، ...}]}؛ شعبه‌ای که محاسبه‌اش ممکن نیست (سابقه کم) با خطا می‌آید."""
+    if len(sel) < 2:
+        return None
+    out: dict[str, list] = {}
+    errors = {}
+    keep = ["code", "stock", "status", "c_low", "abc", "mean", "order", "open_req", "charge_date", "charge_qty", "charge_sold", "charge_pct"]
+    for b in sel:
+        try:
+            bsrc = INV_SRC.get(b)
+            ids = {x["id"] for x in bsrc["stores"]}
+            mine = [x for x in stores or [] if x in ids]
+            if mine:
+                bsrc = INV_SRC.get(b, stores=mine)
+            rows = INV.compute(d, bsrc, cfg, branch=b)["rows"]
+        except loader.DataError as e:
+            errors[b] = str(e)
+            continue
+        rows = rows[rows["code"].isin(codes)][[c for c in keep if c in rows]]
+        for rec in A.records(rows):
+            out.setdefault(str(rec["code"]), []).append({"branch": b, **rec})
+    return {"rows": out, "errors": errors}
 
 
 @app.get("/api/inventory/overview")
