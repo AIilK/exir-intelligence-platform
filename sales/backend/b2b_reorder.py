@@ -1,19 +1,18 @@
 """پیشنهاد ثبت سفارش نمایندگان B2B (هر فرد-برند = یک کد مشتری راهکاران)؛ فقط SELECT.
 
-ایده: هر نماینده ریتم خرید خودش را دارد. از سابقه‌اش می‌فهمیم «معمولاً هر چند روز یک بار سفارش می‌دهد» (چرخه)،
-بعد نگاه می‌کنیم از آخرین سفارشش چند روز گذشته. نسبت این دو وضعیت را می‌گوید:
+ایده: هر نماینده ریتم سفارش‌گذاری خودش را دارد. از سابقه‌اش می‌فهمیم «معمولاً هر چند روز یک بار درخواست می‌دهد» (چرخه)،
+بعد نگاه می‌کنیم از آخرین درخواستش چند روز گذشته. نسبت این دو وضعیت را می‌گوید:
   گذشته ÷ چرخه  < ۰٫۵ ← پوشش دارد | ۰٫۵ تا ۰٫۸ ← نزدیک سفارش | ۰٫۸ تا ۲ ← نیاز به سفارش | بیشتر ← معوق (در خطر ریزش)
   بیش از LOST_DAYS روز بی‌سفارش ← ریزش‌کرده.
-آزمون روی گذشته (۲۷ برش ماهانه ۱۴۰۳/۰۶ تا ۱۴۰۵/۰۷، سفارش در ۳۰ روز بعد): پوشش دارد ۲۱٪، نزدیک ۳۱٪، نیاز ۳۳٪،
-  معوق ۱۵٪. چرخه بهتر از «پوشش موجودی = مبلغ آخرین سفارش ÷ نرخ فروش» پیش‌بینی کرد (AUC ۰٫۶۳ در برابر ۰٫۵۴).
-جزئیات:
-  سفارش = درخواست فروش راهکاران (SLS3.SaleRequest، به‌جز باطل‌شده‌ها)؛ درخواست به‌طور میانه ۱۰ روز قبل از فاکتور است.
-    کدی که درخواست ندارد، روزهای فاکتورش جای سفارش حساب می‌شود.
-  درخواست‌های با فاصله کمتر از EPISODE_GAP روز یک سفارش‌اند (یک سفارش معمولاً چند درخواست پشت‌سرهم است).
-  فروردین (تعطیلی نوروز و بستن سال) در هیچ سالی سفارش ندارد؛ روزهایش در شمارش فاصله‌ها حساب نمی‌شود.
-  چرخه = میانه فاصله آخرین CYCLE_GAPS سفارش؛ برای کد کمتر از MIN_ORDERS سفارش، میانه چرخه هم‌برندها جایش می‌نشیند.
-  درخواست تأییدشده یا در جریان (وضعیت ۲ و ۸) در PENDING_DAYS روز اخیر که هنوز فاکتور نشده ← «سفارش در جریان».
-  مبلغ پیشنهادی = میانه مبلغ ۳ سفارش آخر (ناخالص درخواست).
+سفارش = هر درخواست فروش راهکاران (SLS3.SaleRequest، به‌جز باطل‌شده‌ها)؛ درخواست‌های هم‌روز یک سفارش‌اند.
+  چرخه = میانه فاصله روزهای آخرین CYCLE_GAPS+1 درخواست؛ برای کد کمتر از MIN_ORDERS درخواست، میانه چرخه هم‌برندها جایش
+  می‌نشیند. کدی که درخواست ندارد، روزهای فاکتورش (گروه‌های INVOICE_GAP روزه) جای درخواست حساب می‌شود.
+  بار هر درخواست در یک یا چند فاکتور می‌رسد (درخواست ← پیش‌فاکتور ← سفارش ← تحویل انبار ← فاکتور). درخواستی که بارش هنوز
+  کامل نرسیده ← «سفارش در جریان» (ریتمش با بقیه قابل مقایسه نیست): کامل = FULL_FILL از تعدادش فاکتور شده، یا بخشی فاکتور
+  شده و QUIET_DAYS روز فاکتور تازه نیامده؛ درخواستی که NO_INVOICE_DAYS روز هیچ فاکتوری نگرفته کنار می‌رود.
+فروردین (تعطیلی نوروز و بستن سال) در شمارش فاصله‌ها حساب نمی‌شود.
+آزمون روی گذشته (۲۳ برش ماهانه ۱۴۰۳/۰۹ تا ۱۴۰۵/۰۷، درخواست تازه در ۳۰ روز کاری بعد): نیاز+نزدیک ÷ پوشش دارد = ۱٫۳۹
+  (بازه ۹۰٪: ۱٫۱۰ تا ۱٫۸۳)؛ چرخه از رسیدن بار تا رسیدن بار ۱٫۲۱، منطق قدیمی ۱٫۰۷. بدون جدا کردن «در جریان» این عدد پایین می‌آید.
 """
 from __future__ import annotations
 
@@ -27,25 +26,41 @@ import rahkaran_sales as RS
 import sql_source
 
 SINCE = "1400/10/01"  # آغاز داده B2B در راهکاران
-EPISODE_GAP = 21
+INVOICE_GAP = 21  # فقط برای کد بدون درخواست: روزهای فاکتور تا این فاصله از اولین روز = یک سفارش
+FULL_FILL = 0.9
+QUIET_DAYS = 45
+NO_INVOICE_DAYS = 60
 CYCLE_GAPS = 8
 MIN_ORDERS = 4
-PENDING_DAYS = 30
 LOST_DAYS = 365
 VOID_STATES = "6"  # باطل
-OPEN_STATES = (2, 8)
 LEVELS = [(0.5, "covered"), (0.8, "soon"), (2.0, "due")]  # بیشتر از آخری ← overdue
 STATUS_FA = {"pending": "سفارش در جریان", "covered": "پوشش دارد", "soon": "نزدیک سفارش",
              "due": "نیاز به سفارش", "overdue": "معوق", "lost": "ریزش‌کرده", "none": "بدون سابقه"}
 
-DAYS_SQL = """
-SELECT 'S' AS k, c.Number AS code, CAST(i.Date AS date) AS d, 0 AS st, SUM(ii.Price) AS gross, SUM(ii.NetPrice) AS net
+# روزهای فاکتور هر کد (فروش ۱۲ ماه، آخرین فاکتور و جایگزین سفارش برای کد بدون درخواست)
+INVOICE_DAYS_SQL = """
+SELECT c.Number AS code, CAST(i.Date AS date) AS d, SUM(ii.NetPrice) AS net
 FROM SLS3.InvoiceItem ii JOIN SLS3.Invoice i ON i.InvoiceID = ii.InvoiceRef JOIN SLS3.Customer c ON c.CustomerID = i.CustomerRef
-WHERE i.Date >= ? AND i.Status IN ({st}) AND c.Number IN ({codes}) GROUP BY c.Number, CAST(i.Date AS date)
-UNION ALL
-SELECT 'Q', c.Number, CAST(q.Date AS date), q.State, SUM(qi.Price), SUM(qi.NetPrice)
+WHERE i.Date >= ? AND i.Status IN ({st}) AND c.Number IN ({codes}) GROUP BY c.Number, CAST(i.Date AS date)"""
+
+REQUESTS_SQL = """
+SELECT q.SaleRequestID AS rid, c.Number AS code, CAST(q.Date AS date) AS d, SUM(qi.MajorUnitQuantity) AS qty
 FROM SLS3.SaleRequestItem qi JOIN SLS3.SaleRequest q ON q.SaleRequestID = qi.SaleRequestRef JOIN SLS3.Customer c ON c.CustomerID = q.CustomerRef
-WHERE q.Date >= ? AND q.State NOT IN ({void}) AND c.Number IN ({codes}) GROUP BY c.Number, CAST(q.Date AS date), q.State"""
+WHERE q.Date >= ? AND q.State NOT IN ({void}) AND c.Number IN ({codes}) GROUP BY q.SaleRequestID, c.Number, CAST(q.Date AS date)"""
+
+# تعداد فاکتورشده هر درخواست در هر روز: ردیف فاکتور ← مجوز صدور فاکتور ← تحویل انبار ← ردیف سفارش ← پیش‌فاکتور ← درخواست
+FILLS_SQL = """
+SELECT ri.SaleRequestRef AS rid, CAST(i.Date AS date) AS d, SUM(ii.MajorUnitQuantity) AS qty
+FROM SLS3.InvoiceItem ii JOIN SLS3.Invoice i ON i.InvoiceID = ii.InvoiceRef JOIN SLS3.Customer c ON c.CustomerID = i.CustomerRef
+JOIN SLS3.ProductInvoicePermit pp ON pp.ProductInvoicePermitID = ii.ReferenceRef
+CROSS APPLY (SELECT TOP 1 r.value('.', 'bigint') AS pref FROM pp.RreferenceRefs.nodes('/ReferenceRefs/Ref') t(r)) x
+JOIN SLS3.PartInvoicePermit pa ON pa.PartInvoicePermitID = x.pref AND pa.ProductSourceType = 1057
+JOIN SLS3.OrderItem oi ON oi.OrderItemID = pa.ProductSourceRef AND oi.ProductRef = ii.ProductRef
+JOIN SLS3.QuotationItem qu ON qu.QuotationItemID = oi.ReferenceRef AND qu.ProductRef = oi.ProductRef
+JOIN SLS3.SaleRequestItem ri ON ri.SaleRequestItemID = qu.ReferenceRef AND ri.ProductRef = qu.ProductRef
+WHERE i.Date >= ? AND i.Status IN ({st}) AND c.Number IN ({codes})
+GROUP BY ri.SaleRequestRef, CAST(i.Date AS date)"""
 
 
 # ---------------------------------------------------------------- تاریخ
@@ -113,40 +128,53 @@ def load(env_file, cfg: dict) -> dict:
         cur = cn.cursor()
         cur.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
         cur.close()
-        df = RK._read(cn, DAYS_SQL.format(st=RS.STATUSES, void=VOID_STATES, codes=codes), [since] * 2)
+        inv = RK._read(cn, INVOICE_DAYS_SQL.format(st=RS.STATUSES, codes=codes), [since])
+        req = RK._read(cn, REQUESTS_SQL.format(void=VOID_STATES, codes=codes), [since])
+        fills = RK._read(cn, FILLS_SQL.format(st=RS.STATUSES, codes=codes), [since])
         today = RK._read(cn, "SELECT CAST(GETDATE() AS date) AS d", [])["d"].iloc[0]
     finally:
         cn.close()
-    return {"days": prepare(df), "customers": cust.reset_index(), "today": pd.Timestamp(today).date()}
+    return {**prepare(inv, req, fills), "customers": cust.reset_index(), "today": pd.Timestamp(today).date()}
 
 
-def prepare(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df["code"] = df["code"].astype(str).str.strip()
-    df["d"] = pd.to_datetime(df["d"]).dt.date
-    df["st"] = pd.to_numeric(df["st"], errors="coerce").fillna(0).astype(int)
-    for k in ("gross", "net"):
-        df[k] = pd.to_numeric(df[k], errors="coerce").fillna(0.0)
-    return df
+def prepare(inv: pd.DataFrame, req: pd.DataFrame, fills: pd.DataFrame) -> dict:
+    inv, req, fills = inv.copy(), req.copy(), fills.copy()
+    for df in (inv, req):
+        df["code"] = df["code"].astype(str).str.strip()
+    for df in (inv, req, fills):
+        df["d"] = pd.to_datetime(df["d"]).dt.date
+    inv["net"] = pd.to_numeric(inv["net"], errors="coerce").fillna(0.0)
+    for df in (req, fills):
+        df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0.0)
+    return {"invoices": inv, "requests": req, "fills": fills}
 
 
 # ---------------------------------------------------------------- الگوریتم
-def episodes(days: list[tuple[dt.date, float]]) -> list[tuple[dt.date, float]]:
-    """روزهای سفارشِ نزدیک به هم ← یک سفارش (تاریخ اولین روز، جمع مبلغ)"""
-    out: list[list] = []
-    for d, amt in sorted(days):
-        if out and (d - out[-1][2]).days <= EPISODE_GAP:
-            out[-1][1] += amt
-            out[-1][2] = d
-        else:
-            out.append([d, amt, d])
-    return [(a, b) for a, b, _ in out]
+def requests_state(req: pd.DataFrame, fills: pd.DataFrame, today: dt.date) -> pd.DataFrame:
+    """هر درخواست تا پیش از today: done = تاریخ انجام‌شدن (یا خالی)، open = بار در راه، left = تعداد فاکتورنشده"""
+    r = req[req["d"] < today]
+    f = fills[(fills["d"] < today) & fills["rid"].isin(r["rid"])].sort_values("d")
+    f = f.merge(r[["rid", "qty"]].rename(columns={"qty": "want"}), on="rid")
+    f["cum"] = f.groupby("rid")["qty"].cumsum()
+    full = f[f["cum"] >= FULL_FILL * f["want"]].groupby("rid")["d"].min()
+    last = f.groupby("rid")["d"].max()
+    got = f.groupby("rid")["qty"].sum()
+    r = r.assign(full=r["rid"].map(full), last=r["rid"].map(last), got=r["rid"].map(got).fillna(0.0))
+    quiet = r["last"].map(lambda d: isinstance(d, dt.date) and (today - d).days > QUIET_DAYS)
+    r["done"] = r["full"].where(r["full"].notna(), r["last"].where(quiet))
+    young = r["d"].map(lambda d: (today - d).days <= NO_INVOICE_DAYS)
+    r["open"] = r["done"].isna() & (r["last"].notna() | young)
+    r["left"] = (r["qty"] - r["got"]).clip(lower=0)
+    return r
 
 
-def _orders(g: pd.DataFrame) -> list[tuple[dt.date, float]]:
-    q = g[g["k"] == "Q"]
-    src = q if len(q) else g[g["k"] == "S"]
-    return episodes(list(zip(src["d"], src["gross"])))
+def invoice_orders(days: list[dt.date]) -> list[dt.date]:
+    """کد بدون درخواست: روزهای فاکتوری که تا INVOICE_GAP روز بعد از اولین روز آمده‌اند یک سفارش‌اند"""
+    out: list[dt.date] = []
+    for d in sorted(days):
+        if not out or (d - out[-1]).days > INVOICE_GAP:
+            out.append(d)
+    return out
 
 
 def _level(ratio: float) -> str:
@@ -156,28 +184,36 @@ def _level(ratio: float) -> str:
     return "overdue"
 
 
-def analyze(days: pd.DataFrame, cust: pd.DataFrame, today: dt.date) -> pd.DataFrame:
+def analyze(snap: dict, today: dt.date) -> pd.DataFrame:
     """یک سطر برای هر کد مشتری فهرست B2B؛ فقط داده قبل از today دیده می‌شود (برای آزمون روی گذشته هم)"""
-    days = days[days["d"] < today]
-    by = dict(tuple(days.groupby("code")))
+    cust, inv = snap["customers"], snap["invoices"]
+    inv = inv[inv["d"] < today]
+    rs = requests_state(snap["requests"], snap["fills"], today)
+    by_inv = dict(tuple(inv.groupby("code")))
+    by_req = dict(tuple(rs.groupby("code")))
     rows = []
     for c in cust.itertuples():
-        g = by.get(c.code)
-        r = {"code": c.code, "short": c.short, "name": c.name, "brand": c.brand, "province": c.province, "orders": 0}
-        if g is None or g.empty:
+        r = {"code": c.code, "short": c.short, "name": c.name, "brand": c.brand, "province": c.province, "orders": 0,
+             "open_reqs": 0, "open_left": 0.0}
+        g, q = by_inv.get(c.code), by_req.get(c.code)
+        s_days = sorted(set(g["d"])) if g is not None else []
+        if s_days:
+            y1 = g[g["d"] >= today - dt.timedelta(days=365)]
+            r.update(sales_12m=float(y1["net"].sum()), last_invoice=s_days[-1])
+        if q is not None and len(q):
+            eps = sorted(set(q["d"]))  # روزهای ثبت درخواست؛ درخواست‌های هم‌روز یک سفارش‌اند
+            done = q["done"].dropna()
+            op = q[q["open"]]
+            r.update(last_arrival=max(done) if len(done) else None, open_reqs=int(len(op)),
+                     open_left=float(op["left"].sum()))
+        else:
+            eps = invoice_orders(s_days)
+        if not eps:
             rows.append({**r, "status": "none"})
             continue
-        eps = _orders(g)
-        gaps = [work_days(a[0], b[0]) for a, b in zip(eps, eps[1:])][-CYCLE_GAPS:]
-        last = eps[-1][0]
-        s = g[g["k"] == "S"]
-        y1 = s[s["d"] >= today - dt.timedelta(days=365)]
-        q = g[(g["k"] == "Q") & g["st"].isin(OPEN_STATES) & (g["d"] >= today - dt.timedelta(days=PENDING_DAYS))]
-        pending = bool(len(q)) and not (s["d"] >= q["d"].min()).any()
-        r.update(status=None, orders=len(eps), last_order=last, elapsed=work_days(last, today),
-                 own_cycle=statistics.median(gaps) if gaps else None,
-                 last_amount=eps[-1][1], typical_amount=statistics.median(a for _, a in eps[-3:]),
-                 sales_12m=float(y1["net"].sum()), last_invoice=s["d"].max() if len(s) else None, pending=pending)
+        gaps = [work_days(a, b) for a, b in zip(eps, eps[1:])][-CYCLE_GAPS:]
+        r.update(status=None, orders=len(eps), last_order=eps[-1], elapsed=work_days(eps[-1], today),
+                 own_cycle=statistics.median(gaps) if gaps else None)
         rows.append(r)
     df = pd.DataFrame(rows)
     # هم‌برندهای پرسابقه ← چرخه جایگزین برای کم‌داده‌ها
@@ -190,11 +226,10 @@ def analyze(days: pd.DataFrame, cust: pd.DataFrame, today: dt.date) -> pd.DataFr
             out.append({**r, "ratio": None, "few": True})
             continue
         few = r["orders"] < MIN_ORDERS
-        cycle = peer.get(r["brand"], overall) if few or not r.get("own_cycle") else r["own_cycle"]
-        cycle = max(float(cycle), 7.0)
+        own = r.get("own_cycle")
+        cycle = max(float(peer.get(r["brand"], overall) if few or not own or own != own else own), 7.0)
         ratio = r["elapsed"] / cycle
-        status = ("lost" if r["elapsed"] > LOST_DAYS else "pending" if r.get("pending") or r["elapsed"] <= EPISODE_GAP
-                  else _level(ratio))
+        status = "pending" if r["open_reqs"] else "lost" if r["elapsed"] > LOST_DAYS else _level(ratio)
         nxt = add_work_days(r["last_order"], round(cycle))
         out.append({**r, "status": status, "cycle": round(cycle), "ratio": round(ratio, 2), "few": few,
                     "next_order": nxt, "days_left": work_days(today, nxt) if nxt > today else -work_days(nxt, today)})
@@ -205,13 +240,13 @@ STATUS_ORDER = ["due", "overdue", "soon", "pending", "covered", "lost", "none"]
 
 
 def report(snap: dict, brand: str | None = None, province: str | None = None) -> dict:
-    df = analyze(snap["days"], snap["customers"], snap["today"])
+    df = analyze(snap, snap["today"])
     if brand:
         df = df[df["brand"] == brand]
     if province:
         df = df[df["province"] == province]
     df = df.assign(rank=df["status"].map(STATUS_ORDER.index)).sort_values(["rank", "ratio", "sales_12m"], ascending=[True, False, False])
-    for k in ("last_order", "next_order", "last_invoice"):
+    for k in ("last_order", "next_order", "last_invoice", "last_arrival"):
         if k in df:
             df[k] = df[k].map(lambda d: to_jalali(d) if isinstance(d, dt.date) else None)
     df["status_fa"] = df["status"].map(STATUS_FA)
@@ -220,20 +255,20 @@ def report(snap: dict, brand: str | None = None, province: str | None = None) ->
             "today": to_jalali(snap["today"]), "since": SINCE,
             "brands": sorted(snap["customers"]["brand"].dropna().unique().tolist()),
             "provinces": sorted(snap["customers"]["province"].dropna().unique().tolist()),
-            "params": {"levels": LEVELS, "episode_gap": EPISODE_GAP, "min_orders": MIN_ORDERS, "pending_days": PENDING_DAYS}}
+            "params": {"levels": LEVELS, "full_fill": FULL_FILL, "quiet_days": QUIET_DAYS, "no_invoice_days": NO_INVOICE_DAYS,
+                       "min_orders": MIN_ORDERS}}
 
 
 def backtest(snap: dict, months: list[str], horizon: int = 30) -> pd.DataFrame:
-    """برای هر تاریخ برش (اول ماه جلالی): وضعیت با داده قبل از آن، و اینکه آیا ظرف horizon روز کاری بعد سفارش آمد"""
-    days, cust = snap["days"], snap["customers"]
-    eps = {c: [d for d, _ in _orders(g)] for c, g in days.groupby("code")}
+    """برای هر تاریخ برش (اول ماه جلالی): وضعیت با داده قبل از آن، و اینکه آیا ظرف horizon روز کاری بعد درخواست تازه آمد"""
+    reqs = {c: sorted(set(g["d"])) for c, g in snap["requests"].groupby("code")}
     out = []
     for m in months:
         cut = _greg(f"{m}/01")
         end = add_work_days(cut, horizon)
-        a = analyze(days, cust, cut)
+        a = analyze(snap, cut)
         a = a[~a["status"].isin(["none", "lost"])]
-        a["ordered"] = a["code"].map(lambda c: any(cut <= d < end for d in eps.get(c, [])))
+        a["ordered"] = a["code"].map(lambda c: any(cut <= d < end for d in reqs.get(c, [])))
         a["cut"] = m
         out.append(a[["cut", "code", "brand", "status", "ratio", "few", "ordered"]])
     return pd.concat(out)
