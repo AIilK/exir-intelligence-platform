@@ -120,7 +120,8 @@ const STYLES = (() => {
 // خانه: مقدار ساده (عدد / متن) یا شیء {v | f, k, st}؛ f فرمول بدون «=» است و اکسل هنگام باز کردن حسابش می‌کند.
 const textLen = (s) => [...String(s)].length * 1.15  // حروف فارسی کمی پهن‌ترند
 
-function sheetXml({ rows, widths: fixed, freezeRow = 0, freezeCol = 0, autoFilter, merges = [], heights = {} }) {
+// outline: {شماره سطر: {level, hidden, collapsed}} گروه‌بندی سطرها (دکمه‌های +/− و ۱-۲-۳ اکسل)؛ سطر جمع بالای گروه است
+function sheetXml({ rows, widths: fixed, freezeRow = 0, freezeCol = 0, autoFilter, merges = [], heights = {}, outline }) {
   const n = Math.max(1, ...rows.map((r) => r.length))
   const widths = Array.from({ length: n }, (_, c) => fixed?.[c] ?? 6)
   const auto = !fixed
@@ -153,7 +154,9 @@ function sheetXml({ rows, widths: fixed, freezeRow = 0, freezeCol = 0, autoFilte
   const body = rows.map((row, i) => {
     const r = i + 1
     const ht = heights[r] ? ` ht="${heights[r]}" customHeight="1"` : ''
-    return `<row r="${r}"${ht}>${row.map((v, c) => cell(v, r, c)).join('')}</row>`
+    const o = outline?.[r]
+    const ol = o ? `${o.level ? ` outlineLevel="${o.level}"` : ''}${o.hidden ? ' hidden="1"' : ''}${o.collapsed ? ' collapsed="1"' : ''}` : ''
+    return `<row r="${r}"${ht}${ol}>${row.map((v, c) => cell(v, r, c)).join('')}</row>`
   }).join('')
   const cols = widths.map((w, c) => `<col min="${c + 1}" max="${c + 1}" width="${Math.round(w + 1)}" customWidth="1"/>`).join('')
   // freezeRow سطر بالا و freezeCol ستون اول (در برگه راست‌به‌چپ = ستون‌های سمت راست) ثابت می‌مانند
@@ -162,8 +165,8 @@ function sheetXml({ rows, widths: fixed, freezeRow = 0, freezeCol = 0, autoFilte
     : freezeRow ? `<pane ySplit="${freezeRow}" topLeftCell="A${freezeRow + 1}" activePane="bottomLeft" state="frozen"/>` : ''
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<sheetViews><sheetView rightToLeft="1" workbookViewId="0" zoomScale="100">${pane}</sheetView></sheetViews>
-<sheetFormatPr defaultRowHeight="20" customHeight="1"/><cols>${cols}</cols><sheetData>${body}</sheetData>
+${outline ? '<sheetPr><outlinePr summaryBelow="0"/></sheetPr>' : ''}<sheetViews><sheetView rightToLeft="1" workbookViewId="0" zoomScale="100">${pane}</sheetView></sheetViews>
+<sheetFormatPr defaultRowHeight="20" customHeight="1"${outline ? ` outlineLevelRow="${Math.max(0, ...Object.values(outline).map((o) => o.level || 0))}"` : ''}/><cols>${cols}</cols><sheetData>${body}</sheetData>
 ${autoFilter ? `<autoFilter ref="${autoFilter}"/>` : ''}${merges.length ? `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : ''}
 <pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>
 <pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>`
@@ -216,7 +219,8 @@ ${list.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxm
 }
 
 /** یک جدول ساده (سطر عنوان + داده) به‌صورت شیء برگه برای buildWorkbook. */
-export function tableSheet(headers, rows, sheetName = 'گزارش', { filterRows, totalRow = false, freezeCol = 0 } = {}) {
+// outline: آرایه هم‌اندازه rows با {level, hidden, collapsed} هر سطر داده (برای گروه‌بندی سطرها)
+export function tableSheet(headers, rows, sheetName = 'گزارش', { filterRows, totalRow = false, freezeCol = 0, outline } = {}) {
   const kindOf = (h) => (h.kind === 'dec' || h.kind === 'int' || h.kind === 'text' || NUMFMT[h.kind] != null ? h.kind : 'text')
   const head = headers.map((h) => ({ v: h.label, st: 'head', k: 'text' }))
   const fr = filterRows ?? (totalRow ? rows.length - 1 : rows.length)
@@ -232,6 +236,7 @@ export function tableSheet(headers, rows, sheetName = 'گزارش', { filterRows
   })
   return {
     name: sheetName, rows: [head, ...body], freezeRow: 1, freezeCol, heights: { 1: 36 },
+    outline: outline && Object.fromEntries(outline.map((o, i) => [i + 2, o])),
     autoFilter: headers.length ? `A1:${colName(headers.length - 1)}${fr + 1}` : undefined,
   }
 }
@@ -244,7 +249,7 @@ export function tableSheet(headers, rows, sheetName = 'گزارش', { filterRows
  * freezeCol: تعداد ستون‌های اول که هنگام اسکرول افقی ثابت می‌مانند (مثل نام شعبه و نام فروشنده).
  */
 export { colName }
-export function buildXlsx(headers, rows, sheetName = 'گزارش', { filterRows, extraSheets = [], names = [], freezeCol = 0 } = {}) {
+export function buildXlsx(headers, rows, sheetName = 'گزارش', { filterRows, extraSheets = [], names = [], freezeCol = 0, outline } = {}) {
   const totalRow = filterRows != null && filterRows < rows.length
-  return buildWorkbook([tableSheet(headers, rows, sheetName, { filterRows, totalRow, freezeCol }), ...extraSheets], names)
+  return buildWorkbook([tableSheet(headers, rows, sheetName, { filterRows, totalRow, freezeCol, outline }), ...extraSheets], names)
 }

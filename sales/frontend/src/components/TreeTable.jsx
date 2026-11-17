@@ -36,8 +36,10 @@ export function Spark({ values, width = 90, height = 22 }) {
   )
 }
 
-// خروجی اکسل: سطح درخت با تورفتگی نام نشان داده می‌شود؛ مبلغ همیشه به ریال کامل، درصد با قالب ٪
-function toXlsx(rows, columns, unit, firstLabel, title) {
+// خروجی اکسل: هر سطح درخت یک گروه سطری اکسل است (دکمه‌های +/− و ۱-۲-۳ بالای برگه، از کل به جزء)؛
+// فایل با سطح اول باز می‌شود. برای فیلتر، نام هر سطح (مثلاً برند، گروه، زیرگروه، کالا) در ستون جدای خودش برای
+// همه سطرهای زیرمجموعه هم تکرار می‌شود. مبلغ همیشه به ریال کامل، درصد با قالب ٪
+function toXlsx(rows, columns, unit, firstLabel, title, levelNames = []) {
   const cols = columns.filter((c) => c.type !== 'spark')
   const whole = unit === 'rial' || unit === 'toman'
   const val = (v, t) => {
@@ -47,15 +49,29 @@ function toXlsx(rows, columns, unit, firstLabel, title) {
     if (t === 'num1') return Math.round(v * 10) / 10
     return Math.round(v)
   }
-  const headers = [{ label: 'سطح', kind: 'int' }, ...cols.map((c) => ({
-    label: (c.key === 'label' ? firstLabel : (c.group ? `${c.group} - ${c.label}` : c.label))
-      + (c.type === 'money' ? ` (${UNITS[unit].label})` : ''),
-    kind: c.key === 'label' || !NUMERIC.has(c.type) ? 'text' : c.type === 'int' ? 'int' : c.type === 'pct' ? 'pct'
-      : c.type === 'money' && whole ? 'money' : 'dec',
-  }))]
-  const body = rows.map((r) => [r.level ?? '', ...cols.map((c) => (c.key === 'label'
-    ? '   '.repeat(r.level || 0) + (r.label ?? '') : val(r[c.key], c.type)))])
-  return buildXlsx(headers, body, title)
+  const depth = Math.max(0, ...rows.map((r) => (r.isTotal ? -1 : r.level || 0))) + 1
+  const names = Array.from({ length: depth }, (_, i) => levelNames[i] || `سطح ${i + 1}`)
+  const headers = [
+    { label: firstLabel, kind: 'text' }, { label: 'سطح', kind: 'text' },
+    ...(depth > 1 ? names.map((n) => ({ label: n, kind: 'text' })) : []),
+    ...cols.filter((c) => c.key !== 'label').map((c) => ({
+      label: (c.group ? `${c.group} - ${c.label}` : c.label) + (c.type === 'money' ? ` (${UNITS[unit].label})` : ''),
+      kind: !NUMERIC.has(c.type) ? 'text' : c.type === 'int' ? 'int' : c.type === 'pct' ? 'pct'
+        : c.type === 'money' && whole ? 'money' : 'dec',
+    })),
+  ]
+  const body = rows.map((r) => [
+    '   '.repeat(r.isTotal ? 0 : r.level || 0) + (r.label ?? ''),
+    r.isTotal ? 'کل' : names[r.level || 0],
+    ...(depth > 1 ? names.map((_, i) => (r.isTotal ? '' : r.path?.[i] ?? '')) : []),
+    ...cols.filter((c) => c.key !== 'label').map((c) => val(r[c.key], c.type)),
+  ])
+  // سطح گروه اکسل: ردیف «کل» صفر، سطح اول درخت یک و ...؛ در شروع فقط «کل» و سطح اول دیده می‌شوند
+  const hasTotal = rows.some((r) => r.isTotal)
+  const lvl = rows.map((r) => (r.isTotal ? 0 : (r.level || 0) + (hasTotal ? 1 : 0)))
+  const open = hasTotal ? 1 : 0
+  const outline = lvl.map((l, i) => ({ level: l, hidden: l > open, collapsed: l >= open && (lvl[i + 1] ?? -1) > l && lvl[i + 1] > open }))
+  return buildXlsx(headers, body, title, { freezeCol: 1, outline })
 }
 
 /**
@@ -159,9 +175,14 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
 
   const download = () => {
     const ordered = []
-    const all = (pid) => (children.get(pid) || []).forEach((n) => { ordered.push(n); all(n.id) })
-    all('')
-    const blob = toXlsx(total ? [{ ...total, label: 'کل' }, ...ordered] : ordered, columns, 'rial', firstLabel, exportName || 'report')
+    const all = (pid, path) => (children.get(pid) || []).forEach((n) => {
+      const p = [...path, n.label]
+      ordered.push({ ...n, path: p })
+      all(n.id, p)
+    })
+    all('', [])
+    const blob = toXlsx(total ? [{ ...total, label: 'کل', isTotal: true }, ...ordered] : ordered, columns, 'rial', firstLabel,
+      exportName || 'report', levelNames)
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `${exportName || 'report'}.xlsx`
