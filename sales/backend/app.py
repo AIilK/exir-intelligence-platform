@@ -834,6 +834,18 @@ def customers(req: Request):
             "cities": A.records(A.group_metrics(tx, None, "city", c, f).head(20)[["key", "label", "net", "customers"]])}
 
 
+def disc_seller(tx: pd.DataFrame) -> list[dict]:
+    """جدول تخفیفات به تفکیک ویزیتور: همان discount_by روی seller_key، با نام ویزیتور، شعبه و سرپرست."""
+    rows = A.discount_by(tx, "seller_key")
+    sale = tx[~tx["is_return"]]
+    names = sale.groupby("seller_key", observed=True)[[c for c in ("seller", "branch", "supervisor") if c in sale]].first()
+    for r in rows:
+        info = names.loc[r["key"]] if r["key"] in names.index else {}
+        for c in ("seller", "branch", "supervisor"):
+            r[c] = info.get(c) if hasattr(info, "get") else None
+    return rows
+
+
 @app.get("/api/analysis")
 def analysis(req: Request):
     tx, rq, c, f = frames(req)
@@ -869,7 +881,7 @@ def analysis(req: Request):
     price["band"] = pd.cut(price["eff_price"], bins=bins, labels=labels, right=False)
     pb = price.groupby("band", observed=False).agg(net=("net", "sum"), qty=("qty", "sum")).reset_index()
     return {"kpis": A.kpis(tx, rq, c, f),
-            "disc_category": disc_by("category"), "disc_group": disc_by("product_group"), "disc_branch": disc_by("branch"),
+            "disc_category": disc_by("category"), "disc_group": disc_by("product_group"), "disc_branch": disc_by("branch"), "disc_seller": disc_seller(tx),
             "ret_branch": ret_by("branch"), "ret_category": ret_by("category"), "ret_group": ret_by("product_group"),
             "ret_product": ret_by("product_code", "product"),
             "payment": A.records(pay.sort_values("net", ascending=False)),

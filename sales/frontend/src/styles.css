@@ -594,3 +594,6 @@ table.tree th.gstart, table.tree td.gstart { border-inline-start: 2px solid var(
 table.tree th.gc.gstart { border-inline-start-color: var(--gbd); }
 .tree-name-toggle { cursor: pointer; }
 .tree-name-toggle:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* جدول تخفیفات تحلیل فروش: واحد مبلغ زیر عنوان ستون تا همه ستون‌ها بدون اسکرول افقی جا شوند */
+.disc-table th { white-space: normal; }
+.disc-table th .th-unit { display: block; }
