@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApp, useRkFetch, fmtMoney, fmtInt, fmtPct, fmtCompact, faDigits, UNITS, isNum, fmtFull } from '../lib.jsx'
-import { Kpi, Card, Loading, ErrorBox, Empty, DataTable, MultiSelect } from '../components/ui.jsx'
+import { Kpi, Card, Loading, ErrorBox, Empty, DataTable, MultiSelect, Tabs } from '../components/ui.jsx'
 import { Chart, HBar, baseOption, useTheme } from '../components/Chart.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { brandColor } from '../brands.js'
@@ -182,8 +182,8 @@ function MonthlyBars({ monthly, unit, onClick }) {
 const nfa = (s) => (s || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک').trim()
 
 /** مشتریان فهرست که از ابتدای سال خرید (فروش خالص مثبت) نداشته‌اند؛ همان «بدون خرید» کارت مشتری فعال */
-function InactiveList({ brand, province, products, unit, onCustomer, onClose }) {
-  const { data, loading, error } = useRkFetch(`/api/rk_sales/customers?${q({ period: 'YTD', product: products })}`)
+function InactiveList({ brand, province, products, groups = [], unit, onCustomer, onClose }) {
+  const { data, loading, error } = useRkFetch(`/api/rk_sales/customers?${q({ period: 'YTD', product: products, group: groups })}`)
   if (loading && !data) return <Card><Loading /></Card>
   if (error) return <ErrorBox error={error} />
   const rows = data.customers.filter((r) => !(r.net > 0) && (!brand || r.brand === brand) && (!province || nfa(r.province) === nfa(province)))
@@ -231,8 +231,8 @@ function BrandTable({ rows, unit, brand, theme, onBrand }) {
     defaultSort={{ key: 'net', dir: 'desc' }} totals={totals} onRowClick={(r) => r.key !== '__total' && onBrand(r.key)} />
 }
 
-function ProvinceDetail({ name, period, brand, products, unit, onCustomer, onClose }) {
-  const { data, loading, error } = useRkFetch(`/api/rk_sales/province?${q({ name, period, brand, product: products })}`)
+function ProvinceDetail({ name, period, brand, products, groups = [], unit, onCustomer, onClose }) {
+  const { data, loading, error } = useRkFetch(`/api/rk_sales/province?${q({ name, period, brand, product: products, group: groups })}`)
   const [inactive, setInactive] = useState(false)
   if (loading && !data) return <Loading />
   if (error) return <ErrorBox error={error} />
@@ -253,7 +253,7 @@ function ProvinceDetail({ name, period, brand, products, unit, onCustomer, onClo
       </div>
       <RkKpis k={data.kpis} onInactive={() => setInactive(!inactive)} inactiveOpen={inactive} />
       <div className="grid g2">
-        {inactive && <InactiveList brand={brand} province={data.province} products={products} unit={unit}
+        {inactive && <InactiveList brand={brand} province={data.province} products={products} groups={groups} unit={unit}
           onCustomer={onCustomer} onClose={() => setInactive(false)} />}
         <Card title="فروش خالص شهرها" subtitle="جمع نمایندگان هر شهر (شهر از شیت draft)">
           <HBar rows={data.cities.map((c) => ({ ...c, label: `${c.key} (${fmtInt(c.active)}/${fmtInt(c.customers)})` }))} unit={unit} />
@@ -270,10 +270,10 @@ function ProvinceDetail({ name, period, brand, products, unit, onCustomer, onClo
   )
 }
 
-export function CustomerDetail({ code, period, products = [], unit: unitProp, onProvince, onClose }) {
+export function CustomerDetail({ code, period, products = [], groups = [], unit: unitProp, onProvince, onClose }) {
   const { unit: appUnit } = useApp()
   const unit = unitProp || appUnit
-  const { data, loading, error } = useRkFetch(`/api/rk_sales/customer?${q({ code, period, product: products })}`)
+  const { data, loading, error } = useRkFetch(`/api/rk_sales/customer?${q({ code, period, product: products, group: groups })}`)
   if (loading && !data) return <Loading />
   if (error) return <ErrorBox error={error} />
   const c = data.customer
@@ -292,7 +292,7 @@ export function CustomerDetail({ code, period, products = [], unit: unitProp, on
       <RkKpis k={data.kpis} single />
       <div className="grid g2">
         <Card title="روند ماهانه خرید" className="span2"><MonthlyBars monthly={data.monthly} unit={unit} /></Card>
-        <Card title="گروه کالا" subtitle="گروه کالا از شیت draft (Category 2)">
+        <Card title="گروه کالا" subtitle="گروه کالای داشبورد (همان گروه‌بندی موجودی و کارآمد)">
           {data.categories.length ? <HBar rows={data.categories.slice(0, 15).map((r) => ({ ...r, label: r.key }))} unit={unit} /> : <Empty />}
         </Card>
         <Card title="فاکتورها و درخواست‌ها" subtitle={`فاکتورهای فروش، برگشتی و درخواست‌های فروش دوره${products.length ? ' برای کالاهای انتخاب‌شده' : ''}؛ مبلغ = ناخالص، جمع مبلغ کل = خالص، مثل گزارش‌های راهکاران (راهکاران به ریال است: عدد تومان × ۱۰)`}>
@@ -322,6 +322,7 @@ export default function Rahkaran() {
   const province = sp.get('province')
   const customer = sp.get('customer')
   const products = sp.getAll('product')
+  const groups = sp.getAll('group')
   // برند نمودار حبابی جدا از فیلتر برند صفحه، مثل لیست کشویی کنار نمودار در اکسل
   const mapBrand = brand || sp.get('mbrand') || ''
   const set = (patch) => {
@@ -329,14 +330,17 @@ export default function Rahkaran() {
     for (const [k, v] of Object.entries(patch)) v ? next.set(k, v) : next.delete(k)
     setSp(next)
   }
-  const { data, loading, error } = useRkFetch(`/api/rk_sales?${q({ period, brand, product: products })}`)
+  const { data, loading, error } = useRkFetch(`/api/rk_sales?${q({ period, brand, product: products, group: groups })}`)
   const [inactive, setInactive] = useState(false)
-  const setProducts = (v) => {
+  const [catBy, setCatBy] = useState('net')  // نمودار گروه کالا: مبلغ (فروش خالص) یا تعداد
+  const setMulti = (key) => (v) => {
     const next = new URLSearchParams(sp)
-    next.delete('product')
-    v.forEach((x) => next.append('product', x))
+    next.delete(key)
+    v.forEach((x) => next.append(key, x))
     setSp(next)
   }
+  const setProducts = setMulti('product')
+  const setGroups = setMulti('group')
   const detail = useRef(null)
   useEffect(() => {
     if (province || customer) detail.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -367,6 +371,8 @@ export default function Rahkaran() {
               {data.brand_list.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </label>
+          <MultiSelect label="گروه کالا" value={groups} onChange={setGroups}
+            options={(data.group_list || []).map((g) => ({ value: g, label: g }))} />
           <ProductFilter value={products} onChange={setProducts} />
           <label className="unit-select">
             <span className="ms-label">واحد مبالغ</span>
@@ -381,7 +387,7 @@ export default function Rahkaran() {
       </PageHead>
       <RkKpis k={k} onInactive={() => setInactive(!inactive)} inactiveOpen={inactive} />
       <div className="grid g2">
-        {inactive && <InactiveList brand={brand} products={products} unit={unit}
+        {inactive && <InactiveList brand={brand} products={products} groups={groups} unit={unit}
           onCustomer={openCustomer} onClose={() => setInactive(false)} />}
         <Card title="نقشه حبابی فروش خالص استان‌ها" className="span2"
           subtitle={`اندازه حباب و پررنگی استان = فروش خالص ${periodText(data.period)}${mapBrand ? ` برند ${mapBrand}` : ''} (${UNITS[unit].label})؛ برای جزئیات روی استان کلیک کنید`}
@@ -398,7 +404,7 @@ export default function Rahkaran() {
           <BubbleMap provinces={data.provinces} selected={province} onSelect={openProvince} unit={unit} brand={mapBrand} />
         </Card>
         <Card title="فروش خالص به تفکیک برند" className="span2"
-          subtitle={`فروش ${periodText(data.period)}${products.length ? ' برای کالاهای انتخاب‌شده' : ''} (${UNITS[unit].label})؛ خالص = مبلغ پس از کسور و اضافات، ناخالص = قبل از تخفیف. برای فیلتر برند روی سطر کلیک کنید`}>
+          subtitle={`فروش ${periodText(data.period)}${products.length ? ' برای کالاهای انتخاب‌شده' : ''}${groups.length ? ` — گروه ${groups.join('، ')}` : ''} (${UNITS[unit].label})؛ خالص = مبلغ پس از کسور و اضافات، ناخالص = قبل از تخفیف. برای فیلتر برند روی سطر کلیک کنید`}>
           <BrandTable rows={data.brands} unit={unit} brand={brand} theme={theme} onBrand={(b) => set({ brand: b === brand ? null : b })} />
         </Card>
         <Card title="سهم برندها از فروش خالص" subtitle={brand ? 'برای همه برندها، فیلتر برند را بردارید' : 'برای فیلتر برند روی آن کلیک کنید'}>
@@ -415,8 +421,13 @@ export default function Rahkaran() {
                 colorOf={(r, th) => brandColor(r.brand, th)} onClick={(r) => openCustomer(r.code)} />
             : <Empty />}
         </Card>
-        <Card title="گروه کالا" subtitle="فروش خالص به تفکیک گروه کالا (Category 2 شیت draft)">
-          {data.categories.length ? <HBar rows={data.categories.slice(0, 15).map((r) => ({ ...r, label: r.key }))} unit={unit} colorIndex={2} /> : <Empty />}
+        <Card title="گروه کالا"
+          subtitle={`${catBy === 'qty' ? 'تعداد فروش (واحد اصلی کالا در فاکتورهای فروش)' : 'فروش خالص'} به تفکیک گروه کالای داشبورد (همان گروه‌بندی موجودی و کارآمد)`}
+          actions={<Tabs value={catBy} onChange={setCatBy} tabs={[{ value: 'net', label: 'مبلغ' }, { value: 'qty', label: 'تعداد' }]} />}>
+          {data.categories.length
+            ? <HBar rows={[...data.categories].sort((a, b) => (b[catBy] ?? 0) - (a[catBy] ?? 0)).slice(0, 15).map((r) => ({ ...r, label: r.key }))}
+                value={catBy} valueType={catBy === 'qty' ? 'int' : 'money'} unit={unit} colorIndex={2} />
+            : <Empty />}
         </Card>
         <Card title="روند ماهانه فروش خالص" className="span2" subtitle="امسال در برابر همان ماه سال قبل؛ برای دیدن یک ماه روی آن کلیک کنید">
           <MonthlyBars monthly={data.monthly} unit={unit} onClick={(m) => set({ period: m })} />
@@ -424,10 +435,10 @@ export default function Rahkaran() {
       </div>
       <div ref={detail} className="rk-anchor">
         {customer ? (
-          <CustomerDetail key={customer} code={customer} period={period} products={products} unit={unit}
+          <CustomerDetail key={customer} code={customer} period={period} products={products} groups={groups} unit={unit}
             onProvince={openProvince} onClose={() => set({ customer: null })} />
         ) : province ? (
-          <ProvinceDetail key={province} name={province} period={period} brand={brand} products={products} unit={unit}
+          <ProvinceDetail key={province} name={province} period={period} brand={brand} products={products} groups={groups} unit={unit}
             onCustomer={openCustomer} onClose={() => set({ province: null })} />
         ) : null}
       </div>

@@ -1615,9 +1615,16 @@ def _rk_sales(refresh: bool = False) -> dict:
 
 
 def _by_product(snap: dict, req: Request) -> dict:
-    """فیلتر کالا (پارامتر تکراری product = کد کالا) روی همه محاسبات؛ برای مقایسه با گزارش «فروش محصول به تفکیک مشتری» راهکاران"""
+    """فیلتر کالا (پارامتر تکراری product = کد کالا) و گروه کالا (پارامتر تکراری group = گروه کالای داشبورد، cat2)
+    روی همه محاسبات؛ برای مقایسه با گزارش «فروش محصول به تفکیک مشتری» راهکاران"""
+    lines = snap["lines"]
     codes = [c for c in req.query_params.getlist("product") if c]
-    return {**snap, "lines": snap["lines"][snap["lines"]["product_code"].isin(codes)]} if codes else snap
+    groups = [g for g in req.query_params.getlist("group") if g]
+    if codes:
+        lines = lines[lines["product_code"].isin(codes)]
+    if groups:
+        lines = lines[lines["cat2"].isin(groups)]
+    return {**snap, "lines": lines} if codes or groups else snap
 
 
 def _rk_payload(snap: dict, out: dict) -> dict:
@@ -1633,6 +1640,10 @@ def rk_sales(req: Request, period: str = "YTD", brand: str | None = None, refres
     snap = _rk_sales(refresh)
     out = RS.summary(_by_product(snap, req), period, brand or None)
     out["brand_list"] = sorted(snap["customers"]["brand"].unique().tolist())
+    # فهرست گروه‌ها از همه فروش‌ها (نه فقط گروه‌های انتخاب‌شده)، مرتب از پرفروش
+    ln = snap["lines"]
+    sold = ln[ln["kind"] == "S"].groupby("cat2")["net"].sum().sort_values(ascending=False).index.tolist()
+    out["group_list"] = sold + sorted(set(ln["cat2"]) - set(sold))
     return _rk_payload(snap, out)
 
 

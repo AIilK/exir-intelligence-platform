@@ -198,11 +198,21 @@ def new_reps(found: pd.DataFrame, cust: pd.DataFrame) -> pd.DataFrame:
 
 
 def products() -> pd.DataFrame:
+    """گروه کالای هر کد. cat1 = گروه اصلی شیت draft؛ cat2 = «گروه کالا»ی داشبورد از category_map.json
+    (همان گروه‌بندی تأییدشده‌ای که موجودی و کارآمد دارند). کدی که در category_map نیست گروهی را می‌گیرد که
+    بیشتر کالاهای هم‌گروه draft آن (همان cat1) در category_map دارند؛ اگر نبود، خود cat1."""
     p = pd.read_csv(PRODUCTS_FILE, dtype=str, encoding="utf-8-sig").fillna("")
     p["code"] = p["code"].map(loader._clean_code)
-    for k in ("cat1", "cat2"):
-        p[k] = p[k].map(norm).replace("", OTHER)
-    return p.drop_duplicates("code").set_index("code")[["cat1", "cat2"]]
+    p["cat1"] = p["cat1"].map(norm).replace("", OTHER)
+    p = p.drop_duplicates("code").set_index("code")[["cat1"]]
+    cmap = {loader._clean_code(k): norm(v[0]) for k, v in sql_source._load_map().get("products", {}).items() if v and v[0]}
+    mapped = p.index.to_series().map(cmap)
+    by_cat1 = pd.DataFrame({"cat1": p["cat1"], "grp": mapped}).dropna().groupby("cat1")["grp"].agg(lambda s: s.mode().iloc[0])
+    p["cat2"] = mapped.fillna(p["cat1"].map(by_cat1)).fillna(p["cat1"])
+    # کالاهایی که فقط در category_map هستند (در draft نیامده‌اند)
+    extra = pd.DataFrame({"cat2": pd.Series(cmap)}).drop(p.index, errors="ignore")
+    extra["cat1"] = extra["cat2"]
+    return pd.concat([p, extra[["cat1", "cat2"]]])
 
 
 def load(env_file, cfg: dict) -> dict:
