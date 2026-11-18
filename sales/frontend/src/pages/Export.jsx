@@ -5,6 +5,7 @@ import { Kpi, Card, Loading, ErrorBox, Empty, DataTable, Tabs, MultiSelect } fro
 import { Chart, HBar, baseOption } from '../components/Chart.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { brandColor } from '../brands.js'
+import { TreeTable } from '../components/TreeTable.jsx'
 
 // فروش صادراتی از راهکاران؛ معادل شیت‌های فایل Export SalesReport (مبالغ به دلار)
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']
@@ -199,6 +200,30 @@ function CountryTable({ rows, y, ly, onCustomer }) {
   )
 }
 
+/** فروش برندها و کالاها: برند ← گروه کالا ← کالا (مثل همین جدول در صفحه B2B)؛ مبالغ دلار، با فیلترهای اسلایسر */
+function GoodsTree({ query, year, ly }) {
+  const { data, loading, error } = useRkFetch(`/api/rk_export/goods_tree${query ? `?${query}` : ''}`)
+  if (loading && !data) return <Loading />
+  if (error) return <ErrorBox error={error} />
+  if (!data.nodes.length) return <Empty />
+  const M = 'مبلغ (دلار)', Q = 'تعداد', y = faDigits(year), p = faDigits(ly)
+  const columns = [
+    { key: 'label' },
+    { key: 'code', label: 'کد کالا' },
+    { key: 'net', label: `خالص ${y}`, type: 'int', group: M, hint: 'مبلغ خالص اقلام فاکتورهای صادراتی (دلار)' },
+    { key: 'gross', label: `ناخالص ${y}`, type: 'int', group: M, hint: 'مبلغ اقلام پیش از کسور و اضافات (دلار)' },
+    { key: 'share', label: 'سهم دلاری', type: 'pct', group: M },
+    { key: 'ly_net', label: `خالص ${p} (همان بازه)`, type: 'int', group: M },
+    { key: 'net_growth', label: 'رشد دلاری', type: 'pct', group: M },
+    { key: 'qty', label: `تعداد ${y}`, type: 'int', group: Q, hint: 'همه اقلام فاکتور، از جمله نمونه و هدیه بدون مبلغ' },
+    { key: 'ly_qty', label: `تعداد ${p} (همان بازه)`, type: 'int', group: Q },
+    { key: 'growth', label: 'رشد تعدادی', type: 'pct', group: Q },
+    { key: 'customers', label: 'مشتری', type: 'int', hint: 'تعداد کد مشتری دارای خرید' },
+  ]
+  return <TreeTable nodes={data.nodes} total={data.total} columns={columns} sortKey="net" colorGroups
+    firstLabel="برند / گروه کالا / کالا" levelNames={['برند', 'گروه کالا', 'کالا']} exportName={`export-brands-goods-${year}`} />
+}
+
 export default function Export() {
   const [sp, setSp] = useSearchParams()
   const sheet = sp.get('sheet') || 'dashboard'
@@ -281,6 +306,10 @@ export default function Export() {
           </Card>
           <Card title="گروه کالا — فروش تعدادی" subtitle="Net Sales PCS">
             <Bars rows={[...data.categories].sort((a, b) => b.pcs - a.pcs)} value="pcs" colorIndex={3} onClick={(r) => set('cat', [r.key])} />
+          </Card>
+          <Card title="فروش برندها و کالاها: برند ← گروه کالا ← کالا" className="span2"
+            subtitle={`${faDigits(y)}${span} در برابر همان بازه ${faDigits(ly)}، با فیلترهای بالا؛ گروه کالا = گروه‌بندی داشبورد. برای باز کردن هر سطح روی آن کلیک کنید؛ خروجی اکسل هم سطح‌بندی شده است`}>
+            <GoodsTree query={query} year={y} ly={ly} />
           </Card>
         </div>
       )}

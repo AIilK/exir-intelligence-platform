@@ -46,7 +46,7 @@ export function DailyReport({ dims, variant = 'team', exportName }) {
     ...(isTeam ? [{ key: 'lines_per_inv', label: 'سطر در فاکتور', type: 'num1', group: 'از ابتدای ماه', hint: 'سطرهای با تعداد مثبت ÷ فاکتور مؤثر' }] : []),
     { key: 'customers', label: 'مشتری', type: 'int', group: 'از ابتدای ماه' },
     ...(isTeam ? [{ key: 'rank', label: 'رتبه', type: 'int', group: 'از ابتدای ماه' }] : []),
-    { key: 'req_net', label: 'خالص درخواست', type: 'money', group: 'درخواست' },
+    { key: 'req_net', label: 'خالص درخواست باز', type: 'money', group: 'درخواست' },
   ]
   return (
     <>

@@ -215,6 +215,33 @@ def products() -> pd.DataFrame:
     return pd.concat([p, extra[["cat1", "cat2"]]])
 
 
+# کد کالا: هفت رقم اول = خانواده کالا (مثلاً 1100101 = رنگ موی ۱۰۰ میل پادینا)؛ شش رقم اول خانواده بزرگ‌تر
+# (مثلاً 150040 = پودرهای دکلره) که فقط وقتی حدس زده می‌شود که دست‌کم FAMILY_MIN کالا داشته باشد و FAMILY_SHARE آن‌ها یک گروه باشند
+PREFIXES = (7, 6)
+FAMILY_MIN = 3
+FAMILY_SHARE = 0.8
+
+
+def product_categories(codes: pd.Series) -> pd.DataFrame:
+    """cat1 / cat2 هر کد کالا (برای سطرهای فاکتور). کد تازه‌ای که نه در draft است نه در category_map، گروهی را
+    می‌گیرد که بیشتر کالاهای هم‌خانواده‌اش دارند: اول هفت رقم اول کد یکسان، بعد شش رقم (با شرط بالا)؛ وگرنه «سایر»."""
+    p = products()
+    out = p.reindex(codes.values)
+    for n in PREFIXES:
+        miss = out["cat2"].isna().values
+        if not miss.any():
+            break
+        grp = p.groupby(p.index.str[:n])
+        fam = grp[["cat1", "cat2"]].agg(lambda x: x.mode().iloc[0])
+        if n < PREFIXES[0]:
+            size = grp.size()
+            top = grp["cat2"].agg(lambda x: x.value_counts().iloc[0]) / size
+            fam = fam[(size >= FAMILY_MIN) & (top >= FAMILY_SHARE)]
+        guess = fam.reindex(pd.Index(codes.values[miss]).str[:n])
+        out.loc[miss, ["cat1", "cat2"]] = guess.values
+    return out.fillna(OTHER)
+
+
 def load(env_file, cfg: dict) -> dict:
     """همه سطرهای فاکتور، برگشتی و درخواست مشتریان B2B از sales_from (تاریخ جلالی، تنظیم rahkaran.sales_from)."""
     s = RK.settings(cfg)
@@ -239,9 +266,9 @@ def load(env_file, cfg: dict) -> dict:
     for k in ("qty", "gross", "net", "cash", "mgmt", "tax"):
         df[k] = pd.to_numeric(df[k], errors="coerce").fillna(0.0)
     df["month"] = df["date"].str[:7]
-    cat = products().reindex(df["product_code"])
-    df["cat1"] = cat["cat1"].fillna(OTHER).values
-    df["cat2"] = cat["cat2"].fillna(OTHER).values
+    cat = product_categories(df["product_code"])
+    df["cat1"] = cat["cat1"].values
+    df["cat2"] = cat["cat2"].values
     info = cust.reindex(df["code"])
     for k in ("short", "city", "province", "brand"):
         df[k] = info[k].values
@@ -343,6 +370,55 @@ def _scope(snap: dict, period: str, brand: str | None, province: str | None = No
         keep &= df["code"].eq(code)
     sale = df["kind"].eq("S")
     return df[cur & keep & sale], df[cur & keep & df["kind"].eq("R")], df[prev & keep & sale], keep, period
+
+
+TREE_LEVELS = [("brand", "brand"), ("cat2", "group"), ("product_code", "product")]
+TREE_SEP = "\x1f"
+
+
+def build_tree(s: pd.DataFrame, ly: pd.DataFrame, r: pd.DataFrame | None = None) -> dict:
+    """گره‌های درخت برند ← گروه کالا (cat2) ← کالا برای TreeTable، از سطرهای فروش دوره (s)، همان دوره سال قبل (ly)
+    و برگشتی‌های دوره (r، اختیاری). ستون‌ها: qty، net، gross، customers، ret_qty، ly_qty، ly_net، share، growth (تعدادی)،
+    net_growth (مبلغی). مشترک بین فروش B2B و صادرات. خروجی: {"total": ردیف کل، "nodes": [{id, parent, level, ...}]}"""
+    r = r if r is not None else s.iloc[0:0]
+    names = pd.concat([s, ly]).drop_duplicates("product_code", keep="last").set_index("product_code")["product"]
+    total_net = float(s["net"].sum())
+
+    def frame(cols: list[str]) -> pd.DataFrame:
+        k = cols or ["_all"]
+        a, b, c = (x.assign(_all=0) if not cols else x for x in (s, r, ly))
+        g = a.groupby(k).agg(qty=("qty", "sum"), net=("net", "sum"), gross=("gross", "sum"), customers=("code", "nunique"))
+        g = g.join(b.groupby(k)["qty"].sum().rename("ret_qty"), how="outer")
+        g = g.join(c.groupby(k).agg(ly_qty=("qty", "sum"), ly_net=("net", "sum")), how="outer").fillna(0.0)
+        g["share"] = g["net"] / total_net if total_net else None
+        g["growth"] = (g["qty"] / g["ly_qty"].where(g["ly_qty"] > 0) - 1)
+        g["net_growth"] = (g["net"] / g["ly_net"].where(g["ly_net"] > 0) - 1)
+        return g[(g["qty"] != 0) | (g["net"] != 0) | (g["ly_qty"] != 0) | (g["ly_net"] != 0) | (g["ret_qty"] != 0)]
+
+    total, nodes = None, []
+    for i in range(len(TREE_LEVELS) + 1):
+        cols = [c for c, _ in TREE_LEVELS[:i]]
+        g = frame(cols)
+        for idx, row in g.iterrows():
+            rec = {k: (None if pd.isna(v) else float(v)) for k, v in row.items()}
+            if i == 0:
+                total = rec
+                continue
+            keys = [str(x) for x in (idx if isinstance(idx, tuple) else (idx,))]
+            col, dim = TREE_LEVELS[i - 1]
+            k = keys[-1]
+            rec.update(id=TREE_SEP.join(keys), parent=TREE_SEP.join(keys[:-1]), level=i - 1, dim=dim, key=k,
+                       label=str(names.get(k, k)) if col == "product_code" else k,
+                       code=k if col == "product_code" else None)
+            nodes.append(rec)
+    return {"total": total or {}, "nodes": nodes}
+
+
+def goods_tree(snap: dict, period: str, brand: str | None) -> dict:
+    """جدول درختی برند ← گروه کالا (گروه‌بندی داشبورد، cat2) ← کالا برای فروش دوره، مثل گزارش کالای هیبرید
+    (جای جدول «فروش خالص به تفکیک برند» را هم گرفته است)؛ فاکتورهای فروش، برگشتی جدا."""
+    s, r, ly, _keep, period = _scope(snap, period, brand)
+    return {"period": period, **build_tree(s, ly, r)}
 
 
 def summary(snap: dict, period: str, brand: str | None) -> dict:

@@ -253,12 +253,19 @@ def with_vat(df: pd.DataFrame | None, f: dict) -> pd.DataFrame | None:
     return df.assign(net=df["payable"])
 
 
+def open_requests(rq: pd.DataFrame | None) -> pd.DataFrame | None:
+    """درخواست‌های باز: فقط «وضعیت درخواست = ۰» (هنوز فاکتور نشده)؛ فاکتورشده‌ها (۱) و باطل‌ها (۲) کنار می‌روند.
+    مبلغ و تعداد درخواست در داشبورد فقط از همین‌هاست؛ بررسی فعالیت ویزیتور (ثبت درخواست، غیرفعال‌ها، مسابقه، پورسانت)
+    همه درخواست‌های غیرباطل را می‌بیند، چون درخواست فاکتورشده هم یعنی ویزیتور فعال بوده."""
+    return rq[rq["status"] == 0] if rq is not None else None
+
+
 def frames(req: Request):
     d = STATE["data"]
     c = ctx()
     f = filters(req)
     tx = with_vat(A.apply_filters(d["sales"], f, True), f)
-    rq = with_vat(A.apply_filters(d["requests"], f, False), f)
+    rq = open_requests(with_vat(A.apply_filters(d["requests"], f, False), f))
     if f.get("inv_type") and rq is not None and "فروش" not in f["inv_type"]:
         rq = rq.iloc[0:0]
     return tx, rq, c, f
@@ -297,7 +304,7 @@ def top_by_tier(g: pd.DataFrame, n: int, cols: list[str]) -> dict:
 
 BASE_COLS = ["key", "label", "net", "gross", "qty", "sales_net", "returns_net", "return_rate", "disc_rate",
              "invoices", "customers", "sku", "share", "avg_invoice", "daily_avg", "forecast",
-             "req_net", "req_docs", "req_conv", "req_forecast", "last_date"]
+             "req_net", "req_docs", "req_forecast", "last_date"]
 
 
 # ---------------------------------------------------------------- data source endpoints
@@ -454,7 +461,7 @@ def monthly(req: Request):
     ctx()
     f = {k: v for k, v in filters(req).items() if k not in ("date_from", "date_to", "default_period")}
     return {"months": A.monthly(with_vat(A.apply_filters(d["sales"], f, True), f),
-                                with_vat(A.apply_filters(d["requests"], f, False), f)),
+                                open_requests(with_vat(A.apply_filters(d["requests"], f, False), f))),
             "current": d["meta"]["month"]}
 
 
@@ -1647,6 +1654,13 @@ def rk_sales(req: Request, period: str = "YTD", brand: str | None = None, refres
     return _rk_payload(snap, out)
 
 
+@app.get("/api/rk_sales/goods_tree")
+def rk_sales_goods_tree(req: Request, period: str = "YTD", brand: str | None = None):
+    """جدول درختی برند ← گروه کالا ← کالا (تعداد و مبلغ فروش دوره)، با همان فیلترهای صفحه (کالا و گروه کالا)"""
+    snap = _rk_sales()
+    return _rk_payload(snap, RS.goods_tree(_by_product(snap, req), period, brand or None))
+
+
 @app.get("/api/rk_sales/province")
 def rk_sales_province(req: Request, name: str, period: str = "YTD", brand: str | None = None):
     snap = _rk_sales()
@@ -1733,6 +1747,13 @@ def rk_export(req: Request):
     """شیت‌های Dashboard، Customer، SKU&Category، Country و YTD Trend با فیلترهای اسلایسر"""
     snap = _rk_export()
     return _rke_payload(snap, RE.report(snap, RE.parse_filters(req.query_params)))
+
+
+@app.get("/api/rk_export/goods_tree")
+def rk_export_goods_tree(req: Request):
+    """جدول درختی برند ← گروه کالا ← کالا صادرات (دلار و تعداد)، با فیلترهای اسلایسر"""
+    snap = _rk_export()
+    return _rke_payload(snap, RE.goods_tree(snap, RE.parse_filters(req.query_params)))
 
 
 @app.get("/api/rk_export/month")

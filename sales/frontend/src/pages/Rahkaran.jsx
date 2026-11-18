@@ -7,6 +7,7 @@ import { PageHead } from '../components/Layout.jsx'
 import { brandColor } from '../brands.js'
 import { MAP_VIEWBOX, MAP_PATHS, BUBBLE_POS } from '../iranMap.js'
 import DayPicker, { isDays, parseDays, daysLabel } from '../components/DayPicker.jsx'
+import { TreeTable } from '../components/TreeTable.jsx'
 
 // فروش B2B نمایندگان استانی از راهکاران؛ نمای اصلی معادل شیت Bubble Chart فایل B2B-Sales Report
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']
@@ -205,31 +206,31 @@ function InactiveList({ brand, province, products, groups = [], unit, onCustomer
 }
 
 const growthCol = { key: 'growth', label: 'رشد نسبت به سال قبل', type: 'pct' }
-const withGrowth = (rows) => rows.map((r) => ({ ...r, growth: r.ly_net ? r.net / r.ly_net - 1 : null }))
 
-/** جدول فروش خالص هر برند در دوره انتخاب‌شده، با ردیف جمع کل */
-function BrandTable({ rows, unit, brand, theme, onBrand }) {
-  const sum = (rs, k) => rs.reduce((a, r) => a + (Number(r[k]) || 0), 0)
-  const data = withGrowth(rows)
-  const cols = [
-    { key: 'key', label: 'برند', render: (r) => (r.key === '__total' ? <b>جمع کل</b>
-      : <span className={`rk-brand-cell${r.key === brand ? ' on' : ''}`}><i style={{ background: brandColor(r.key, theme) }} />{r.key}</span>), csv: (r) => (r.key === '__total' ? 'جمع کل' : r.key) },
-    { key: 'net', label: 'فروش خالص', type: 'money' },
-    { key: 'share', label: 'سهم از فروش خالص', type: 'pct', noTotal: true },
-    { key: 'gross', label: 'فروش ناخالص', type: 'money' },
-    { key: 'qty', label: 'تعداد', type: 'int' },
-    { key: 'customers', label: 'مشتری دارای خرید', type: 'int', noTotal: true },
-    { key: 'ly_net', label: 'فروش خالص همین دوره سال قبل', type: 'money' },
-    growthCol,
+/** فروش برندها و کالاها: برند ← گروه کالا ← کالا (مثل گزارش کالای هیبرید)، با فیلترهای صفحه؛ تعداد و مبلغ کنار هم */
+function GoodsTree({ period, brand, products, groups }) {
+  const { data, loading, error } = useRkFetch(`/api/rk_sales/goods_tree?${q({ period, brand, product: products, group: groups })}`)
+  if (loading && !data) return <Loading />
+  if (error) return <ErrorBox error={error} />
+  if (!data.nodes.length) return <Empty />
+  const Q = 'تعداد', M = 'مبلغ'
+  const columns = [
+    { key: 'label' },
+    { key: 'code', label: 'کد کالا' },
+    { key: 'net', label: 'فروش خالص', type: 'money', group: M, hint: 'مبلغ پس از کسور و اضافات (NetPrice راهکاران)' },
+    { key: 'gross', label: 'فروش ناخالص', type: 'money', group: M, hint: 'جمع قبل از تخفیف' },
+    { key: 'share', label: 'سهم از فروش خالص', type: 'pct', group: M },
+    { key: 'ly_net', label: 'خالص همین دوره سال قبل', type: 'money', group: M },
+    { key: 'net_growth', label: 'رشد مبلغی', type: 'pct', group: M, hint: 'فروش خالص ÷ فروش خالص همین دوره سال قبل − ۱' },
+    { key: 'qty', label: 'تعداد فروش', type: 'int', group: Q, hint: 'جمع تعداد (واحد اصلی) فاکتورهای فروش دوره؛ برگشتی کم نشده' },
+    { key: 'ly_qty', label: 'تعداد همین دوره سال قبل', type: 'int', group: Q },
+    { key: 'growth', label: 'رشد تعدادی', type: 'pct', group: Q, hint: 'تعداد فروش ÷ تعداد همین دوره سال قبل − ۱' },
+    { key: 'customers', label: 'مشتری', type: 'int', hint: 'تعداد کد مشتری (نماینده) دارای خرید' },
   ]
-  const totals = (rs) => {
-    const t = { key: '__total', net: sum(rs, 'net'), gross: sum(rs, 'gross'), qty: sum(rs, 'qty'), ly_net: sum(rs, 'ly_net') }
-    return { ...t, growth: t.ly_net ? t.net / t.ly_net - 1 : null }
-  }
-  if (!data.length) return <Empty />
-  return <DataTable rows={data} columns={cols} unit={unit} search={false} pageSize={20} exportName="rahkaran-brands"
-    defaultSort={{ key: 'net', dir: 'desc' }} totals={totals} onRowClick={(r) => r.key !== '__total' && onBrand(r.key)} />
+  return <TreeTable nodes={data.nodes} total={data.total} columns={columns} sortKey="net" colorGroups
+    firstLabel="برند / گروه کالا / کالا" levelNames={['برند', 'گروه کالا', 'کالا']} exportName="b2b-brands-goods" />
 }
+const withGrowth = (rows) => rows.map((r) => ({ ...r, growth: r.ly_net ? r.net / r.ly_net - 1 : null }))
 
 function ProvinceDetail({ name, period, brand, products, groups = [], unit, onCustomer, onClose }) {
   const { data, loading, error } = useRkFetch(`/api/rk_sales/province?${q({ name, period, brand, product: products, group: groups })}`)
@@ -403,9 +404,9 @@ export default function Rahkaran() {
           )}>
           <BubbleMap provinces={data.provinces} selected={province} onSelect={openProvince} unit={unit} brand={mapBrand} />
         </Card>
-        <Card title="فروش خالص به تفکیک برند" className="span2"
-          subtitle={`فروش ${periodText(data.period)}${products.length ? ' برای کالاهای انتخاب‌شده' : ''}${groups.length ? ` — گروه ${groups.join('، ')}` : ''} (${UNITS[unit].label})؛ خالص = مبلغ پس از کسور و اضافات، ناخالص = قبل از تخفیف. برای فیلتر برند روی سطر کلیک کنید`}>
-          <BrandTable rows={data.brands} unit={unit} brand={brand} theme={theme} onBrand={(b) => set({ brand: b === brand ? null : b })} />
+        <Card title="فروش برندها و کالاها: برند ← گروه کالا ← کالا" className="span2"
+          subtitle={`فروش ${periodText(data.period)}${products.length ? ' برای کالاهای انتخاب‌شده' : ''}${groups.length ? ` — گروه ${groups.join('، ')}` : ''}؛ مبلغ و تعداد هر کالا با جمع جزء برند و گروه کالا (گروه‌بندی داشبورد). خالص = مبلغ پس از کسور و اضافات، ناخالص = قبل از تخفیف؛ برگشتی از فروش کم نشده. برای باز کردن هر سطح روی آن کلیک کنید؛ خروجی اکسل هم سطح‌بندی شده است`}>
+          <GoodsTree period={period} brand={brand} products={products} groups={groups} />
         </Card>
         <Card title="سهم برندها از فروش خالص" subtitle={brand ? 'برای همه برندها، فیلتر برند را بردارید' : 'برای فیلتر برند روی آن کلیک کنید'}>
           <BrandDonut rows={data.brands} unit={unit} onClick={(r) => set({ brand: r.key === brand ? null : r.key })} />

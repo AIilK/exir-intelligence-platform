@@ -24,7 +24,7 @@ export default function Customers() {
   const netNeg = cust.filter((c) => c.net < 0).length
   const freq = data.frequency.map((f) => ({ key: f.k, label: f.k >= 5 ? '۵+ فاکتور' : `${faDigits(f.k)} فاکتور`, count: f.count }))
   const cols = [C.text('key', 'کد'), C.label('مشتری'), C.text('branch', 'شعبه'), C.text('city', 'شهر'), C.text('seller', 'فروشنده اصلی'),
-    C.net, C.share, C.invoices, C.avg_invoice, C.qty, C.sku, C.returns, C.req_net, C.req_conv,
+    C.net, C.share, C.invoices, C.avg_invoice, C.qty, C.sku, C.returns, C.req_net,
     { key: 'first_date', label: 'اولین خرید', type: 'date', hint: 'اولین فاکتور فروش مشتری در کل تاریخچه بارگذاری‌شده' },
     { key: 'last_date', label: 'آخرین خرید', type: 'date' }, { key: 'abc', label: 'ABC' }]
   return (
@@ -47,7 +47,7 @@ export default function Customers() {
       <div className="grid g2">
         {showReqOnly && (
           <Card title={`فقط درخواست، بدون فروش (${fmtInt(reqOnly)} مشتری)`} className="span2"
-            subtitle="مشتریانی که در محدوده فیلتر درخواست ثبت کرده‌اند ولی فروش خالص مثبت ندارند؛ به ترتیب مبلغ درخواست">
+            subtitle="مشتریانی که در محدوده فیلتر درخواست باز (فاکتورنشده) دارند ولی فروش خالص مثبت ندارند؛ به ترتیب مبلغ درخواست">
             <DataTable rows={reqOnlyRows} unit={unit} pageSize={20} exportName="customers-request-only"
               columns={[C.text('key', 'کد'), C.label('مشتری'), C.text('branch', 'شعبه'), C.text('city', 'شهر'), C.text('seller', 'فروشنده اصلی'),
                 C.req_net, C.net, { key: 'last_date', label: 'آخرین خرید', type: 'date' }]}

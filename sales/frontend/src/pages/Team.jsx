@@ -21,8 +21,8 @@ const noSaleCols = [
   { key: 'sales_net', label: 'فروش', type: 'money', hint: 'فروش خالص فاکتورهای فروش در بازه' },
   { key: 'returns_net', label: 'برگشتی', type: 'money' },
   { key: 'net', label: 'فروش خالص', type: 'money' },
-  { key: 'req_net', label: 'درخواست', type: 'money' },
-  { key: 'req_docs', label: 'تعداد درخواست', type: 'int' },
+  { key: 'req_net', label: 'درخواست باز', type: 'money' },
+  { key: 'req_docs', label: 'تعداد درخواست باز', type: 'int' },
   { key: 'invoices', label: 'فاکتور مؤثر', type: 'int' },
   { key: 'last_date', label: 'آخرین سند', type: 'date' },
 ]
@@ -61,8 +61,7 @@ function TeamFullReport() {
     { key: 'avg_net', label: 'فروش خالص', type: 'money', group: D },
     { key: 'avg_invoices', label: 'فاکتور', type: 'num1', group: D },
     ...(data.full_month ? [{ key: 'forecast', label: 'پیش‌بینی ماه', type: 'money', group: D, hint: 'میانگین روزانه × کل روز کاری ماه' }] : []),
-    { key: 'req_net', label: 'خالص درخواست', type: 'money', group: 'درخواست' },
-    { key: 'req_conv', label: 'تبدیل درخواست', type: 'pct', group: 'درخواست', hint: 'درخواست‌های تبدیل‌شده به فاکتور ÷ کل درخواست (مبلغ)' },
+    { key: 'req_net', label: 'خالص درخواست باز', type: 'money', group: 'درخواست', hint: 'درخواست‌هایی که هنوز فاکتور نشده‌اند' },
     { key: 'returns_net', label: 'برگشتی', type: 'money', group: 'کیفیت فروش' },
     { key: 'return_rate', label: 'نرخ برگشتی', type: 'pct', group: 'کیفیت فروش', hint: 'برگشتی ÷ فروش' },
     { key: 'disc_rate', label: 'نرخ تخفیف', type: 'pct', group: 'کیفیت فروش', hint: 'تخفیف ÷ جمع قبل از تخفیف فاکتورهای فروش' },
@@ -130,10 +129,10 @@ export default function Team() {
   const k = data.kpis
   const sellerCols = [
     { key: 'rank', label: 'رتبه', type: 'int' }, C.label('فروشنده'), C.text('seller_code', 'کد'), C.text('branch', 'شعبه'),
-    C.text('supervisor', 'سرپرست'), C.net, C.share, C.req_net, C.req_conv, C.invoices, C.lines_per_inv, C.customers,
+    C.text('supervisor', 'سرپرست'), C.net, C.share, C.req_net, C.invoices, C.lines_per_inv, C.customers,
     C.avg_invoice, C.sku, C.disc_rate, C.return_rate, C.last_date,
   ]
-  const supCols = [C.label('سرپرست'), C.net, C.share, C.req_net, C.req_conv, C.invoices, C.lines_per_inv, C.customers, C.avg_invoice, C.disc_rate, C.return_rate]
+  const supCols = [C.label('سرپرست'), C.net, C.share, C.req_net, C.invoices, C.lines_per_inv, C.customers, C.avg_invoice, C.disc_rate, C.return_rate]
   return (
     <>
       <PageHead title="تیم فروش" desc="رتبه‌بندی و عملکرد فروشندگان و سرپرستان" />

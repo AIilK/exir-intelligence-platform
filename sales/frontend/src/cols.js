@@ -17,8 +17,7 @@ export const C = {
   target_rial: { key: 'target_rial', label: 'تارگت شعبه', type: 'money', hint: 'تارگت ریالی ماه از فایل «تارگت ناخالص» صفحه تحقق و پورسانت' },
   ach: { key: 'ach', label: 'درصد تحقق', type: 'pct' },
   daily_avg: { key: 'daily_avg', label: 'میانگین روزانه', type: 'money' },
-  req_net: { key: 'req_net', label: 'درخواست', type: 'money', hint: 'فروش خالص بر مبنای درخواست‌ها (سفارش‌ها)' },
-  req_conv: { key: 'req_conv', label: 'تبدیل درخواست', type: 'pct', hint: 'سهم مبلغی درخواست‌های با وضعیت ۱ (فاکتورشده) از کل درخواست‌ها' },
+  req_net: { key: 'req_net', label: 'درخواست باز', type: 'money', hint: 'درخواست‌هایی که هنوز فاکتور نشده‌اند (وضعیت درخواست = ۰)؛ فاکتورشده و باطل حساب نمی‌شوند' },
   last_date: { key: 'last_date', label: 'آخرین فروش', type: 'date' },
   text: (key, label) => ({ key, label }),
 }

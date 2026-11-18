@@ -192,15 +192,11 @@ def kpis(tx: pd.DataFrame, rq: pd.DataFrame | None, ctx: dict, f: dict) -> dict:
     out["forecast"] = base / days * ctx["wd_total"] if full_month and days else None
     if rq is not None:
         r_net = rq["net"].sum()
-        done = rq[rq["status"] == 1]
         out.update({
             "req_net": r_net,
             "req_gross": rq["gross"].sum(),
             "req_qty": rq["qty"].sum(),
             "req_docs": int(rq["inv_id"].nunique()),
-            "req_docs_done": int(done["inv_id"].nunique()),
-            "req_net_done": done["net"].sum(),
-            "req_conv": _div(done["net"].sum(), r_net),
             "req_daily_avg": _div(_basis(rq, ctx, cut)["net"].sum(), days),
             "req_forecast": _basis(rq, ctx, cut)["net"].sum() / days * ctx["wd_total"] if full_month and days else None,
             "sales_to_req": _div(net, r_net),
@@ -230,12 +226,10 @@ def group_metrics(tx: pd.DataFrame, rq: pd.DataFrame | None, dim: str, ctx: dict
                   "invoices": 0, "customers": 0, "lines": 0, "sku": 0})
     if rq is not None and len(rq):
         r = rq.groupby(key).agg(req_net=("net", "sum"), req_docs=("inv_id", "nunique"))
-        r["req_net_done"] = rq[rq["status"] == 1].groupby(key)["net"].sum()
         g = g.join(r, how="outer")
         g = g.fillna({c: 0 for c in ["net", "gross", "qty", "disc", "payable", "sales_gross", "sales_disc", "sales_mgmt_disc",
                                      "sales_net", "returns_net", "invoices", "customers", "lines", "sku",
-                                     "req_net", "req_docs", "req_net_done"]})
-        g["req_conv"] = np.where(g["req_net"] != 0, g["req_net_done"] / g["req_net"].replace(0, np.nan), np.nan)
+                                     "req_net", "req_docs"]})
         rb = _basis(rq, ctx, _cut(f, full_month)).groupby(key)["net"].sum().reindex(g.index, fill_value=0)
         g["req_forecast"] = rb / days * ctx["wd_total"] if full_month else np.nan
     g["disc_rate"] = g["sales_disc"] / g["sales_gross"].replace(0, np.nan)
@@ -462,8 +456,6 @@ def team_report(tx, rq, ctx, f, cats) -> dict:
         if rq is not None and len(rq):
             r, rk = _grp(rq, keycols)
             g = g.join(r.groupby(rk, observed=True)["net"].sum().rename("req_net"), how="left")
-            done = r[r["status"] == 1].groupby(rk, observed=True)["net"].sum().reindex(g.index)
-            g["req_conv"] = done / g["req_net"].replace(0, np.nan)
         g = g.fillna({c: 0 for c in ("sales_net", "returns_net", "sku", "req_net")})
         b = _period(bt, keycols).reindex(g.index).fillna(0) if bt is not tx else g
         g["avg_net"] = b["net"] / days

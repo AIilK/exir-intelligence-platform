@@ -79,6 +79,34 @@ def product_brands() -> pd.Series:
     return pd.Series(b.values, index=p["code"]).groupby(level=0).first()
 
 
+def brands_for(codes: pd.Series, names: pd.Series) -> pd.Series:
+    """برند کالای هر سطر. کد تازه‌ای که در products.csv نیست: اول نام انگلیسی یا فارسی برند در نام کالا (مثل «پودر دکلره ... Jevo»)،
+    بعد برند بیشتر کالاهای هم‌خانواده‌اش (هفت رقم اول کد، بعد شش رقم با همان شرط گروه کالا)؛ وگرنه «سایر»."""
+    known = product_brands()
+    out = pd.Series(codes.map(known).values, index=codes.index)
+    miss = out.isna()
+    if miss.any():
+        low = names[miss].fillna("").str.lower().str.replace(" ", "", regex=False)
+        low = low.reindex(out.index, fill_value="")
+        for key, fa in BRANDS.items():
+            if key == "unbranded":
+                continue
+            # نام انگلیسی (Jevo) یا فارسی (اورادنت) برند در نام کالا
+            hit = out.isna() & miss & (low.str.contains(key, regex=False) | low.str.contains(fa.replace(" ", ""), regex=False))
+            out[hit] = fa
+    for n in RS.PREFIXES:
+        miss = out.isna()
+        if not miss.any():
+            break
+        grp = known.groupby(known.index.str[:n])
+        fam = grp.agg(lambda x: x.mode().iloc[0])
+        if n < RS.PREFIXES[0]:
+            top = grp.agg(lambda x: x.value_counts().iloc[0]) / grp.size()
+            fam = fam[(grp.size() >= RS.FAMILY_MIN) & (top >= RS.FAMILY_SHARE)]
+        out[miss] = codes[miss].str[:n].map(fam).values
+    return out.fillna(RS.OTHER)
+
+
 def new_accounts(found: pd.DataFrame, cust: pd.DataFrame) -> pd.DataFrame:
     """کدهای صادراتی جدید (خارج از شیت MAP): حساب نماینده‌ای که نام کشور خارجی دارد («فراس (مولهنس) - عراق»)"""
     found = found.assign(code=found["code"].map(loader._clean_code), name=found["name"].map(RS.norm))
@@ -126,10 +154,10 @@ def load(env_file, cfg: dict) -> dict:
     df["req"] = df["gross"].where(q, 0.0)
     df["req_pcs"] = df["qty"].where(q, 0.0)
     df.loc[q, ["qty", *MONEY]] = 0.0
-    cat = RS.products().reindex(df["product_code"])
-    df["cat1"] = cat["cat1"].fillna(RS.OTHER).values
-    df["cat2"] = cat["cat2"].fillna(RS.OTHER).values
-    df["brand"] = df["product_code"].map(product_brands()).fillna(RS.OTHER)
+    cat = RS.product_categories(df["product_code"])
+    df["cat1"] = cat["cat1"].values
+    df["cat2"] = cat["cat2"].values
+    df["brand"] = brands_for(df["product_code"], df["product"])
     info = cust.set_index("code").reindex(df["code"])
     df["short"] = info["short"].values
     df["country"] = info["country"].values
@@ -270,6 +298,18 @@ def report(snap: dict, f: dict) -> dict:
                         "customer": [{"code": r.code, "label": r.label, "country": r.country}
                                      for r in snap["customers"].sort_values(["label", "code"]).itertuples()],
                         "product": _product_options(df, y)}}
+
+
+def goods_tree(snap: dict, f: dict) -> dict:
+    """برند ← گروه کالا ← کالا برای سال انتخابی با فیلترهای اسلایسر (مبالغ دلار)؛ مقایسه با همان بازه سال قبل
+    (تا همین روز از سال، مثل کارت‌های بالای صفحه)."""
+    df = snap["lines"]
+    y, ly, today = _years(snap, f)
+    d = _filter(df, f)
+    d = d[d["kind"] == "S"]
+    cur = d[d["year"] == y]
+    same = d[(d["year"] == ly) & (d["date"].str[5:] <= today[5:])]
+    return {"year": y, "ly": ly, **RS.build_tree(cur, same)}
 
 
 def _product_options(df: pd.DataFrame, y: str) -> list[dict]:
