@@ -187,16 +187,31 @@ def _history_start(cfg: dict, months: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------- اتصال
-def read_env(path: Path) -> dict:
-    """فایل .env ساده (KEY=VALUE)؛ متغیرهای محیطی سیستم اولویت دارند."""
+def _read_env_file(path: Path) -> dict:
     env = {}
     if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 env[k.strip()] = v.strip().strip('"').strip("'")
-    env.update({k: v for k, v in os.environ.items() if k.startswith(ENV_PREFIX)})
+    return env
+
+
+def read_env(path: Path) -> dict:
+    """Use the finance SQL settings as defaults in the unified installation."""
+    env = {}
+    if path == ROOT / ".env":
+        backend = ROOT.parent / "backend"
+        shared = {**_read_env_file(backend / "env"), **_read_env_file(backend / ".env")}
+        shared.update({k: v for k, v in os.environ.items() if k.startswith("SQLSERVER_")})
+        for name, value in shared.items():
+            if name.startswith(ENV_PREFIX):
+                env[name] = value
+            elif name.startswith("SQLSERVER_"):
+                env["RAHKARAN_" + name] = value
+    env.update(_read_env_file(path))
+    env.update({k: v for k, v in os.environ.items() if k.startswith((ENV_PREFIX, "RAHKARAN_SQLSERVER_"))})
     return env
 
 

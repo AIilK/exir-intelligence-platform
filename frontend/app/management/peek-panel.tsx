@@ -1,6 +1,7 @@
 "use client";
 // پنل کوچک «جزئیات کم» کارت‌های خلاصه مدیریتی: عدد اصلی، چند واقعیت کوتاه، یک فهرست کوتاه و دکمه رفتن به صفحه کامل.
 import { createContext, useContext, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import "./peek-panel.css";
 
@@ -12,6 +13,7 @@ export type Peek = {
   facts?: { label: string; value: string }[];
   list?: { title: string; rows: { label: string; value: string; sub?: string; share?: number }[] };
   note?: string;
+  content?: ReactNode;
   page: string;
   onGo?: () => void;
 };
@@ -54,6 +56,7 @@ export function PeekPanel({ peek, onClose }: { peek: Peek | null; onClose: () =>
           </div>)}
         </div>}
         {p.note && <p className="pk-note">{p.note}</p>}
+        {p.content}
         {p.onGo && <button className="pk-go" onClick={() => { onClose(); p.onGo?.(); }}>مشاهده کامل در صفحه «{p.page}» ←</button>}
       </>}
     </div>

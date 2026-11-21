@@ -291,6 +291,8 @@ export const receivedChequeHoldingBucket = (c: TreasuryCheque): ReceivedChequeHo
   if (karamadBlankStatus || c.state_code === 1 || /registered|نزد\s*شرکت|نزد\s*صندوق/.test(status)) return "cashbox";
   return "other";
 };
+export const isReturnedReceivedCheque = (c: TreasuryCheque) => receivedChequeHoldingBucket(c).startsWith("returned");
+
 export const receivedChequeHoldingLabel = (c: TreasuryCheque) => {
   const bucket = receivedChequeHoldingBucket(c);
   switch (bucket) {

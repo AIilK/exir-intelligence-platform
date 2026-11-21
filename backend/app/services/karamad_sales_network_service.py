@@ -123,6 +123,14 @@ def _debt(dl_refs: list[int], positions: dict[int, dict[str, Any]]) -> dict[str,
     }
 
 
+def _returned_ledger_debt(dl_refs: list[int], positions: dict[int, dict[str, Any]], returned: dict[int, float]) -> float:
+    """Count only the portion of each customer's returned cheques still in ledger debt."""
+    return _num(sum(
+        min(max(float(positions.get(dl, {}).get("balance_rial") or 0), 0), returned[dl])
+        for dl in set(dl_refs).intersection(returned)
+    ))
+
+
 # Sales are reported like the finance team's Karamad sales report: returns (tblFactorB) are
 # subtracted in the year they were booked.
 #   ناخالص (gross) = جمع قبل تخفیف (FactorPrice) of sales − returns
@@ -340,6 +348,14 @@ class KaramadSalesNetworkService:
                 "SELECT [BranchRef], [DLRef] FROM dbo.[tblCustomer] WHERE [DLRef] IS NOT NULL AND [BranchRef] IN :branches"
             ), params).mappings():
                 customers.setdefault(int(r["BranchRef"]), []).append(int(r["DLRef"]))
+            returned = {int(r["DLRef"]): _num(r["amount"]) for r in connection.execute(expand(f"""
+                SELECT d.[DLRef], SUM(d.[Price]) AS amount
+                FROM dbo.[tblChequeD] d
+                WHERE d.[StatusRef] IN ({",".join(str(s) for s in OPEN_RETURNED_CHEQUE_STATUSES)})
+                  AND d.[DueDate] >= :returned_from AND d.[Price] > 0 AND {not_guarantee_cheque("d")}
+                  AND d.[DLRef] IN (SELECT [DLRef] FROM dbo.[tblCustomer] WHERE [BranchRef] IN :branches)
+                GROUP BY d.[DLRef]
+            """), {**params, "returned_from": returned_from_date()}).mappings()}
             cheques = {int(r["BranchRef"]): r for r in connection.execute(text(
                 f"""
                 SELECT [BranchRef], COUNT(*) AS n, SUM([Price]) AS amount
@@ -364,6 +380,7 @@ class KaramadSalesNetworkService:
                 "active_customer_current_year_count": int((active.get(bid) or {}).get("active_cur") or 0),
                 **_sales_fields(cur, prev),
                 "debt": _debt(customers.get(bid, []), positions),
+                "returned_debt_rial": _returned_ledger_debt(customers.get(bid, []), positions, returned),
                 "open_cheque_count": int((cheques.get(bid) or {}).get("n") or 0),
                 "open_cheque_amount_rial": _num((cheques.get(bid) or {}).get("amount")),
             })

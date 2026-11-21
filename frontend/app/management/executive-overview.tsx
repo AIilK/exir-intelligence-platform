@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import { ModuleAlarms } from "../alarms/alarms";
+import { isReturnedReceivedCheque } from "../dashboard/shared";
+import type { TreasuryCheque } from "../dashboard/types";
 import ChequeStatusDrawer, { type ChequeStatusKind } from "./cheque-status-drawer";
 import { PeekContext, PeekPanel, usePeek, type Peek } from "./peek-panel";
 import { ChartCard, DivergingRows, FlowCompare, MonthBars, NetWeeks, PALETTE, StackBar } from "./mini-charts";
@@ -36,12 +38,13 @@ export type ChequeOverview = {
   /** false تا وقتی سبد رسمی چک (همان عدد صفحه چک‌ها) نرسیده؛ تا آن موقع «…» نشان داده می‌شود نه یک عدد موقت. */
   ready: boolean;
 };
-type View = "receivedCheques" | "issuedCheques" | "payables" | "liquidity" | "distribution";
+type View = "receivedCheques" | "issuedCheques" | "payables" | "liquidity" | "distribution" | "customers";
 type Tone = "neutral" | "good" | "watch" | "follow";
 
 type PeekSpec = Omit<Peek, "onGo" | "title" | "tone" | "unit"> & { title?: string };
 const PAGE_NAMES: Record<View, string> = {
   receivedCheques: "چک‌های دریافتی", issuedCheques: "چک‌های پرداختی", payables: "پرداخت تجاری", liquidity: "نقدینگی", distribution: "توزیع بار",
+  customers: "پرونده مشتری",
 };
 /** ردیف‌های فهرست کوتاه پنل با نوار سهم نسبت به بزرگ‌ترین مورد. */
 export function peekRows<T>(items: T[], label: (x: T) => string, amount: (x: T) => number, sub?: (x: T) => string, n = 5) {
@@ -80,7 +83,9 @@ export function jumpTo(id: string) {
 // الارم‌های کنار هر بلوک: رفتن به صفحه هر الارم
 let goToView: ((view: string) => void) | undefined;
 
-export default function ExecutiveOverview({ cheques, open, go }: { cheques: ChequeOverview; open: (view: View) => void; go?: (view: string) => void }) {
+export default function ExecutiveOverview({ cheques, receivedReport, open, go }: {
+  cheques: ChequeOverview; receivedReport?: TreasuryCheque[]; open: (view: View) => void; go?: (view: string) => void;
+}) {
   goToView = go;
   const [peek, setPeek] = useState<Peek | null>(null);
   const closePeek = useCallback(() => setPeek(null), []);
@@ -90,12 +95,13 @@ export default function ExecutiveOverview({ cheques, open, go }: { cheques: Cheq
       <p>برای جزئیات، روی هر کارت بزنید.</p>
       {/* نه <nav>: استایل سراسری منوی کناری روی nav اعمال می‌شود. */}
       <div className="xo-jump" role="navigation" aria-label="پرش به بخش">
-        {([["xo-cheques", "چک‌ها"], ["xo-payables", "پرداخت تجاری"], ["xo-liquidity", "نقدینگی"], ["xo-distribution", "توزیع بار"]] as [string, string][]).map(([id, label]) =>
+        {([["xo-cheques", "چک‌ها"], ["xo-receivables", "مطالبات"], ["xo-payables", "پرداخت تجاری"], ["xo-liquidity", "نقدینگی"], ["xo-distribution", "توزیع بار"]] as [string, string][]).map(([id, label]) =>
           // محتوای اپ داخل ظرف اسکرول خودش است؛ لینک «#» صفحه را جابه‌جا نمی‌کند، پس مستقیم اسکرول می‌کنیم.
           <a key={id} href={`#${id}`} onClick={(e) => { e.preventDefault(); jumpTo(id); }}>{label}</a>)}
       </div>
     </header>
     <ChequeBlock data={cheques} open={open} />
+    <ReceivablesBlock open={open} receivedReport={receivedReport} />
     <PayablesBlock open={open} />
     <LiquidityBlock open={open} />
     <DistributionBlock open={open} />
@@ -273,6 +279,196 @@ function barPath(x: number, top: number, w: number, h: number) {
   return `M${x},${top + h} V${top + r} Q${x},${top} ${x + r},${top} H${x + w - r} Q${x + w},${top} ${x + w},${top + r} V${top + h} Z`;
 }
 
+
+// ------------------------------------------------------------------ receivables
+type BalanceParts = { balance_rial: number; returned_rial: number };
+type ReceivablesSummary = {
+  errors: string[];
+  rahkaran?: BalanceParts & {
+    debtor_count: number;
+    top: (BalanceParts & { code: string; name: string })[];
+    customers: (BalanceParts & { code: string; name: string })[];
+  };
+  karamad?: BalanceParts & {
+    active_customer_count: number;
+    branches: (BalanceParts & { branch_id: number; branch_name: string })[];
+  };
+};
+type BalanceMetric = keyof BalanceParts;
+const balanceMetrics: { key: BalanceMetric; label: string }[] = [
+  { key: "balance_rial", label: "مانده حساب" },
+  { key: "returned_rial", label: "چک‌های برگشتی" },
+];
+const sumBalance = (parts: BalanceParts) => parts.balance_rial + parts.returned_rial;
+
+function ReceivablesBreakdown({ data }: { data: ReceivablesSummary }) {
+  const [detail, setDetail] = useState<{ system: "rahkaran" | "karamad"; metric: BalanceMetric } | null>(null);
+  const systems = [{ key: "rahkaran", label: "راهکاران" }, { key: "karamad", label: "کارآمد" }] as const;
+  const rows = detail?.system === "rahkaran"
+    ? (data.rahkaran?.customers || []).map((r) => ({ ...r, name: `${r.name} · ${faDigits(r.code)}`, id: r.code }))
+    : (data.karamad?.branches || []).map((b) => ({ ...b, name: b.branch_name, id: b.branch_id }));
+  const metric = detail?.metric;
+  const sorted = metric ? rows.filter((r) => r[metric] > 0).sort((a, b) => b[metric] - a[metric]) : [];
+  return <>
+    <div className="pk-facts receivables-systems">
+      {systems.map(({ key, label }) => {
+        const source = data[key];
+        return <div key={key}>
+          <b>{label}</b>
+          {source ? balanceMetrics.map(({ key: field, label: caption }) => {
+            const active = detail?.system === key && detail.metric === field;
+            return <button type="button" className="pk-go" key={field} aria-expanded={active}
+              onClick={() => setDetail(active ? null : { system: key, metric: field })}>
+              {caption} · {shortToman(source[field])} تومان ←
+            </button>;
+          }) : <small>داده در دسترس نیست</small>}
+        </div>;
+      })}
+    </div>
+    {detail && <section className="pk-list">
+      <h4>{balanceMetrics.find(({ key }) => key === detail.metric)?.label} به تفکیک {detail.system === "rahkaran" ? "نماینده" : "هیبرید"}</h4>
+      <div className="csd-table-wrap">
+        <table className="csd-table">
+          <thead><tr><th scope="col">{detail.system === "rahkaran" ? "نماینده" : "هیبرید"}</th>
+            {balanceMetrics.map(({ key, label }) => <th scope="col" key={key}>{label} (تومان)</th>)}
+          </tr></thead>
+          <tbody>{sorted.map((row) => <tr key={row.id}><td>{row.name}</td>
+            {balanceMetrics.map(({ key }) => <td className="num" key={key}>{fullToman(row[key])}</td>)}
+          </tr>)}</tbody>
+        </table>
+        {!sorted.length && <p className="csd-empty">مبلغی برای این مورد ثبت نشده است.</p>}
+      </div>
+    </section>}
+  </>;
+}
+
+function NominalReturnedCard({ rows, open }: { rows?: TreasuryCheque[]; open: () => void }) {
+  const totals = useMemo(() => {
+    if (!rows) return null;
+    const rahkaran = { amount: 0, count: 0 }, karamad = { amount: 0, count: 0 };
+    const branches = new Map<string, { label: string; amount: number; count: number }>();
+    for (const row of rows) {
+      const system = row.source_system;
+      if (!system || !isReturnedReceivedCheque(row)) continue;
+      const source = system === "rahkaran" ? rahkaran : karamad;
+      const amount = row.amount || 0;
+      source.amount += amount;
+      source.count += 1;
+      if (system === "karamad") {
+        const name = row.branch_name || row.branch || "شعبه نامشخص";
+        const branch = branches.get(name) || { label: name, amount: 0, count: 0 };
+        branch.amount += amount;
+        branch.count += 1;
+        branches.set(name, branch);
+      }
+    }
+    return { rahkaran, karamad, branches: [...branches.values()].sort((a, b) => b.amount - a.amount) };
+  }, [rows]);
+  const label = "مبلغ اسمی چک‌های برگشتی";
+  if (!totals) return <Stat label={label} value="—" unit="" tone="follow" hint="در انتظار گزارش چک‌های دریافتی" />;
+  const { rahkaran, karamad, branches } = totals;
+  const sourceHint = (source: { amount: number; count: number }) => `${shortToman(source.amount)} تومان (${fa(source.count)} فقره)`;
+  return <Stat label={label} value={shortToman(rahkaran.amount + karamad.amount)} tone="follow"
+    hint={`راهکاران ${sourceHint(rahkaran)} · کارآمد ${sourceHint(karamad)}`} go={open}
+    peek={{
+      value: fullToman(rahkaran.amount + karamad.amount), page: PAGE_NAMES.receivedCheques,
+      facts: [
+        { label: "راهکاران", value: `${fullToman(rahkaran.amount)} تومان` },
+        { label: "کارآمد", value: `${fullToman(karamad.amount)} تومان` },
+      ],
+      list: { title: "مبلغ اسمی برگشتی کارآمد به تفکیک هیبرید", rows: branches.map((branch) => ({
+        label: branch.label, value: `${fullToman(branch.amount)} تومان`, sub: `${fa(branch.count)} فقره`,
+      })) },
+      note: "همان مبلغ اسمی چک‌ها در گزارش کلی چک‌های دریافتی.",
+    }} />;
+}
+
+function ReceivablesBlock({ open, receivedReport }: { open: (view: View) => void; receivedReport?: TreasuryCheque[] }) {
+  const [data, setData] = useState<ReceivablesSummary | null>(null);
+  const [error, setError] = useState("");
+  const showPeek = usePeek();
+  useEffect(() => {
+    getJson(`/api/v1/finance/receivables-summary`).then(setData).catch((e) => setError(e instanceof Error ? e.message : "خطا"));
+  }, []);
+  const rr = data?.rahkaran, km = data?.karamad;
+  const balance = rr?.balance_rial ?? 0, returned = rr?.returned_rial ?? 0;
+  const kmBalance = km?.balance_rial ?? 0, kmReturned = km?.returned_rial ?? 0;
+  const total = balance + returned + kmBalance + kmReturned;
+  const top = rr?.top || [];
+  const branches = (km?.branches || []).filter((b) => b.balance_rial > 0).sort((a, b) => b.balance_rial - a.balance_rial);
+  const maxBranch = Math.max(1, ...branches.slice(0, 6).map((b) => b.balance_rial));
+  const partial = (data?.errors || []).length > 0;
+  const balanceCard = (label: string, amount: (parts: BalanceParts) => number, tone: Tone) => {
+    if (!data) return null;
+    const total = rr && km ? shortToman(amount(rr) + amount(km)) : "—";
+    const sourceValue = (source?: BalanceParts) => source ? `${shortToman(amount(source))} تومان` : "در دسترس نیست";
+    return <Stat label={label} value={total} unit={rr && km ? "تومان" : ""}
+      hint={`راهکاران ${sourceValue(rr)} · کارآمد ${sourceValue(km)}`}
+      tone={tone} goLabel="جزئیات" go={() => showPeek({
+        title: label, value: total, unit: rr && km ? "تومان" : undefined, tone, page: PAGE_NAMES.customers,
+        content: <ReceivablesBreakdown key={label} data={data} />,
+      })} />;
+  };
+  const recvPeek = (value: string, extra: Partial<PeekSpec>): PeekSpec => ({ value, page: PAGE_NAMES.customers, ...extra });
+  return <article className="xo-block" id="xo-receivables">
+    <div className="xo-block-title"><h3>مطالبات</h3><small>طلب از مشتری‌ها؛ همان عدد نمای مدیر</small></div>
+    <div className="xo-grid">
+      <div className="xo-main">
+        <div className="xo-stats">
+          <NominalReturnedCard rows={receivedReport} open={() => open("receivedCheques")} />
+          {data ? balanceCard("سهم چک برگشتی در مانده مطالبات", (parts) => parts.returned_rial, "follow") :
+            <Stat label="سهم چک برگشتی در مانده مطالبات" value="—" unit="" tone="follow" />}
+        </div>
+        {error ? <div className="profile-warning">{error}</div> : !data ? <div className="xo-loading">در حال دریافت…</div> : <>
+          {partial && <div className="profile-warning">{data.errors.join(" · ")}</div>}
+          <div className="xo-stats">
+            {balanceCard("مانده حساب‌ها", (parts) => parts.balance_rial, "neutral")}
+            {balanceCard("مانده مطالبات", sumBalance, "watch")}
+          </div>
+          <div className="xo-stats">
+            <Stat tone="watch" label="مطالبات باز" value={shortToman(total)}
+              hint={`مانده حساب ${shortToman(balance + kmBalance)} · چک‌های برگشتی ${shortToman(returned + kmReturned)}`}
+              go={() => open("customers")}
+              peek={recvPeek(shortToman(total), {
+                facts: [{ label: "مانده حساب راهکاران", value: shortToman(balance) }, { label: "برگشتی راهکاران", value: shortToman(returned) },
+                  { label: "مانده حساب کارآمد", value: shortToman(kmBalance) }, { label: "برگشتی کارآمد", value: shortToman(kmReturned) }],
+                list: { title: "بزرگ‌ترین بدهکاران راهکاران", rows: peekRows(top, (x) => x.name, sumBalance,
+                  (x) => `کد ${faDigits(x.code)}${x.returned_rial ? ` · برگشتی ${shortToman(x.returned_rial)}` : ""}`) },
+                note: "طلبی که نه پولش رسیده نه چکش در دست ماست، به‌اضافه چک‌های برگشتی تسویه‌نشده. چک‌های سررسیدنشده در دست جزو این عدد نیستند." })} />
+            <Stat label="مانده مشتریان شعب" value={km ? shortToman(kmBalance) : "—"} unit={km ? "تومان" : ""}
+              hint={km ? `مانده حساب کارآمد پس از کسر برگشتی · ${fa(branches.length)} شعبه` : "داده کارآمد در دسترس نیست"}
+              go={() => open("customers")}
+              peek={km ? recvPeek(shortToman(kmBalance), {
+                facts: [{ label: "مشتری فعال", value: fa(km.active_customer_count) }, { label: "شعبه بدهکار", value: fa(branches.length) }],
+                list: { title: "بیشترین مانده حساب شعب", rows: peekRows(branches, (b) => b.branch_name, (b) => b.balance_rial) },
+              }) : undefined} />
+          </div>
+          <div className="mc-grid">
+            <ChartCard title="ترکیب مطالبات باز" note="سهم مانده حساب هر سیستم و سهم چک‌های برگشتی از مطالبات."
+              legend={[{ label: "مانده حساب راهکاران", color: PALETTE.teal }, { label: "چک‌های برگشتی", color: PALETTE.amber }, { label: "مانده حساب کارآمد", color: PALETTE.violet }]}>
+              <StackBar segments={[
+                { label: "مانده حساب راهکاران", value: balance, color: PALETTE.teal, hint: `${fa(rr?.debtor_count)} مشتری بدهکار` },
+                { label: "چک‌های برگشتی", value: returned + kmReturned, color: PALETTE.amber },
+                { label: "مانده حساب کارآمد", value: kmBalance, color: PALETTE.violet },
+              ]} />
+            </ChartCard>
+            <ChartCard title="بیشترین مانده مشتریان شعب" note="مانده حساب مشتریان هر شعبه کارآمد پس از کسر چک برگشتی.">
+              <div className="xo-hbars">
+                {branches.slice(0, 6).map((b) => <button key={b.branch_id} className="xo-hbar" onClick={() => open("customers")} title={`${b.branch_name}: ${fullToman(b.balance_rial)} تومان`}>
+                  <span className="xo-hbar-label">{b.branch_name}<small>{fa(b.debtor_count)} مشتری</small></span>
+                  <span className="xo-hbar-track"><i style={{ width: `${(100 * b.balance_rial) / maxBranch}%`, background: PALETTE.violet }} /></span>
+                  <span className="xo-hbar-value">{shortToman(b.balance_rial)}</span>
+                </button>)}
+                {!branches.length && <p className="xo-loading">مانده بازی ثبت نشده است.</p>}
+              </div>
+            </ChartCard>
+          </div>
+        </>}
+      </div>
+      <div className="xo-side"><ModuleAlarms agents={["customer_behavior"]} title="مطالبات" onGo={goToView} /></div>
+    </div>
+  </article>;
+}
 
 // ------------------------------------------------------------------ payables
 function PayablesBlock({ open }: { open: (view: View) => void }) {

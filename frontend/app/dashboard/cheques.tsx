@@ -5,7 +5,7 @@ import { useChatLink } from "../chatbot/chat-link";
 import { Heading, K } from "./widgets";
 import { chequeTermDays } from "./collections";
 import { VerticalBars } from "./management";
-import { IssuedChequeTotals, JALALI_MONTHS, RahkaranChequeTotals, chequeDueJalali, chequeInsightRows, cname, daysToDue, fa, fullToman, isLongTermLargeCheque, longTermChequeInsight, money, receivedChequeHoldingBucket, receivedChequeHoldingLabel, remainingLabel, request } from "./shared";
+import { IssuedChequeTotals, JALALI_MONTHS, RahkaranChequeTotals, chequeDueJalali, chequeInsightRows, cname, daysToDue, fa, fullToman, isLongTermLargeCheque, isReturnedReceivedCheque, longTermChequeInsight, money, receivedChequeHoldingBucket, receivedChequeHoldingLabel, remainingLabel, request } from "./shared";
 import type { ReceivedChequeHolding } from "./shared";
 import type { AgentResult, CustomerAudit, TreasuryCheque, View } from "./types";
 
@@ -124,12 +124,11 @@ export function ReceivedChequeOverview({ rows }: { rows: TreasuryCheque[] }) {
   const sum = (items: TreasuryCheque[]) => items.reduce((s, x) => s + (x.amount || 0), 0);
   const bySystem = (items: TreasuryCheque[]) => systems.map(([k]) => items.filter((x) => x.source_system === k));
   const total = sum(portfolio);
-  const isReturned = (x: TreasuryCheque) => receivedChequeHoldingBucket(x).startsWith("returned");
 
   const overdue = portfolio.filter((x) => (daysToDue(x) ?? 0) < 0);
   const today = portfolio.filter((x) => daysToDue(x) === 0);
   const future = portfolio.filter((x) => (daysToDue(x) ?? -1) > 0);
-  const returned = portfolio.filter(isReturned);
+  const returned = portfolio.filter(isReturnedReceivedCheque);
   const kpis = [
     { label: "کل سبد چک‌های دریافتی", icon: "▣", tone: "total", items: portfolio },
     { label: "سررسید گذشته", icon: "!", tone: "danger", items: overdue },

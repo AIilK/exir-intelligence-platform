@@ -10,6 +10,7 @@ export function Management({
   cheques,
   alerts,
   received,
+  receivedReport,
   issued,
   openChequePage,
   openAgent,
@@ -21,6 +22,7 @@ export function Management({
   cheques: Cheque[];
   alerts: Alert[];
   received: TreasuryCheque[];
+  receivedReport?: TreasuryCheque[];
   issued: TreasuryCheque[];
   openChequePage: (kind: "received" | "issued") => void;
   openAgent: (key: string) => void;
@@ -85,6 +87,7 @@ export function Management({
           buckets: chequeBuckets,
           ready: Object.keys(portfolio).length > 0,
         }}
+        receivedReport={receivedReport}
         open={(v) => v === "receivedCheques" || v === "issuedCheques" ? openChequePage(v === "receivedCheques" ? "received" : "issued") : openView?.(v)}
         go={go}
       />

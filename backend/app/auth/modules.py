@@ -193,6 +193,7 @@ API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/finance/excel-reports", ("excelReports",)),
     ("/api/v1/finance/process-health", ("management",)),
     ("/api/v1/finance/manager-combined", ("management", "sales")),
+    ("/api/v1/finance/receivables-summary", ("management", "customers", "sales")),
     ("/api/v1/finance/purchase-", ("purchaseDocs",)),
     ("/api/v1/finance/inventory-pricing", ("inventoryPricing",)),
     ("/api/v1/finance/distribution", ("distribution", "management", "sales")),

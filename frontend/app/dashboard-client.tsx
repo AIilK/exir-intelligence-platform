@@ -64,7 +64,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [selected, setSelected] = useState<Customer | null>(null),
-    [received, setReceived] = useState<TreasuryCheque[]>([]),
+    [received, setReceived] = useState<TreasuryCheque[]>(),
     [issued, setIssued] = useState<TreasuryCheque[]>([]),
     [treasuryError, setTreasuryError] = useState("");
   // رفتن به صفحه فقط اگر در ماژول‌های کاربر باشد (لینک چت‌بات، الارم و کارت‌ها هم از همین می‌گذرند).
@@ -270,7 +270,8 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
             customers={customers}
             cheques={cheques}
             alerts={alerts}
-            received={received.length ? received : cheques}
+            received={received?.length ? received : cheques}
+            receivedReport={received}
             issued={issued}
             openChequePage={(kind) => setView(kind === "received" ? "receivedCheques" : "issuedCheques")}
             openAgent={() => setView("alerts")}
@@ -288,14 +289,14 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
         ))}
         {view === "cheques" && (
           <ChequeHub
-            received={received.length ? received : cheques}
+            received={received?.length ? received : cheques}
             issued={issued}
             error={treasuryError}
             open={setView}
           />
         )}
         {view === "receivedCheques" && (
-          <ChequeSourcePage kind="received" rows={received.length ? received : cheques}
+          <ChequeSourcePage kind="received" rows={received?.length ? received : cheques}
             error={treasuryError} back={() => setView("cheques")} onUpdated={refreshAfterKaramadUpdate} />
         )}
         {view === "issuedCheques" && (
@@ -321,7 +322,7 @@ export default function Page(props: { view?: View; onViewChange?: (v: View) => v
           <Collections
             cases={cases}
             refresh={load}
-            received={received.length ? received : cheques}
+            received={received?.length ? received : cheques}
           />
         )}
         {view === "representatives" && (

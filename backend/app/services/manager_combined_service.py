@@ -246,7 +246,7 @@ def rahkaran_collections(year: int, month: int) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- مطالبات باز: همان عدد «پرونده مشتری»
-def receivables_report() -> dict[str, Any]:
+def receivables_report(*, include_details: bool = False) -> dict[str, Any]:
     """مانده بدهی مشتریان راهکاران و حساب چک برگشتی، با همان قاعده گزارش واحد مالی که صفحه «پرونده مشتری» نشان می‌دهد
     (report_open_account_receivable_rial و report_returned_account_rial)، به‌اضافه بزرگ‌ترین بدهکاران."""
     def load():
@@ -264,13 +264,15 @@ def receivables_report() -> dict[str, Any]:
                     "open_cheques_rial": float(cp.get("open_cheque_amount_rial") or 0),
                     "overdue_rial": float(c.get("overdue_open_amount") or 0),
                     "last_invoice": c.get("last_invoice_date_jalali")}
-        debtors = sorted((row(c) for c in rows), key=lambda x: -(x["balance_rial"] + x["returned_rial"]))
+        debtors = [row(c) for c in rows]
+        debtors = sorted((d for d in debtors if d["balance_rial"] + d["returned_rial"] > 0),
+                         key=lambda x: -(x["balance_rial"] + x["returned_rial"]))
         return {"balance_rial": float(s.get("report_open_account_receivable_rial") or 0),
                 "returned_rial": float(s.get("report_returned_account_rial") or 0),
                 "customer_count": int(s.get("report_customer_count") or 0),
-                "debtor_count": sum(1 for d in debtors if d["balance_rial"] + d["returned_rial"] > 0),
-                "top": [d for d in debtors if d["balance_rial"] + d["returned_rial"] > 0][:15]}
-    return _cached("receivables_report", load)
+                "debtor_count": len(debtors), "top": debtors[:15], "customers": debtors}
+    report = _cached("receivables_report", load)
+    return report if include_details else {key: value for key, value in report.items() if key != "customers"}
 
 
 

@@ -895,6 +895,45 @@ def manager_combined(request: Request, year: int, month: int = Query(ge=1, le=12
     return manager_combined_service.overview(year, month)
 
 
+@router.get("/receivables-summary", summary="مطالبات باز (همان عدد نمای مدیر) برای خلاصه مدیریتی مالی: راهکاران (پرونده مشتری) + مانده دفتر کل شعب کارآمد")
+def receivables_summary():
+    from app.services import manager_combined_service
+    from app.services.karamad_sales_network_service import KaramadSalesNetworkService
+
+    out: dict = {"errors": []}
+    try:
+        out["rahkaran"] = manager_combined_service.receivables_report(include_details=True)
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"مطالبات راهکاران (پرونده مشتری): {exc}")
+    try:
+        net = KaramadSalesNetworkService().overview()
+        s = net.get("summary") or {}
+        branches = []
+        for b in net.get("branches") or []:
+            debt = b["debt"]
+            total = debt["open_account_receivable_rial"]
+            returned = b["returned_debt_rial"]
+            branches.append({
+                "branch_id": b["branch_id"],
+                "branch_name": b["branch_name"],
+                "debt_rial": total,
+                "balance_rial": round(total - returned, 2),
+                "returned_rial": returned,
+                "debtor_count": debt["debtor_customer_count"],
+                "open_cheque_rial": b["open_cheque_amount_rial"],
+            })
+        out["karamad"] = {
+            "open_account_receivable_rial": float(s.get("open_account_receivable_rial") or 0),
+            "balance_rial": round(sum(b["balance_rial"] for b in branches), 2),
+            "returned_rial": round(sum(b["returned_rial"] for b in branches), 2),
+            "active_customer_count": s.get("active_customer_count"),
+            "branches": branches,
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["errors"].append(f"مطالبات شعب کارآمد: {exc}")
+    return out
+
+
 # ---------------------------------------------------------------- گزارش‌ساز اکسل (ویزیتور / سرپرست / هیبرید)
 @router.get("/excel-reports/options", summary="گزارش‌ساز اکسل: نام‌ها، شهرها و شعبه‌ها برای فیلتر")
 def excel_report_options(date_from: str | None = None, date_to: str | None = None):

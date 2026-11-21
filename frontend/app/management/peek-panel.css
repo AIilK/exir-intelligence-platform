@@ -29,6 +29,10 @@
 .pk-note{margin:0;color:#8ea4af;font-size:12px;line-height:1.8}
 .pk-go{margin-top:auto;background:#14433f;color:#7bffe9;border:1px solid #2dd4bf;border-radius:10px;padding:11px 14px;cursor:pointer;font:inherit;font-size:14px;min-height:0;transition:background .2s ease}
 .pk-go:hover{background:#1b5a53}
+.receivables-systems{grid-template-columns:repeat(2,minmax(0,1fr))}
+.receivables-systems .pk-go{margin:3px 0 0;padding:6px 8px;text-align:right;font-size:12px}
+.receivables-systems .pk-go[aria-expanded="true"]{background:#1b5a53}
+.pk-panel .csd-table th{cursor:default}
 @keyframes pkIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @keyframes pkGrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 @media (prefers-reduced-motion:reduce){.pk-panel,.pk-overlay,.pk-panel *{animation:none!important;transition:none!important}}
