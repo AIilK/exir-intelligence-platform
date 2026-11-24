@@ -79,7 +79,7 @@ function toXlsx(rows, columns, unit, firstLabel, title, levelNames = []) {
  * nodes: [{id, parent, level, label, ...metrics}] ؛ total: ردیف «کل».
  */
 export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames = [], onRowClick, exportName,
-  defaultDepth = 0, cellStyle, firstLabel = 'نام', unit: fixedUnit, colorGroups = false }) {
+  defaultDepth = 0, cellStyle, firstLabel = 'نام', unit: fixedUnit, colorGroups = false, toggleParentsOnRowClick = false }) {
   const app = useApp()
   // unit ثابت (مثلاً 'rial') واحد انتخاب‌شده سراسری را برای این جدول و خروجی اکسلش نادیده می‌گیرد
   const unit = fixedUnit || app.unit
@@ -252,7 +252,10 @@ export function TreeTable({ nodes, total, columns, sortKey = 'net', levelNames =
             {total && <tr className="total-row">{columns.map((c) => renderCell(total, c, true))}</tr>}
             {shown.map((n) => (
               <tr key={n.id} className={`lvl-row lvl-row${n.level} ${onRowClick ? 'clickable' : ''}`}
-                onClick={onRowClick ? () => onRowClick(n) : undefined}>
+                onClick={onRowClick || toggleParentsOnRowClick ? () => {
+                  if (toggleParentsOnRowClick && (children.get(n.id) || []).length) toggle(n)
+                  else onRowClick?.(n)
+                } : undefined}>
                 {columns.map((c) => renderCell(n, c, false))}
               </tr>
             ))}

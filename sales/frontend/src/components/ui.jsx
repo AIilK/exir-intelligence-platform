@@ -303,7 +303,7 @@ const isNeg = (v, type) => NUMERIC.has(type) && typeof v === 'number' && v < 0
 export const NONE = '__none__'   // allMode: هیچ موردی انتخاب نشده (خالی = همه)
 
 /** allMode (مثل فیلتر اکسل): همه پیش‌فرض تیک دارند، «انتخاب همه» و برداشتن تیک هر مورد؛ value خالی = همه، [NONE] = هیچ */
-export function MultiSelect({ label, options, value, onChange, allMode = false, selectAll = false }) {
+export function MultiSelect({ label, options, value, onChange, allMode = false, selectAll = false, single = false }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef(null)
@@ -314,12 +314,22 @@ export function MultiSelect({ label, options, value, onChange, allMode = false, 
   }, [])
   const all = options.map((o) => o.value)
   const sel = new Set(allMode && !value.length ? all : value)
-  const shown = options.filter((o) => !q || o.label.includes(q) || (o.group || '').includes(q))
+  const normalize = (text) => String(text || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک')
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).toLowerCase().trim()
+  const shown = options.filter((o) => single
+    ? !q || normalize(`${o.label} ${o.group || ''}`).includes(normalize(q))
+    : !q || o.label.includes(q) || (o.group || '').includes(q))
   const setSel = (next) => {
     const vs = all.filter((v) => next.has(v))
     onChange(!allMode ? vs : vs.length === all.length ? [] : vs.length ? vs : [NONE])
   }
   const toggle = (v) => {
+    if (single) {
+      onChange(sel.has(v) ? [] : [v])
+      setOpen(false)
+      setQ('')
+      return
+    }
     if (!allMode) return onChange(sel.has(v) ? value.filter((x) => x !== v) : [...value, v])
     const n = new Set(sel)
     n.has(v) ? n.delete(v) : n.add(v)
@@ -346,7 +356,7 @@ export function MultiSelect({ label, options, value, onChange, allMode = false, 
           {!allMode && <div className="ms-actions">
             {selectAll && <button className="link" onClick={() => onChange(all)}>انتخاب همه</button>}
             <button className="link" onClick={() => onChange([])}>پاک کردن</button>
-            {q && <button className="link" onClick={() => onChange([...new Set([...value, ...shown.map((o) => o.value)])])}>انتخاب نتایج</button>}
+            {q && !single && <button className="link" onClick={() => onChange([...new Set([...value, ...shown.map((o) => o.value)])])}>انتخاب نتایج</button>}
           </div>}
           <div className="ms-list">
             {allMode && shown.length > 0 && (

@@ -298,6 +298,10 @@ def window(snap: dict, period: str) -> tuple[pd.Series, pd.Series, str]:
     df, today = snap["lines"], snap["today"]
     y = today[:4]
     ly = str(int(y) - 1)
+    if re.fullmatch(r'R:\d{4}/\d{2}/\d{2}:\d{4}/\d{2}/\d{2}', period or ''):
+        _, lo, hi = period.split(':')
+        previous = lambda d: f'{int(d[:4])-1}{d[4:]}'
+        return df.date.between(lo, hi), df.date.between(previous(lo), previous(hi)), period
     if re.fullmatch(DAYS_RE, period or ""):
         # روزهای انتخابی (یک یا چند روز، با ویرگول) و همان روزها در سال قبل
         days = sorted(set(period.split(",")))

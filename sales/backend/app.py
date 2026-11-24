@@ -1654,6 +1654,23 @@ def rk_sales(req: Request, period: str = "YTD", brand: str | None = None, refres
     return _rk_payload(snap, out)
 
 
+@app.get("/api/rk_sales/workspace")
+def rk_sales_workspace(req: Request, period: str = "YTD", brand: str | None = None,
+                       province: str | None = None, customer: str | None = None, quality_only: bool = False):
+    import b2b_workspace
+    snap = _rk_sales()
+    if quality_only:
+        snap = b2b_workspace.quality_snapshot(snap)
+    out = b2b_workspace.report(_by_product(snap, req), period, brand, province, customer)
+    out['options'] = {
+        'brands': sorted(snap['customers']['brand'].dropna().unique().tolist()),
+        'provinces': sorted(snap['customers']['province'].dropna().unique().tolist()),
+        'groups': sorted(snap['lines']['cat2'].dropna().unique().tolist()),
+        'customers': snap['customers'][['code', 'short', 'brand', 'province']].to_dict('records'),
+    }
+    return _rk_payload(snap, out)
+
+
 @app.get("/api/rk_sales/goods_tree")
 def rk_sales_goods_tree(req: Request, period: str = "YTD", brand: str | None = None):
     """جدول درختی برند ← گروه کالا ← کالا (تعداد و مبلغ فروش دوره)، با همان فیلترهای صفحه (کالا و گروه کالا)"""
@@ -1749,6 +1766,15 @@ def rk_export(req: Request):
     return _rke_payload(snap, RE.report(snap, RE.parse_filters(req.query_params)))
 
 
+@app.get("/api/rk_export/workspace")
+def rk_export_workspace(req: Request, compare_year: str | None = None):
+    import export_workspace
+    snap = _rk_export()
+    out = export_workspace.report(snap, RE.parse_filters(req.query_params), compare_year)
+    out['sale_days'] = sorted(snap['lines'].loc[snap['lines'].kind.eq('S'), 'date'].unique().tolist())
+    return _rke_payload(snap, out)
+
+
 @app.get("/api/rk_export/goods_tree")
 def rk_export_goods_tree(req: Request):
     """جدول درختی برند ← گروه کالا ← کالا صادرات (دلار و تعداد)، با فیلترهای اسلایسر"""
@@ -1765,9 +1791,13 @@ def rk_export_month(month: str):
 
 
 @app.get("/api/rk_export/customer")
-def rk_export_customer(code: str, req: Request):
+def rk_export_customer(code: str, req: Request, compare_year: str | None = None):
     snap = _rk_export()
-    out = RE.customer(snap, code, RE.parse_filters(req.query_params))
+    f = RE.parse_filters(req.query_params)
+    if f.get('date_from') and f.get('date_to'):
+        from export_workspace import date_scope
+        snap, f, compare_year = date_scope(snap, f, compare_year)
+    out = RE.customer(snap, code, f, compare_year)
     if out is None:
         raise HTTPException(404, f"کد مشتری صادراتی {code} در فهرست نیست.")
     return _rke_payload(snap, out)

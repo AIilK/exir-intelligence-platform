@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp, useRkFetch, faDigits, useSaved } from '../lib.jsx'
 import { Card, Loading, ErrorBox, DataTable, Kpi } from '../components/ui.jsx'
 import { PageHead } from '../components/Layout.jsx'
@@ -57,11 +57,21 @@ function HowItWorks() {
   )
 }
 
-export default function Reorder() {
+export default function Reorder({ title = 'پیشنهاد ثبت سفارش B2B', urlFilters = false }) {
   const { unit } = useApp()
   const nav = useNavigate()
-  const [brand, setBrand] = useSaved('brand', '')
-  const [province, setProvince] = useSaved('province', '')
+  const [sp, setSp] = useSearchParams()
+  const [savedBrand, setSavedBrand] = useSaved('brand', '')
+  const [savedProvince, setSavedProvince] = useSaved('province', '')
+  const setFilter = (key, value) => {
+    const next = new URLSearchParams(sp)
+    value ? next.set(key, value) : next.delete(key)
+    setSp(next)
+  }
+  const brand = urlFilters ? sp.get('brand') || '' : savedBrand
+  const province = urlFilters ? sp.get('province') || '' : savedProvince
+  const setBrand = urlFilters ? (v) => setFilter('brand', v) : setSavedBrand
+  const setProvince = urlFilters ? (v) => setFilter('province', v) : setSavedProvince
   const [status, setStatus] = useSaved('status', '')
   const [sel, setSel] = useState(null)
   const ref = useRef(null)
@@ -97,7 +107,7 @@ export default function Reorder() {
 
   return (
     <>
-      <PageHead title="پیشنهاد ثبت سفارش B2B"
+      <PageHead title={title}
         desc={`هر فرد-برند با ریتم سفارش خودش مقایسه می‌شود · داده از ${faDigits(data.since)} تا ${faDigits(data.today)}`}>
         <div className="plan-bar">
           <label><span className="ms-label">برند</span>{' '}

@@ -55,7 +55,7 @@ export default function SalesFrame() {
             </div>
           </div>
         )}
-        {!rep && pathname.startsWith('/rahkaran') && pathname !== '/rahkaran/export' && (
+        {!rep && pathname.startsWith('/rahkaran') && !pathname.startsWith('/rahkaran/export') && (
           <div className="u-crosslink u-crosslink-top">
             <div><b>پرونده یکپارچه نمایندگان</b><small>فروش هر نماینده کنار مطالبات و چک‌هایش در داشبورد مالی</small></div>
             <Link className="u-btn" to="/files/rahkaran">نمایندگان راهکاران ←</Link>

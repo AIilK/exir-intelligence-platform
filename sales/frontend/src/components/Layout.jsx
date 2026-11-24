@@ -18,12 +18,13 @@ const NAV = [
   { to: '/contest', label: 'مسابقه', icon: '★' },
   { to: '/inventory', label: 'موجودی و سفارش', icon: '▤' },
   { section: 'فروش راهکاران (B2B)' },
-  { to: '/rahkaran', label: 'نمایندگان B2B', icon: '◉' },
-  { to: '/rahkaran/customer-brand', label: 'مشتری × برند', icon: '▦' },
-  { to: '/rahkaran/total-report', label: 'گزارش کل (Total)', icon: '☰' },
-  { to: '/rahkaran/compare', label: 'مقایسه', icon: '⇄' },
-  { to: '/rahkaran/reorder', label: 'پیشنهاد سفارش', icon: '⟳' },
-  { to: '/rahkaran/export', label: 'فروش صادراتی', icon: '✈' },
+  { to: '/rahkaran/overview', label: 'نمای کلی فروش', icon: '◱' },
+  { to: '/rahkaran/performance', label: 'عملکرد نمایندگان', icon: '⌂' },
+  { to: '/rahkaran/products', label: 'محصولات و گروه‌ها', icon: '▦' },
+  { to: '/rahkaran/analysis', label: 'تحلیل کیفیت فروش', icon: '◔' },
+  { to: '/rahkaran/compare', label: 'مقایسه فروش', icon: '⇄' },
+  { to: '/rahkaran/orders', label: 'سفارش‌ها و پیگیری نمایندگان', icon: '⟳' },
+  { to: '/rahkaran/export/preview', label: 'فروش صادراتی', icon: '✈' },
   { to: '/rahkaran/commission', label: 'پورسانت نمایندگان و صادرات', icon: '٪' },
 ]
 
@@ -105,7 +106,7 @@ export default function Layout() {
         </div>
         <nav>
           {NAV.map((n) => n.section ? <div key={n.section} className="nav-section">{n.section}</div> : (
-            <NavLink key={n.to} to={n.to} end={n.to === '/' || n.to === '/rahkaran'} onClick={() => setOpen(false)}>
+            <NavLink key={n.to} to={n.to} end={n.to === '/' || n.to === '/rahkaran' || n.to === '/rahkaran/export'} onClick={() => setOpen(false)}>
               <span className="nav-icon" aria-hidden>{n.icon}</span>{n.label}
             </NavLink>
           ))}

@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -36,8 +37,8 @@ RULESETS = {
                       "supervisor": {"t1": 100000, "t2": 200000}},
     "هیبرید کرمان": {"visitor": [[7000, .03], [15000, .05], [25000, .06], [40000, .07], [None, .09]],
                      "supervisor": {"t1": 100000, "t2": 150000}},
-    # جدول خراسان سطح دوم را از ۲۰٬۰۰۰ نوشته (فاصله ۱۰ تا ۲۰ هزار خالی است)؛ اینجا از ۱۰٬۰۰۰ گرفته شده
-    "هیبرید خراسان": {"visitor": [[10000, .03], [40000, .05], [60000, .06], [80000, .07], [None, .09]],
+    # اصلاح دستورالعمل آبان خراسان: سقف سطح اول ۲۰٬۰۰۰ میلیون ریال (۲ میلیارد تومان) است.
+    "هیبرید خراسان": {"visitor": [[20000, .03], [40000, .05], [60000, .06], [80000, .07], [None, .09]],
                       "supervisor": {"t1": 200000, "t2": 400000}},
     # دستورالعمل کرج بخش سرپرست ندارد
     "هیبرید البرز": {"visitor": [[10000, .03], [30000, .05], [40000, .06], [50000, .07], [None, .09]],
@@ -133,9 +134,12 @@ RULES = {
     },
     "1405/08": {
         "title": "دستورالعمل‌های آبان ۱۴۰۵",
-        "rulesets": RULESETS, "group_of": {}, "labels": RULESET_LABEL, "sup_rates": SUP_RATES, "special": ["wholesale"],
+        "rulesets": RULESETS, "group_of": {}, "labels": RULESET_LABEL, "sup_rates": SUP_RATES, "special": ["wholesale", "mgmt"],
+        "wholesale_strict": True,
         "special_min": SPECIAL_MIN,
-        "employed": {**EMPLOYED, "reserve": 0.0}, "commission": COMMISSION, "supervisor": SUPERVISOR,
+        "comm_base": "net_cash",
+        "employed": {**EMPLOYED, "reserve": 0.10}, "commission": COMMISSION,
+        "supervisor": {**SUPERVISOR, "branch_managers": {"هیبرید تهران": ["امیر شایان"]}},
     },
 }
 
@@ -150,7 +154,7 @@ def rules_payload(month: str) -> dict:
     R = rules_for(month)
     return {**{k: R[k] for k in ("title", "rulesets", "labels", "sup_rates", "special", "employed", "commission", "supervisor")},
             "comm_base": R.get("comm_base") or "net", "special_min": R.get("special_min") or {},
-            "wholesale_invoice": WHOLESALE_INVOICE, "groups": GROUPS}
+            "wholesale_invoice": WHOLESALE_INVOICE, "groups": GROUPS, "wholesale_strict": R.get("wholesale_strict", False)}
 
 
 # ---------------------------------------------------------------- روز کاری
@@ -681,7 +685,8 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
     g_k = rep["gross"].reindex(agg.index).fillna(0)
     ws_share = (agg["wholesale_gross"].fillna(0) / g_k).where(g_k > 0)
     mg_share = (agg["mgmt_disc"].fillna(0) / g_k).where(g_k > 0)
-    ws_on = set(agg.index[ws_share >= smin["wholesale"]]) if "wholesale" in smin else set(agg.index)
+    ws_on = (set(agg.index[ws_share > smin["wholesale"] if R.get("wholesale_strict") else ws_share >= smin["wholesale"]])
+             if "wholesale" in smin else set(agg.index))
     mg_on = set(agg.index[mg_share > smin["mgmt"]]) if "mgmt" in smin else set(agg.index)
     seller = inv.index.get_level_values(0)
     sp = inv[(is_ws & ("wholesale" in kinds) & seller.isin(ws_on)) | (is_mg & ("mgmt" in kinds) & seller.isin(mg_on))]
@@ -700,6 +705,15 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
                     "net": float(r.net), "net_cash": float(r.net + r.cash), "mgmt": float(r.mgmt), "wholesale": bool(r.gross > WHOLESALE_INVOICE),
                     "mgmt_inv": bool(r.mgmt > 0)} for r in g.sort_values("date").itertuples()]
                for k, g in sp.reset_index(level=1, drop=True).groupby(level=0)}
+    # نمایش همه فاکتورهای عمده/مدیریتی، حتی وقتی شرط نرخ پایه را ندارند؛ محاسبه فقط از sp است.
+    details = inv[is_ws | is_mg].copy()
+    details["base_rate_applies"] = details.index.isin(sp.index)
+    invoice_details = {k: [{"inv_no": str(r.inv_no), "date": str(r.date), "customer": str(r.customer),
+                          "gross": float(r.gross), "net": float(r.net), "net_cash": float(r.net + r.cash),
+                          "mgmt": float(r.mgmt), "wholesale": bool(r.gross > WHOLESALE_INVOICE),
+                          "mgmt_inv": bool(r.mgmt > 0), "base_rate_applies": bool(r.base_rate_applies)}
+                         for r in g.sort_values("date").itertuples()]
+                       for k, g in details.reset_index(level=1, drop=True).groupby(level=0)}
     agg = agg.fillna(0)
     gq = {g["key"]: mine[_group_mask(mine, g)].groupby("seller_key")["qty"].sum() for g in GROUPS}
     gn = {g["key"]: mine[_group_mask(mine, g)].groupby("seller_key")["net"].sum() for g in GROUPS}
@@ -753,6 +767,7 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
         row.update(special_net=float(a["special_net"]) if a is not None else 0.0,
                    special_gross=float(a["special_gross"]) if a is not None else 0.0,
                    special_n=int(a["special_n"]) if a is not None else 0, special_invoices=sp_list.get(k, []),
+                   special_invoice_details=invoice_details.get(k, []),
                    wholesale_brands=ws_brands.get(k, []),
                    special_ws_on=("wholesale" in kinds) and k in ws_on, special_mg_on=("mgmt" in kinds) and k in mg_on)
         # مبنای پورسانت ماه: فروش خالص، یا فروش خالص + تخفیف نقدی (comm_base = net_cash)
@@ -777,7 +792,8 @@ def compute(plan: dict, sales: pd.DataFrame, requests: pd.DataFrame | None, mont
             _employed_visitor(row, tg, R)
         rows.append(row)
 
-    sups = _supervisors({**plan, "supervisors": [s for s in plan.get("supervisors", []) if bkey(s["branch"]) not in excl]}, rows, R)
+    sups = _supervisors({**plan, "supervisors": [s for s in plan.get("supervisors", []) if bkey(s["branch"]) not in excl]}, rows, R,
+                        branch_sales=ms, pace=pace)
     unmatched = _unmatched(ms, keys)
     return {"visitors": rows, "supervisors": sups, "unmatched": unmatched,
             "branches": _branches(ms, mr, rows, plan, day_share)}
@@ -870,17 +886,23 @@ def _employed_visitor(row: dict, tg: dict, R: dict):
                status=f"تحقق {round(row['ach'] * 100):d}٪".translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")))
 
 
-def _supervisors(plan: dict, rows: list[dict], R: dict) -> list[dict]:
+def _supervisors(plan: dict, rows: list[dict], R: dict,
+                 branch_sales: pd.DataFrame | None = None, pace: float | None = None) -> list[dict]:
     teams: dict[tuple, list] = {}
     for r in rows:
         if r["supervisor"]:
             teams.setdefault((bkey(r["branch"]), r["supervisor"]), []).append(r)
     listed = [(bkey(s["branch"]), s["name"]) for s in plan.get("supervisors", [])]
     out = []
-    for b, name in list(dict.fromkeys(listed + list(teams))):
-        team = teams.get((b, name), [])
+    people = list(dict.fromkeys(listed + list(teams)))
+    counts = Counter(b for b, _ in people)
+    for b, name in people:
+        branch_scope = name in R["supervisor"].get("branch_managers", {}).get(b, [])
+        team_names = list(dict.fromkeys(r["supervisor"] for r in rows if bkey(r["branch"]) == b)) if branch_scope else [name]
+        team = [r for r in rows if bkey(r["branch"]) == b and (branch_scope or r["supervisor"] == name)]
         rs = ruleset_of(b, R)
         rule = R["rulesets"][rs]["supervisor"]
+        # تارگت هر سرپرست مستقیماً از دستورالعمل است؛ مستقل از تارگت شعبه و تعداد سرپرستان.
         reserve = R["supervisor"]["reserve"]
         # تحقق تارگت سرپرست با فروش ناخالص تیم، پورسانت روی مبنای پورسانت تیم (فروش خالص یا خالص + نقدی؛ اعلام کاربر)
         net = sum(r["net"] for r in team)
@@ -888,21 +910,32 @@ def _supervisors(plan: dict, rows: list[dict], R: dict) -> list[dict]:
         gross = sum(r["gross"] for r in team)
         fc = sum(r["base_forecast"] for r in team)
         gfc = sum(r["gross_forecast"] for r in team)
+        net_cash = sum(r["net_cash"] for r in team)
+        ret_sale = sum(r["ret_sale"] for r in team) if all(r["ret_sale"] is not None for r in team) else None
+        ret_dist = sum(r["ret_dist"] for r in team) if ret_sale is not None else None
+        if branch_scope and branch_sales is not None:
+            bs = branch_sales[branch_sales["branch"].map(bkey) == b]
+            net, gross = float(bs["net"].sum()), float(bs["gross"].sum())
+            net_cash = net + float(bs["cash_disc"].sum())
+            sales = net_cash if R.get("comm_base") == "net_cash" else net
+            fc, gfc = sales * (pace or 1), gross * (pace or 1)
+            rets = _return_split(bs, "branch")
+            ret_sale = float(rets["ret_sale"].sum()) if rets is not None else None
+            ret_dist = float(rets["ret_dist"].sum()) if rets is not None else None
         comm = supervisor_commission(sales, rule, R["sup_rates"], reach=gross)
-        target_sum = sum(r["target_rial"] or 0 for r in team)
-        ret_known = all(r["ret_sale"] is not None for r in team)
+        target = rule["t1"] * M if rule else None
         out.append({"id": f"{b}|{name}", "name": name, "branch": b, "ruleset": rs, "group_ab": group_ab(rs, R),
-                    "visitors": len(team), "gross": gross,
-                    "net": net, "net_cash": sum(r["net_cash"] for r in team), "base": sales,
-                    "ret_sale": sum(r["ret_sale"] for r in team) if ret_known else None,
-                    "ret_dist": sum(r["ret_dist"] for r in team) if ret_known else None,
+                    "visitors": len(team), "supervisor_count": counts[b], "gross": gross,
+                    "team_names": team_names, "target_source": "", "sales_scope": "branch" if branch_scope else "team",
+                    "net": net, "net_cash": net_cash, "base": sales,
+                    "ret_sale": ret_sale, "ret_dist": ret_dist,
                     "forecast": fc, "t1": rule["t1"] * M if rule else None, "t2": rule["t2"] * M if rule else None,
                     "ach_t1": gross / (rule["t1"] * M) if rule else None, "ach_t2": gross / (rule["t2"] * M) if rule else None,
                     "commission": comm, "forecast_commission": supervisor_commission(fc, rule, R["sup_rates"], reach=gfc),
                     "eff_rate": comm / sales if comm is not None and sales > 0 else None,
                     "reserve": comm * reserve if comm else 0.0,
                     "payable": comm * (1 - reserve) if comm is not None else None,
-                    "target_rial": target_sum or None, "ach": sales / target_sum if target_sum else None,
+                    "target_rial": target, "ach": gross / target if target else None,
                     "status": "بدون قاعده سرپرستی" if not rule else ("زیر تارگت اول" if gross < rule["t1"] * M
                               else "تارگت دوم" if gross >= rule["t2"] * M else "تارگت اول")})
     return out

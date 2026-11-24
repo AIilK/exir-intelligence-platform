@@ -14,6 +14,8 @@ export const achPill = (key) => (r) => <span className={`pill ${achClass(r[key])
 const rulesetLabel = (rules, rs) => rules.labels[rs] || rs
 // کلید مقایسه نام شعبه، مثل bkey بک‌اند («هیبریدی مازندران» = «هیبرید مازندران»)
 const bkey = (b) => String(b || '').replace(/^هیبریدی(?= )/, 'هیبرید').replace(/\s+/g, ' ').trim()
+const supervisorTeam = (visitors, s) => visitors.filter((v) =>
+  bkey(v.branch) === bkey(s.branch) && (s.sales_scope === 'branch' || (s.team_names || [s.name]).includes(v.supervisor)))
 
 function download(blob, name) {
   const a = document.createElement('a')
@@ -74,7 +76,23 @@ function TargetUploads({ data, onSaved, setErr }) {
   const upVisitors = async (f) => {
     const b = branch || guessBranch(f, branches)
     if (!b) { setErr(`شعبه فایل «${f.name}» از روی نامش معلوم نشد؛ اول شعبه را انتخاب کنید.`); return }
-    try { onSaved(await uploadXlsx(data.month, 'targets', f, b)); setMsg(`فایل «${f.name}» برای ${b} خوانده شد.`) } catch (e) { setErr(e.message) }
+    try {
+      const saved = await uploadXlsx(data.month, 'targets', f, b)
+      const note = saved.import_notes?.[bkey(b)]
+      const sameTarget = (a, z) => a?.rial === z?.rial &&
+        JSON.stringify(Object.entries(a?.groups || {}).sort()) === JSON.stringify(Object.entries(z?.groups || {}).sort())
+      let added = 0, changed = 0
+      for (const v of rosterOf(saved).filter((v) => bkey(v.branch) === bkey(b))) {
+        const before = data.targets[v.id], after = saved.targets[v.id]
+        if (after && !before) added++
+        else if (after && !sameTarget(before, after)) changed++
+      }
+      onSaved(saved)
+      setMsg(`فایل «${f.name}» برای ${b}: ${fmtInt(note?.matched || 0)} ردیف تطبیق یافت؛ ${fmtInt(added)} تارگت جدید و ${fmtInt(changed)} تارگت تغییر کرد.`
+        + (note?.missing?.length ? ` ${fmtInt(note.missing.length)} نام به فهرست وصل نشد؛ نتیجه بارگذاری را ببینید.` : '')
+        + (!added && !changed && note?.matched ? ' مقادیر فایل با تارگت‌های ثبت‌شده یکسان است.' : '')
+        + ' تارگت ویزیتورها، تارگت مستقل کل شعبه را تغییر نمی‌دهد.')
+    } catch (e) { setErr(e.message) }
   }
   const upBranches = async (f) => {
     try { onSaved(await uploadXlsx(data.month, 'branch_targets', f)); setMsg(`فایل «${f.name}» (تارگت شعبه‌ها) خوانده شد.`) } catch (e) { setErr(e.message) }
@@ -283,6 +301,8 @@ function rulesSheet(data) {
   param('R_EMP_MAX', 'سقف نرخ استخدامی', input(R.employed.max_rate, 'pct2'), 'نرخ پایه + تکمیلی حداکثر این نرخ (رزتی خارج از سقف)')
   R.sup_rates.forEach((x, i) => param(`R_SUP${i + 1}`, `نرخ سرپرست — ${['تا تارگت اول', 'تارگت اول تا دوم', 'مازاد تارگت دوم'][i]}`, input(x, 'pct2')))
   param('R_SUP_RES', 'ذخیره پورسانت سرپرست', input(R.supervisor.reserve, 'pct'))
+  param('R_SUP_SPLIT', 'تقسیم تارگت هیبرید بین سرپرستان', input(R.supervisor.split_targets ? 1 : 0, 'int'),
+    '۱ = تارگت اول و دوم جدول هیبرید تقسیم بر تعداد سرپرستان همان شعبه؛ ۰ = تارگت کامل برای هر سرپرست')
   param('R_APPROVAL', 'حد تایید (مانده بدهی + چک برگشتی)', input(APPROVAL_LIMIT, 'pct'), 'کمتر از این سهم فروش از ابتدای سال = تایید')
   put([])
 
@@ -485,18 +505,21 @@ function Sheet({ data }) {
       debt_final: (x.open_account_receivable_rial || 0) - (x.undistributed_rial || 0), fin: x }) : row
   }), [data.visitors, fin.map])
   const supervisors = useMemo(() => data.supervisors.map((s0) => {
-    const mates = visitors.filter((v) => v.supervisor === s0.name && bkey(v.branch) === bkey(s0.branch))
+    const mates = supervisorTeam(visitors, s0)
     const s = { ...s0, comm_pct: ratio(s0.commission, s0.net_cash), cost_pct: costPct(s0), gross_ytd: mates.reduce((a, v) => a + (v.gross_ytd || 0), 0),
       net_ytd: mates.reduce((a, v) => a + (v.net_ytd || 0), 0) }
-    const team = visitors.filter((v) => v.supervisor === s.name && bkey(v.branch) === bkey(s.branch) && isNum(v.debt))
+    const team = mates.filter((v) => isNum(v.debt))
     if (!team.length) return s
     const add = (k) => team.reduce((a, v) => a + (v[k] || 0), 0)
     return withApproval({ ...s, debt: add('debt'), returned: add('returned'), returned_n: add('returned_n'),
       undist: add('undist'), undist_n: add('undist_n'), debt_final: add('debt_final') })
   }), [data.supervisors, visitors])
   const uniq = (k) => [...new Set(visitors.map((v) => v[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fa'))
-  const opts = { branch: uniq('branch'), supervisor: uniq('supervisor').filter((s) => !f.branch || visitors.some((v) => v.branch === f.branch && v.supervisor === s)) }
-  const vrows = visitors.filter((v) => (!f.branch || v.branch === f.branch) && (!f.supervisor || v.supervisor === f.supervisor)
+  const opts = { branch: uniq('branch'), supervisor: [...new Set(supervisors
+    .filter((s) => !f.branch || bkey(s.branch) === bkey(f.branch)).map((s) => s.name))].sort((a, b) => a.localeCompare(b, 'fa')) }
+  const vrows = visitors.filter((v) => (!f.branch || bkey(v.branch) === bkey(f.branch)) &&
+    (!f.supervisor || supervisors.some((s) => s.name === f.supervisor && bkey(s.branch) === bkey(v.branch)
+      && (s.team_names || [s.name]).includes(v.supervisor)))
     && (!f.type || v.type === f.type) && (!f.group || v.group_ab === f.group))
   const srows = supervisors.filter((s) => (!f.branch || bkey(s.branch) === bkey(f.branch)) && (!f.supervisor || s.name === f.supervisor)
     && (!f.group || s.group_ab === f.group))
@@ -524,7 +547,11 @@ function Sheet({ data }) {
   // سرپرست: پلکانی روی مبنای تیم؛ اگر فروش ناخالص تیم (reach) به تارگت اول نرسد صفر
   const supComm = (ref, b, reach) => `IF(${ref('t1')}="","",IF(${reach}<N(${ref('t1')}),0,MIN(MAX(${b},0),N(${ref('t1')}))*R_SUP1`
     + `+MAX(MIN(MAX(${b},0),N(${ref('t2')}))-N(${ref('t1')}),0)*R_SUP2+MAX(MAX(${b},0)-N(${ref('t2')}),0)*R_SUP3))`
-  const supTarget = (name) => (ref) => `IF(N(INDEX(${name},MATCH(${ref('ruleset')},R_NAMES,0)))=0,"",INDEX(${name},MATCH(${ref('ruleset')},R_NAMES,0)))`
+  const supRuleValue = (name, ref) => `N(INDEX(${name},MATCH(${ref('ruleset')},R_NAMES,0)))`
+  const supTarget = (name) => (ref) => {
+    const tableValue = supRuleValue(name, ref)
+    return `IF(${tableValue}=0,"",${tableValue})`
+  }
   const finCols = (team) => [
     { key: 'gross_ytd', label: `فروش ناخالص${T(team)} از ابتدای ${year}`, type: 'money',
       hint: team ? 'جمع ستون «فروش ناخالص از ابتدای سال» ویزیتورهای همین سرپرست'
@@ -600,19 +627,24 @@ function Sheet({ data }) {
   ]
   const scols = [
     { key: 'branch', label: 'نام شعبه', sticky: true }, { key: 'name', label: 'نام سرپرست', sticky: true }, { key: 'group_ab', label: 'گروه' },
+    { key: 'supervisor_count', label: 'تعداد سرپرست هیبرید', type: 'int', noTotal: true,
+      hint: 'تعداد سرپرستان یکتای همین هیبرید؛ تارگت هر نفر مستقل و طبق دستورالعمل است' },
     { key: 'ruleset', label: 'کد قاعده', exportOnly: true, hint: 'ردیف همین قاعده در جدول سطح‌های برگه «قواعد»' },
+    { key: 'target_source', label: 'کد منبع تارگت', exportOnly: true, hint: 'تارگت همه سرپرستان از جدول دستورالعمل می‌آید' },
+    { key: 'target_rial', label: 'تارگت دستورالعمل', type: 'money', exportOnly: true, noTotal: true,
+      hint: 'تارگت اول طبق جدول دستورالعمل همان شعبه و ماه' },
     { key: 'visitors', label: 'ویزیتور', type: 'int' },
     { key: 'gross', label: 'فروش ناخالص تیم', type: 'money', hint: 'جمع فروش ناخالص ویزیتورهای همین سرپرست' },
     { key: 'net', label: 'فروش خالص تیم', type: 'money', hint: 'جمع فروش خالص ویزیتورهای همین سرپرست' },
     { key: 'net_cash', label: 'فروش خالص + درصد نقدی تیم', type: 'money', hint: 'جمع فروش خالص + تخفیف نقدی ویزیتورهای همین سرپرست' },
     { key: 'base', label: 'مبنای پورسانت تیم', type: 'money', exportOnly: true, hint: 'فروش خالص یا فروش خالص + نقدی تیم، طبق «مبنای پورسانت» برگه قواعد', xf: baseXf },
     ...(data.pace ? [{ key: 'forecast', label: 'پیش‌بینی ماه', type: 'money', hint: 'مبنای پورسانت تیم × ضریب پیش‌بینی', xf: (ref) => `N(${ref('base')})*R_PACE` }] : []),
-    { key: 't1', label: 'تارگت اول', type: 'money', xf: supTarget('R_T1'), hint: 'از جدول قاعده همین شعبه در برگه قواعد' },
-    { key: 't2', label: 'تارگت دوم', type: 'money', xf: supTarget('R_T2'), hint: 'از جدول قاعده همین شعبه در برگه قواعد' },
+    { key: 't1', label: 'تارگت اول', type: 'money', xf: supTarget('R_T1'), hint: 'تارگت اول هر سرپرست از جدول دستورالعمل همان ماه و شعبه' },
+    { key: 't2', label: 'تارگت دوم', type: 'money', xf: supTarget('R_T2'), hint: 'تارگت دوم هر سرپرست از جدول دستورالعمل همان ماه و شعبه' },
     { key: 'ach_t1', label: 'تحقق تارگت اول', type: 'pct', render: achPill('ach_t1'), hint: 'فروش ناخالص تیم ÷ تارگت اول',
       xf: (ref) => `IF(N(${ref('t1')})=0,"",N(${ref('gross')})/N(${ref('t1')}))` },
     { key: 'status', label: 'وضعیت', noTotal: true,
-      xf: (ref) => `IF(${ref('t1')}="","بدون قاعده سرپرستی",IF(N(${ref('gross')})<N(${ref('t1')}),"زیر تارگت اول",IF(N(${ref('gross')})>=N(${ref('t2')}),"تارگت دوم","تارگت اول")))` },
+      xf: (ref) => `IF(${ref('t1')}="",IF(${ref('target_source')}<>"","تارگت ریالی ثبت نشده","بدون قاعده سرپرستی"),IF(N(${ref('gross')})<N(${ref('t1')}),"زیر تارگت اول",IF(N(${ref('gross')})>=N(${ref('t2')}),"تارگت دوم","تارگت اول")))` },
     commPctCol('پورسانت محاسبه‌شده ÷ (فروش خالص + درصد نقدی تیم). در اکسل ورودی پورسانت است: اگر دستی عوض شود پورسانت با همین درصد حساب می‌شود',
       (ref) => supComm(ref, `N(${ref('base')})`, `N(${ref('gross')})`)),
     { key: 'commission', label: 'پورسانت محاسبه‌شده', type: 'money', xf: commFromPct,
@@ -809,11 +841,12 @@ function VisitorCalc({ v, data, unit }) {
   const wsShare = isNum(v.gross) && v.gross > 0 ? v.wholesale_gross / v.gross : null
   const mgShare = isNum(v.gross) && v.gross > 0 ? v.mgmt_disc / v.gross : null
   const hasWs = (r.special || []).includes('wholesale'), hasMg = (r.special || []).includes('mgmt')
+  const invoiceDetails = v.special_invoice_details || (v.special_invoices || []).map((x) => ({ ...x, base_rate_applies: true }))
   const wsLine = v.wholesale_n > 0 && (
     <li>{fa(v.wholesale_n)} فاکتور عمده (مبلغ ناخالص بالای ۷۰۰ میلیون تومان) داشته: {money(v.wholesale_gross, unit)} ناخالص، یعنی درصد عمده‌فروشی <b>{fmtPct(wsShare, 1)}</b> فروش ناخالص.
       {hasWs && isNum(sMin.wholesale) && (v.special_ws_on
-        ? <> چون از {fmtPct(sMin.wholesale, 0)} کمتر نیست، این فاکتورها جدا با نرخ پایه حساب می‌شوند.</>
-        : <> چون کمتر از {fmtPct(sMin.wholesale, 0)} است، <b>این فاکتورها جدا حساب نمی‌شوند</b> و با نرخ عادی می‌آیند.</>)}
+        ? <> چون {r.wholesale_strict ? 'بیشتر از' : 'دست‌کم'} {fmtPct(sMin.wholesale, 0)} است، این فاکتورها جدا با نرخ پایه حساب می‌شوند.</>
+        : <> چون {r.wholesale_strict ? 'بیشتر از' : 'به'} {fmtPct(sMin.wholesale, 0)} {r.wholesale_strict ? 'نیست' : 'نرسیده است'}، <b>این فاکتورها جدا حساب نمی‌شوند</b> و با نرخ عادی می‌آیند.</>)}
       {v.wholesale_brands?.length > 0 && (
         <div className="table-scroll"><table>
           <thead><tr><th>برند</th><th className="num">مبلغ ناخالص</th><th className="num">فروش خالص</th>{cashBase && <th className="num">خالص + نقدی</th>}<th className="num">سهم از عمده</th></tr></thead>
@@ -833,19 +866,20 @@ function VisitorCalc({ v, data, unit }) {
   const specialRule = isNum(spRate) && (
     <li><b>قاعده فاکتورهای ویژه این ماه:</b> هر فاکتوری که {kinds}، پورسانتش با نرخ پایه <b>{fmtPct(spRate, 0)}</b> حساب می‌شود، نه {rateText}.
       {' '}بقیه فروش با {rateText} حساب می‌شود.
-      {(isNum(sMin.wholesale) || isNum(sMin.mgmt)) && <>{' '}شرط: فاکتورهای عمده فقط وقتی جدا حساب می‌شوند که درصد عمده‌فروشی فرد دست‌کم {fmtPct(sMin.wholesale, 0)} باشد
+      {(isNum(sMin.wholesale) || isNum(sMin.mgmt)) && <>{' '}شرط: فاکتورهای عمده فقط وقتی جدا حساب می‌شوند که درصد عمده‌فروشی فرد {r.wholesale_strict ? 'بیش از' : 'دست‌کم'} {fmtPct(sMin.wholesale, 0)} باشد
         {hasMg && <> و فاکتورهای با تخفیف مدیریتی فقط وقتی که درصد فروش مدیریتی بیش از {fmtPct(sMin.mgmt, 0)} باشد</>}؛ وگرنه همان فاکتورها با نرخ عادی می‌آیند.</>}
-      {v.special_n > 0 ? (
+      {invoiceDetails.length > 0 ? (
         <>
-          {' '}این فرد <b>{fa(v.special_n)} فاکتور ویژه</b> داشته ({B} {money(v.special_base, unit)}):
+          {' '}این فرد <b>{fa(invoiceDetails.length)} فاکتور عمده یا دارای تخفیف مدیریتی</b> داشته؛ {fa(v.special_n)} فاکتور مشمول نرخ پایه است ({B} {money(v.special_base, unit)}). فاکتور مشترک فقط یک‌بار محاسبه می‌شود:
           <div className="table-scroll"><table>
             <thead><tr><th>شماره فاکتور</th><th>تاریخ</th><th>مشتری</th><th>دلیل</th>
-              <th className="num">مبلغ ناخالص</th><th className="num">تخفیف مدیریتی</th><th className="num">فروش خالص</th>{cashBase && <th className="num">خالص + نقدی</th>}</tr></thead>
-            <tbody>{v.special_invoices.map((x, i) => (
+              <th className="num">مبلغ ناخالص</th><th className="num">تخفیف مدیریتی</th><th className="num">فروش خالص</th>{cashBase && <th className="num">خالص + نقدی</th>}<th>نحوه محاسبه</th></tr></thead>
+            <tbody>{invoiceDetails.map((x, i) => (
               <tr key={i}><td>{fa(x.inv_no)}</td><td>{fa(x.date)}</td><td>{x.customer}</td>
                 <td>{[x.wholesale && 'عمده', x.mgmt_inv && 'تخفیف مدیریتی'].filter(Boolean).join(' و ')}</td>
                 <td className="num">{money(x.gross, unit)}</td><td className="num">{x.mgmt ? `${money(x.mgmt, unit)} (${fmtPct(x.mgmt / x.gross, 1)})` : '—'}</td>
-                <td className="num">{money(x.net, unit)}</td>{cashBase && <td className="num">{money(x.net_cash, unit)}</td>}</tr>))}
+                <td className="num">{money(x.net, unit)}</td>{cashBase && <td className="num">{money(x.net_cash, unit)}</td>}
+                <td>{!isNum(v.commission) ? 'پورسانت محاسبه نشده' : v.type === 'employed' && v.base < r.employed.floor ? 'زیر کف؛ بدون پورسانت' : x.base_rate_applies ? `نرخ پایه ${fmtPct(spRate, 0)}` : `نرخ عادی ${fmtPct(v.rate, 2)}`}</td></tr>))}
             </tbody>
           </table></div>
         </>
@@ -871,7 +905,7 @@ function VisitorCalc({ v, data, unit }) {
     return (
       <div>{head}
         <ol className="calc-steps">
-          <li>شعبه {v.branch} در «{rulesetLabel(r, v.ruleset)}» است. سطح ویزیتور پورسانتی با <b>فروش ناخالص</b> ماه تعیین می‌شود و نرخ همان سطح روی <b>فروش خالص</b> اعمال می‌شود.</li>
+          <li>شعبه {v.branch} در «{rulesetLabel(r, v.ruleset)}» است. سطح ویزیتور پورسانتی با <b>فروش ناخالص</b> ماه تعیین می‌شود و نرخ همان سطح روی <b>{B}</b> اعمال می‌شود.</li>
           <li>فروش ناخالص {monthName(data.month)} (جمع قبل از تخفیف، برگشتی‌ها کسر شده): <b>{money(v.gross, unit)}</b> ← ملاک تعیین سطح.</li>
           {netLine}
           <li>جدول سطوح (بر اساس فروش ناخالص):
@@ -896,6 +930,9 @@ function VisitorCalc({ v, data, unit }) {
     <div>{head}
       <ol className="calc-steps">
         {netLine}
+        {wsLine}
+        {mgLine}
+        {specialRule}
         <li>شرط کف: اگر {B} کمتر از {money(E.floor, unit)} باشد پورسانتی تعلق نمی‌گیرد.
           {' '}{B} این فرد {money(v.base, unit)} است؛ {v.base < E.floor ? <b>کمتر است؛ پورسانت صفر.</b> : 'از کف بیشتر است.'}</li>
         {!v.target_rial ? <li><b>تارگت ریالی برای این فرد ثبت نشده؛ پورسانت محاسبه نمی‌شود.</b></li> : (
@@ -908,9 +945,6 @@ function VisitorCalc({ v, data, unit }) {
               <GroupTable v={v} rules={r} unit={unit} />
             </li>
             <li>نرخ نهایی = پایه {fmtPct(v.base_rate, 2)} + تکمیلی {fmtPct(v.bonus_rate, 2)} (سقف {fmtPct(E.max_rate, 0)}){v.extra_rate > 0 ? ` + رزتی ${fmtPct(v.extra_rate, 2)}` : ''} = <b>{fmtPct(v.rate, 2)}</b>.</li>
-            {wsLine}
-            {mgLine}
-            {v.base >= E.floor && specialRule}
             {v.base >= E.floor && commLine}
             <li>{fmtPct(E.reserve, 0)} پورسانت ذخیره می‌شود ({money(v.reserve, unit)})؛ قابل پرداخت این ماه: <b>{money(v.payable, unit)}</b>.</li>
           </>
@@ -924,7 +958,7 @@ function SupervisorCalc({ s, data, unit }) {
   const r = data.rules
   const rule = r.rulesets[s.ruleset]?.supervisor
   const [r1, r2, r3] = r.sup_rates
-  const team = data.visitors.filter((v) => bkey(v.branch) === bkey(s.branch) && v.supervisor === s.name)
+  const team = supervisorTeam(data.visitors, s)
   if (!rule) return <p>برای {rulesetLabel(r, s.ruleset)} در {r.title} جدول سرپرستی تعریف نشده است.</p>
   const B = r.comm_base === 'net_cash' ? 'فروش خالص + درصد نقدی' : 'فروش خالص'
   const b = Math.max(s.base, 0)
@@ -933,6 +967,8 @@ function SupervisorCalc({ s, data, unit }) {
     <div>
       <p><b>{s.name}</b> — سرپرست {s.branch}، «{rulesetLabel(r, s.ruleset)}». محاسبه طبق {r.title}.</p>
       <ol className="calc-steps">
+        <li>تارگت اول {money(s.t1, unit)} و تارگت دوم {money(s.t2, unit)} مستقیماً از دستورالعمل همین ماه می‌آیند و مستقل از تارگت شعبه و تارگت ویزیتورها هستند.</li>
+        {s.sales_scope === 'branch' && <li>عملکرد آقای شایان از فروش کل شعبه تهران محاسبه می‌شود؛ شامل شرق، غرب و فروشندگان خارج از فهرست پورسانت.</li>}
         <li>تیم: {fa(team.length)} ویزیتور{team.length > 0 && <span className="muted"> ({team.map((v) => v.name).join('، ')})</span>}.
           {' '}فروش ناخالص تیم <b>{money(s.gross, unit)}</b> (ملاک رسیدن به تارگت) و {B} تیم <b>{money(s.base, unit)}</b> (مبنای پورسانت).</li>
         <li>رسیدن به تارگت با فروش ناخالص سنجیده می‌شود. پورسانت پلکانی روی {B} است: تا تارگت اول ({money(s.t1, unit)}) {fmtPct(r1, 2)}، از تارگت اول تا دوم ({money(s.t2, unit)}) {fmtPct(r2, 0)}، بیش از تارگت دوم {fmtPct(r3, 1)}. اگر فروش ناخالص تیم به تارگت اول نرسد پورسانتی تعلق نمی‌گیرد.</li>
@@ -1109,6 +1145,7 @@ const specialText = (r) => ['فاکتورهای عمده (مبلغ ناخالص 
 
 function Rules({ data }) {
   const r = data.rules
+  const B = r.comm_base === 'net_cash' ? 'فروش خالص + درصد نقدی' : 'فروش خالص'
   const mr = (v) => (v == null ? '—' : `${faDigits((v / 1000).toLocaleString('en'))} میلیارد ریال`)
   const tierText = (tiers) => tiers.map(([u, rate], i) => {
     const lo = i ? tiers[i - 1][0] : null
@@ -1124,7 +1161,8 @@ function Rules({ data }) {
           ))}</tbody>
         </table></div>
       </Card>
-      <Card title="سرپرست" subtitle={`پلکانی روی فروش خالص ویزیتورهای تیم: تا تارگت اول ${fmtPct(r.sup_rates[0], 2)}، تا تارگت دوم ${fmtPct(r.sup_rates[1], 0)}، مازاد ${fmtPct(r.sup_rates[2], 1)}؛ زیر تارگت اول صفر؛ ${fmtPct(r.supervisor.reserve, 0)} ذخیره.`}>
+      <Card title="سرپرست" subtitle={`پلکانی روی ${B} ویزیتورهای تیم: تا تارگت اول ${fmtPct(r.sup_rates[0], 2)}، تا تارگت دوم ${fmtPct(r.sup_rates[1], 0)}، مازاد ${fmtPct(r.sup_rates[2], 1)}؛ زیر تارگت اول صفر؛ ${fmtPct(r.supervisor.reserve, 0)} ذخیره.`}>
+        <p className="muted small">تارگت هر سرپرست طبق اعداد جدول دستورالعمل است. تحقق با فروش ناخالص تیم خودش سنجیده می‌شود؛ در تهران شرق و غرب با تیم خودشان و آقای شایان با فروش کل شعبه سنجیده می‌شوند. پورسانت با {B} محاسبه می‌شود.</p>
         <div className="table-scroll"><table>
           <thead><tr><th>جدول</th><th className="num">تارگت اول</th><th className="num">تارگت دوم</th></tr></thead>
           <tbody>{Object.entries(r.rulesets).map(([k, v]) => (

@@ -225,7 +225,7 @@ def _filter(df: pd.DataFrame, f: dict) -> pd.DataFrame:
     m = pd.Series(True, index=df.index)
     if f.get("months"):
         m &= df["mm"].isin(f["months"])
-    for k, col in (("brand", "brand"), ("cat", "cat1"), ("country", "country"), ("customer", "code"), ("product", "product_code")):
+    for k, col in (("brand", "brand"), ("cat", "cat2"), ("country", "country"), ("customer", "code"), ("product", "product_code")):
         if f.get(k):
             m &= df[col].isin(f[k])
     return df[m]
@@ -271,7 +271,7 @@ def report(snap: dict, f: dict) -> dict:
     k["growth_pcs"] = k["pcs"] / k["pcs_ly_same"] - 1 if k["pcs_ly_same"] else None
     k["growth_gross"] = k["gross"] / k["gross_ly_same"] - 1 if k["gross_ly_same"] else None
     k["growth_req"] = k["req"] / k["req_ly_same"] - 1 if k["req_ly_same"] else None
-    k["disc_rate"] = 1 - k["net"] / k["gross"] if k["gross"] else None
+    k["disc_rate"] = (k["gross"] + float(cur["tax"].sum()) - k["net"]) / k["gross"] if k["gross"] > 0 else None
     k["fill"] = k["pcs"] / k["req_pcs"] if k["req_pcs"] else None
     k["avg_invoice"] = k["net"] / k["invoices"] if k["invoices"] else None
     # کشور ← کد مشتری (شیت Country)؛ هر کد (هر برند یک مشتری) یک سطر
@@ -290,10 +290,10 @@ def report(snap: dict, f: dict) -> dict:
     base = df[df["year"].isin([y, ly])]
     return {"year": y, "ly": ly, "today": today, "current": y == snap["today"][:4],
             "years": sorted(df["year"].unique().tolist(), reverse=True), "kpis": k,
-            "brands": _two_years(d, "brand", y, ly), "categories": _two_years(d, "cat1", y, ly),
+            "brands": _two_years(d, "brand", y, ly), "categories": _two_years(d, "cat2", y, ly),
             "categories2": _two_years(d, "cat2", y, ly), "customers": by_cust, "countries": countries,
             "trend": trend, "sku": sku,
-            "options": {"brand": sorted(base["brand"].unique().tolist()), "cat": sorted(base["cat1"].unique().tolist()),
+            "options": {"brand": sorted(base["brand"].unique().tolist()), "cat": sorted(base["cat2"].unique().tolist()),
                         "country": sorted(snap["customers"]["country"].unique().tolist()),
                         "customer": [{"code": r.code, "label": r.label, "country": r.country}
                                      for r in snap["customers"].sort_values(["label", "code"]).itertuples()],
@@ -320,7 +320,7 @@ def _product_options(df: pd.DataFrame, y: str) -> list[dict]:
     return [{"code": r.product_code, "name": r.product, "cat": r.cat2} for r in p.itertuples()]
 
 
-def customer(snap: dict, code: str, f: dict) -> dict | None:
+def customer(snap: dict, code: str, f: dict, compare_year: str | None = None) -> dict | None:
     """پرونده یک کد مشتری صادراتی: روند ماهانه دو سال، گروه‌ها، کالاها و فاکتورها"""
     cust = snap["customers"]
     acc = cust[cust["code"] == code]
@@ -328,6 +328,8 @@ def customer(snap: dict, code: str, f: dict) -> dict | None:
         return None
     df = snap["lines"]
     y, ly, today = _years(snap, f)
+    if compare_year in set(df['year']) and compare_year != y:
+        ly = compare_year
     d = _filter(df[df["code"].isin(acc["code"])], {**f, "customer": None})
     cur = d[d["year"] == y]
     monthly = _monthly(cur, d[d["year"] == ly])
@@ -357,6 +359,7 @@ def parse_filters(qp) -> dict:
     """پارامترهای تکراری درخواست ← فیلتر"""
     year = qp.get("year") or ""
     return {"year": year if re.fullmatch(r"\d{4}", year) else None,
+            "date_from": qp.get('date_from'), "date_to": qp.get('date_to'),
             "months": [m for m in qp.getlist("month") if re.fullmatch(r"\d{2}", m)],
             "brand": qp.getlist("brand"), "cat": qp.getlist("cat"), "country": qp.getlist("country"),
             "customer": qp.getlist("customer"), "product": qp.getlist("product")}

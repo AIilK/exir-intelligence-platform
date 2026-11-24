@@ -93,7 +93,7 @@ function Seg({ value, onChange, options }) {
   )
 }
 
-export default function RahkaranCompare() {
+export default function RahkaranCompare({ title = 'مقایسه فروش — B2B' }) {
   const { unit, setUnit } = useApp()
   const theme = useTheme()
   const [sp, setSp] = useSearchParams()
@@ -237,7 +237,7 @@ export default function RahkaranCompare() {
 
   return (
     <>
-      <PageHead title="مقایسه فروش راهکاران"
+      <PageHead title={title}
         desc="چند نماینده، برند، استان، گروه کالا یا کالا را در یک بازه کنار هم بگذارید و در صورت نیاز با دوره قبل یا سال قبل مقایسه کنید؛ تمرکز اصلی روی فروش تعدادی، لایو از راهکاران">
         <div className="rk-controls">
           <label className="unit-select">

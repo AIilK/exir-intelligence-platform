@@ -42,10 +42,12 @@ const Inventory = () => import('@sales/pages/Inventory.jsx')
 const Detail = () => import('@sales/pages/Detail.jsx')
 const DataSource = () => import('@sales/pages/DataSource.jsx')
 const Rahkaran = () => import('@sales/pages/Rahkaran.jsx')
+const B2BWorkspace = () => import('@sales/pages/B2BWorkspace.jsx')
 const RahkaranReports = () => import('@sales/pages/RahkaranReports.jsx')
 const RahkaranCompare = () => import('@sales/pages/RahkaranCompare.jsx')
 const Reorder = () => import('@sales/pages/Reorder.jsx')
 const Export = () => import('@sales/pages/Export.jsx')
+const ExportPreview = () => import('@sales/pages/ExportPreview.jsx')
 const RahkaranCommission = () => import('@sales/pages/RahkaranCommission.jsx')
 const Commission = () => import('@sales/pages/Commission.jsx')
 const Contest = () => import('@sales/pages/Contest.jsx')
@@ -81,11 +83,17 @@ ReactDOM.createRoot(document.getElementById('root')).render(
               <Route path="commission" element={page(Commission)} />
               <Route path="contest" element={page(Contest)} />
               <Route path="rahkaran" element={page(Rahkaran)} />
+              <Route path="rahkaran/overview" element={page(B2BWorkspace, 'Overview')} />
+              <Route path="rahkaran/performance" element={page(B2BWorkspace, 'Performance')} />
+              <Route path="rahkaran/products" element={page(B2BWorkspace, 'Products')} />
+              <Route path="rahkaran/analysis" element={page(B2BWorkspace, 'Analysis')} />
+              <Route path="rahkaran/orders" element={page(B2BWorkspace, 'Orders')} />
               <Route path="rahkaran/customer-brand" element={page(RahkaranReports, 'CustomerBrand')} />
               <Route path="rahkaran/total-report" element={page(RahkaranReports, 'TotalReport')} />
               <Route path="rahkaran/compare" element={page(RahkaranCompare)} />
               <Route path="rahkaran/reorder" element={page(Reorder)} />
-              <Route path="rahkaran/export" element={page(Export)} />
+              <Route path="rahkaran/export" element={page(ExportPreview)} />
+              <Route path="rahkaran/export/preview" element={page(ExportPreview)} />
               <Route path="rahkaran/commission" element={page(RahkaranCommission)} />
               <Route path="detail/:dim/:key" element={page(Detail)} />
               <Route path="data" element={page(DataSource)} />

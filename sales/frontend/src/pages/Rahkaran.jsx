@@ -8,6 +8,7 @@ import { brandColor } from '../brands.js'
 import { MAP_VIEWBOX, MAP_PATHS, BUBBLE_POS } from '../iranMap.js'
 import DayPicker, { isDays, parseDays, daysLabel } from '../components/DayPicker.jsx'
 import { TreeTable } from '../components/TreeTable.jsx'
+import ProductMix from '../components/ProductMix.jsx'
 
 // فروش B2B نمایندگان استانی از راهکاران؛ نمای اصلی معادل شیت Bubble Chart فایل B2B-Sales Report
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']
@@ -69,25 +70,29 @@ function RkKpis({ k, single = false, onInactive, inactiveOpen }) {
 
 /** نقشه ایران با حباب فروش خالص هر استان (شکل‌ها و جای حباب‌ها از خود فایل اکسل)؛
  * brand: فقط فروش همان برند، مثل لیست کشویی برند کنار نمودار حبابی اکسل */
-function BubbleMap({ provinces, selected, onSelect, unit, brand }) {
+export function BubbleMap({ provinces, selected, onSelect, unit, brand, metric = 'net' }) {
   const [hover, setHover] = useState(null)
   const wrap = useRef(null)
   const t = useTheme()
   const by = useMemo(() => Object.fromEntries(provinces.map((p) => {
     if (!brand) return [p.key, p]
-    const net = (p.brands || []).find((b) => b.brand === brand)?.net || 0
-    return [p.key, { ...p, net, all: p.net, brands: net ? [{ brand, net }] : [] }]
-  })), [provinces, brand])
-  const total = Object.values(by).reduce((a, p) => a + (p.net || 0), 0)
+    const found = (p.brands || []).find((b) => b.brand === brand)
+    const net = found?.net || 0, qty = found?.qty || 0
+    return [p.key, { ...p, net, qty, all: p[metric], brands: found ? [found] : [] }]
+  })), [provinces, brand, metric])
+  const val = (p) => Math.max(p?.[metric] || 0, 0)
+  const format = (v) => metric === 'qty' ? fmtInt(v) : fmtMoney(v, unit)
+  const unitLabel = metric === 'qty' ? 'عدد' : UNITS[unit].label
+  const total = Object.values(by).reduce((a, p) => a + val(p), 0)
   const color = brand ? brandColor(brand, t) : undefined
-  const max = Math.max(...Object.values(by).map((p) => p.net || 0), 1)
+  const max = Math.max(...Object.values(by).map(val), 1)
   const W = MAP_VIEWBOX[2]
   const radius = (v) => (v > 0 ? 7 + 46 * Math.sqrt(v / max) : 0)
   const show = (e, key) => {
     const b = wrap.current.getBoundingClientRect()
     setHover({ key, x: e.clientX - b.left, y: e.clientY - b.top })
   }
-  const order = Object.keys(BUBBLE_POS).filter((k) => by[k]?.net > 0).sort((a, b) => by[b].net - by[a].net)
+  const order = Object.keys(BUBBLE_POS).filter((k) => val(by[k]) > 0).sort((a, b) => val(by[b]) - val(by[a]))
   const h = hover && by[hover.key]
   return (
     <div className="rk-map" ref={wrap} onMouseLeave={() => setHover(null)}>
@@ -95,7 +100,7 @@ function BubbleMap({ provinces, selected, onSelect, unit, brand }) {
         {MAP_PATHS.map((s, i) => {
           if (!s.p && !s.water) return null // تکه‌های بی‌نام نقشه اکسل
           const p = s.p && by[s.p]
-          const op = p?.net ? 0.1 + 0.4 * Math.sqrt(p.net / max) : 0
+          const op = val(p) > 0 ? 0.1 + 0.4 * Math.sqrt(val(p) / max) : 0
           return (
             <path key={i} d={s.d} className={s.water ? 'water' : `land${s.p ? ' prov' : ''}${s.p === selected ? ' sel' : ''}`}
               style={!s.water && op ? { fillOpacity: op, fill: color } : undefined}
@@ -104,17 +109,17 @@ function BubbleMap({ provinces, selected, onSelect, unit, brand }) {
         })}
         {[...order].reverse().map((k) => {
           const [x, y] = BUBBLE_POS[k]
-          const r = radius(by[k].net)
+          const r = radius(val(by[k]))
           return (
             <g key={k} className={`bubble${k === selected ? ' sel' : ''}`} onMouseMove={(e) => show(e, k)} onClick={() => onSelect(k)}>
               <circle cx={x} cy={y} r={r} style={color ? { fill: color } : undefined} />
-              {r >= 17 && <text x={x} y={y + 5} textAnchor="middle">{fmtMoney(by[k].net, unit)}</text>}
+              {r >= 17 && <text x={x} y={y + 5} textAnchor="middle">{format(val(by[k]))}</text>}
             </g>
           )
         })}
         {/* نام استان‌ها؛ زیر حباب، یا روی خود استان اگر فروشی ندارد */}
         {Object.entries(BUBBLE_POS).map(([k, [x, y]]) => {
-          const r = by[k]?.net > 0 ? radius(by[k].net) : 0
+          const r = val(by[k]) > 0 ? radius(val(by[k])) : 0
           return (
             <text key={k} className={`prov-name${r ? '' : ' dim'}`} x={x} y={r ? y + r + 12 : y + 4} textAnchor="middle"
               onMouseMove={(e) => by[k] && show(e, k)} onClick={() => by[k] && onSelect(k)}>{k}</text>
@@ -124,13 +129,13 @@ function BubbleMap({ provinces, selected, onSelect, unit, brand }) {
       {h && (
         <div className="rk-tip" style={{ left: Math.min(hover.x + 14, (wrap.current?.clientWidth || W) - 230), top: hover.y + 14 }}>
           <b>{h.key}</b>
-          <div>فروش خالص{brand ? ` ${brand}` : ''}: <b>{fmtMoney(h.net, unit)}</b> {UNITS[unit].label}</div>
-          <div className="small">{fmtFull(h.net)}</div>
+          <div>{metric === 'qty' ? 'فروش تعدادی' : 'فروش خالص'}{brand ? ` ${brand}` : ''}: <b>{format(val(h))}</b> {unitLabel}</div>
+          {metric !== 'qty' && <div className="small">{fmtFull(h.net)}</div>}
           {brand
-            ? <div className="muted">سهم از فروش {brand} {fmtPct(total ? h.net / total : null)} · {fmtPct(h.all ? h.net / h.all : null)} از فروش استان</div>
-            : <div className="muted">سهم {fmtPct(h.share)} · {fmtInt(h.customers)} از {fmtInt(h.customers_total)} کد مشتری خرید داشته‌اند</div>}
+            ? <div className="muted">سهم از فروش {brand} {fmtPct(total ? val(h) / total : null)} · {fmtPct(h.all ? val(h) / h.all : null)} از فروش استان</div>
+            : <div className="muted">سهم {fmtPct(total ? val(h) / total : null)} · {fmtInt(h.customers)} کد مشتری خرید داشته‌اند{isNum(h.customers_total) ? ` از ${fmtInt(h.customers_total)} کد` : ''}</div>}
           {(h.brands || []).slice(0, 6).map((b) => (
-            <div key={b.brand} className="small">{b.brand}: {fmtFull(b.net)}</div>
+              <div key={b.brand} className="small">{b.brand}: {metric === 'qty' ? `${fmtInt(b.qty || 0)} عدد` : fmtFull(b.net)}</div>
           ))}
           <div className="muted small">برای جزئیات کلیک کنید</div>
         </div>
@@ -140,20 +145,21 @@ function BubbleMap({ provinces, selected, onSelect, unit, brand }) {
   )
 }
 
-function BrandDonut({ rows, onClick, unit }) {
-  const data = rows.filter((r) => r.net > 0)
+export function BrandDonut({ rows, onClick, unit, metric = 'net' }) {
+  const data = rows.filter((r) => r[metric] > 0)
+  const quantity = metric === 'qty'
   if (!data.length) return <Empty />
   return (
     <Chart height={300} onClick={(p) => onClick?.(data[p.dataIndex])}
       option={(t) => ({
         tooltip: { ...baseOption(t).tooltip, trigger: 'item',
-          formatter: (p) => `${p.name}<br/><b>${fmtMoney(p.value, unit)}</b> ${UNITS[unit].label} · ${fmtPct(p.percent / 100)}<br/><span style="opacity:.75">${fmtFull(p.value)}</span>` },
+          formatter: (p) => `${p.name}<br/><b>${quantity ? fmtInt(p.value) : fmtMoney(p.value, unit)}</b> ${quantity ? 'عدد' : UNITS[unit].label} · ${fmtPct(p.percent / 100)}${quantity ? '' : `<br/><span style="opacity:.75">${fmtFull(p.value)}</span>`}` },
         legend: { type: 'scroll', orient: 'vertical', right: 0, top: 'middle', textStyle: { color: t.text } },
         series: [{
           type: 'pie', radius: ['45%', '72%'], center: ['38%', '50%'], cursor: onClick ? 'pointer' : 'default',
           itemStyle: { borderColor: t.surface, borderWidth: 2 },
           label: { color: t.text, formatter: (p) => (p.percent >= 4 ? fmtPct(p.percent / 100, 0) : '') },
-          data: data.map((r) => ({ name: r.key, value: r.net, itemStyle: { color: brandColor(r.key, t) } })),
+          data: data.map((r) => ({ name: r.key, value: r[metric], itemStyle: { color: brandColor(r.key, t) } })),
         }],
       })} />
   )
@@ -227,8 +233,9 @@ function GoodsTree({ period, brand, products, groups }) {
     { key: 'growth', label: 'رشد تعدادی', type: 'pct', group: Q, hint: 'تعداد فروش ÷ تعداد همین دوره سال قبل − ۱' },
     { key: 'customers', label: 'مشتری', type: 'int', hint: 'تعداد کد مشتری (نماینده) دارای خرید' },
   ]
-  return <TreeTable nodes={data.nodes} total={data.total} columns={columns} sortKey="net" colorGroups
-    firstLabel="برند / گروه کالا / کالا" levelNames={['برند', 'گروه کالا', 'کالا']} exportName="b2b-brands-goods" />
+  return <><ProductMix nodes={data.nodes} total={data.total} />
+    <TreeTable nodes={data.nodes} total={data.total} columns={columns} sortKey="net" colorGroups
+    firstLabel="برند / گروه کالا / کالا" levelNames={['برند', 'گروه کالا', 'کالا']} exportName="b2b-brands-goods" /></>
 }
 const withGrowth = (rows) => rows.map((r) => ({ ...r, growth: r.ly_net ? r.net / r.ly_net - 1 : null }))
 

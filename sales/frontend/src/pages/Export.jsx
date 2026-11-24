@@ -6,6 +6,7 @@ import { Chart, HBar, baseOption } from '../components/Chart.jsx'
 import { PageHead } from '../components/Layout.jsx'
 import { brandColor } from '../brands.js'
 import { TreeTable } from '../components/TreeTable.jsx'
+import ProductMix from '../components/ProductMix.jsx'
 
 // فروش صادراتی از راهکاران؛ معادل شیت‌های فایل Export SalesReport (مبالغ به دلار)
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']
@@ -27,7 +28,7 @@ function Bars({ rows, value, onClick, colorOf, colorIndex }) {
 }
 
 /** ماهانه یا انباشته دو سال؛ cum = انباشته (شیت YTD Trend) */
-function YearsChart({ rows, metric, cum, year, ly, height = 300 }) {
+export function YearsChart({ rows, metric, cum, year, ly, height = 300 }) {
   const k = (cum ? 'cum_' : '') + metric
   const cur = rows.map((r) => (r.future ? null : r[k]))
   return (
@@ -58,7 +59,7 @@ const twoYearCols = (ly, y, first) => [
 ]
 
 /** پرونده یک کد مشتری (هر برند مشتری کد جدا دارد) */
-function CustomerFile({ code, query, onClose }) {
+export function CustomerFile({ code, query, onClose }) {
   const ref = useRef(null)
   const [metric, setMetric] = useState('net')
   const { data, loading, error } = useRkFetch(`/api/rk_export/customer?code=${encodeURIComponent(code)}${query ? `&${query}` : ''}`)
@@ -111,8 +112,9 @@ function CustomerFile({ code, query, onClose }) {
 }
 
 /** شیت SKU&Category: مشتری ← گروه کالا ← کالا */
-function SkuTree({ rows, onCustomer }) {
+export function SkuTree({ rows, onCustomer, searchable = false }) {
   const [open, setOpen] = useState(() => new Set())
+  const [search, setSearch] = useState('')
   const tree = useMemo(() => {
     const by = new Map()
     for (const r of rows) {
@@ -124,15 +126,25 @@ function SkuTree({ rows, onCustomer }) {
     }
     return [...by.values()].sort((a, b) => b.net - a.net || b.pcs - a.pcs)
   }, [rows])
-  if (!tree.length) return <Empty />
+  if (!tree.length && !searchable) return <Empty />
+  const normalize = (value) => String(value ?? '').replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/‌/g, ' ')
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).toLowerCase().trim()
+  const shown = searchable && search.trim() ? tree.filter((c) => normalize(`${c.label} ${c.key}`).includes(normalize(search))) : tree
   const toggle = (id) => setOpen((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const total = tree.reduce((a, c) => [a[0] + c.pcs, a[1] + c.net], [0, 0])
+  const total = shown.reduce((a, c) => [a[0] + c.pcs, a[1] + c.net], [0, 0])
   return (
+    <>
+    {searchable && <div className="report-tools">
+      <input className="input" aria-label="جستجوی مشتری در گزارش تفصیلی" placeholder="جستجوی نام یا کد مشتری…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      {search && <button className="btn ghost sm" onClick={() => setSearch('')}>پاک کردن جستجو</button>}
+      <span className="muted small">{fmtInt(shown.length)} مشتری</span>
+    </div>}
     <div className="tree-scroll">
       <table className="tree dense rk-xtable">
         <thead><tr><th>مشتری / گروه کالا / کالا</th><th className="num">تعداد (PCS)</th><th className="num">فروش دلاری</th><th /></tr></thead>
         <tbody>
-          {tree.map((c) => (
+          {shown.map((c) => (
             <Fragment key={c.key}>
               <tr className="rk-brand clickable" onClick={() => toggle(c.key)}>
                 <td><span className="tree-toggle">{open.has(c.key) ? '▾' : '◂'}</span>{c.label} <span className="muted small">کد {faDigits(c.key)}</span></td>
@@ -155,10 +167,12 @@ function SkuTree({ rows, onCustomer }) {
               ))}
             </Fragment>
           ))}
-          <tr className="rk-total"><td>Grand Total</td><td className="num">{fmtInt(total[0])}</td><td className="num">{fmtInt(total[1])}</td><td /></tr>
+          {!shown.length && <tr><td colSpan={4} className="muted">مشتری‌ای یافت نشد</td></tr>}
+          <tr className="rk-total"><td>{searchable && search.trim() ? 'جمع نتایج جستجو' : 'Grand Total'}</td><td className="num">{fmtInt(total[0])}</td><td className="num">{fmtInt(total[1])}</td><td /></tr>
         </tbody>
       </table>
     </div>
+    </>
   )
 }
 
@@ -220,8 +234,9 @@ function GoodsTree({ query, year, ly }) {
     { key: 'growth', label: 'رشد تعدادی', type: 'pct', group: Q },
     { key: 'customers', label: 'مشتری', type: 'int', hint: 'تعداد کد مشتری دارای خرید' },
   ]
-  return <TreeTable nodes={data.nodes} total={data.total} columns={columns} sortKey="net" colorGroups
-    firstLabel="برند / گروه کالا / کالا" levelNames={['برند', 'گروه کالا', 'کالا']} exportName={`export-brands-goods-${year}`} />
+  return <><ProductMix nodes={data.nodes} total={data.total} currency="usd" />
+    <TreeTable nodes={data.nodes} total={data.total} columns={columns} sortKey="net" colorGroups
+    firstLabel="برند / گروه کالا / کالا" levelNames={['برند', 'گروه کالا', 'کالا']} exportName={`export-brands-goods-${year}`} /></>
 }
 
 export default function Export() {
@@ -301,7 +316,7 @@ export default function Export() {
             actions={<Tabs value={metric} onChange={setMetric} tabs={METRIC_TABS} />}>
             <YearsChart rows={data.trend} metric={metric} year={y} ly={ly} />
           </Card>
-          <Card title="گروه کالا — فروش دلاری" subtitle="Category (Cate1)؛ برای فیلتر کلیک کنید">
+          <Card title="گروه کالا — فروش دلاری" subtitle="گروه‌بندی مشترک با هیبرید؛ برای فیلتر کلیک کنید">
             <Bars rows={data.categories} value="net" colorIndex={2} onClick={(r) => set('cat', [r.key])} />
           </Card>
           <Card title="گروه کالا — فروش تعدادی" subtitle="Net Sales PCS">
