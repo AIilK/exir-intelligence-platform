@@ -2,10 +2,10 @@ import { Component, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useSt
 import { fmtCompact, fmtInt, fmtMoney, fmtPct, fmtNum1, faDigits, UNITS, fullTitle, useSaved } from '../lib.jsx'
 import { buildXlsx, colName } from '../xlsx.js'
 
-export function Kpi({ label, value, type = 'money', sub, hint, onClick, active, more }) {
+export function Kpi({ label, value, type = 'money', sub, hint, onClick, active, more, percentDigits = 1 }) {
   let main, unit = ''
   if (type === 'money') ({ value: main, unit } = fmtCompact(value))
-  else if (type === 'pct') main = fmtPct(value)
+  else if (type === 'pct') main = fmtPct(value, percentDigits)
   else if (type === 'num1') main = fmtNum1(value)
   else main = fmtInt(value)
   // کارت قابل کلیک (مثلاً برای باز کردن فهرست جزئیات)
@@ -258,7 +258,7 @@ export function DataTable({ rows, columns: allColumns, unit, onRowClick, pageSiz
                 <tr onClick={onRowClick ? () => onRowClick(r) : undefined}
                   className={(onRowClick ? 'clickable' : '') + (expandedKey != null && r.key === expandedKey ? ' active-row' : '')}>
                   {columns.map((c) => (
-                    <td key={c.key} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${isNeg(r[c.key], c.type) ? 'neg' : ''}${sc(c)}`} style={ss(c)}
+                    <td key={c.key} data-label={c.label} className={`${NUMERIC.has(c.type) ? 'num' : ''} ${isNeg(r[c.key], c.type) ? 'neg' : ''}${sc(c)}`} style={ss(c)}
                       title={c.render ? undefined : fullTitle(r[c.key], c.type)}>
                       {c.render ? c.render(r) : cell(r[c.key], c.type, unit)}
                     </td>

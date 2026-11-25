@@ -44,6 +44,7 @@ const GROUPS = [
   {
     id: 'finance', label: 'مالی و خزانه', dot: 'var(--u-fin)', items: [
       { to: '/finance/management', label: 'خلاصه مدیریتی مالی', icon: '✧' },
+      { to: '/finance/discounts', label: 'تخفیف‌ها', icon: '٪' },
       { to: '/finance/cheques', label: 'چک و سررسید', icon: '◷' },
       { to: '/finance/cashBank', label: 'نقد و حواله', icon: '⇄' },
       { to: '/finance/companyPayments', label: 'حواله‌های پرداختی شرکت', icon: '↗' },

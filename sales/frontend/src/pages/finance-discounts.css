@@ -1,0 +1,216 @@
+.sales-scope.fd-discounts[data-theme="dark"] {
+  min-width: 0;
+  background: transparent;
+}
+
+.fd-discount-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 22px 28px;
+  border: 1px solid var(--u-border);
+  border-radius: 20px;
+  background: linear-gradient(135deg, #0b2535, #0d3641);
+  margin-bottom: 24px;
+}
+
+.fd-discount-hero small { color: #7decdc; font-weight: 700; }
+.fd-discount-hero h1 { margin: 4px 0 6px; font-size: clamp(21px, 2vw, 28px); }
+.fd-discount-hero p { margin: 0; color: var(--text-2); }
+
+.fd-discount-sources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.fd-discount-source {
+  --source-color: #38bdf8;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  min-height: 308px;
+  padding: 28px;
+  border: 1px solid var(--u-border-2);
+  border-top: 4px solid var(--source-color);
+  border-radius: 20px;
+  background: linear-gradient(145deg, var(--surface-2), var(--surface));
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: border-color .18s ease, transform .18s ease;
+}
+
+.fd-discount-source.karamad { --source-color: #2dd4bf; }
+.fd-discount-source:hover { border-color: var(--source-color); transform: translateY(-3px); }
+.fd-discount-source:focus-visible,
+.fd-discount-drill:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.fd-discount-source > span { color: var(--text-2); font-weight: 650; }
+.fd-discount-source h2 { margin: 12px 0 24px; font-size: 27px; }
+.fd-discount-source strong { font-size: clamp(25px, 3vw, 36px); font-variant-numeric: tabular-nums; }
+.fd-discount-source small { margin-top: 8px; color: var(--muted); }
+.fd-discount-source > b { margin-top: auto; padding-top: 24px; color: #7decdc; }
+
+.fd-discount-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.fd-discount-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.fd-discount-metrics > .kpi { border-top: 3px solid var(--border); }
+.fd-discount-metrics > .kpi:first-child { border-top-color: var(--accent); }
+.fd-discount-drill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.fd-discount-drill:hover,
+.fd-discount-drill[aria-expanded="true"] { background: var(--accent-soft); }
+.sales-scope.fd-discounts .expand-panel {
+  position: static;
+  max-width: none;
+  padding: 12px;
+}
+
+.fd-discount-table { container: discount-table / inline-size; min-width: 0; }
+.sales-scope.fd-discounts .fd-discount-table .table-wrap,
+.sales-scope.fd-discounts .fd-discount-table .table-scroll {
+  max-height: none;
+  overflow: visible;
+}
+.fd-discount-table .table-scroll-top { display: none; }
+.fd-discount-table .table-tools { flex-wrap: wrap; }
+.fd-discount-table .table-tools .input { min-width: 0; }
+.fd-discount-table .dt { table-layout: fixed; }
+.fd-discount-table .dt th:first-child { width: 23%; }
+.fd-discount-table .dt th,
+.fd-discount-table .dt td {
+  position: static;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+.fd-discount-subvalue { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+
+.fd-discount-detail {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+.fd-discount-detail h3 { margin: 0 0 10px; color: var(--text); font-size: 14px; }
+.sales-scope.fd-discounts .fd-discount-invoices > .table-wrap > .table-scroll {
+  max-height: min(55dvh, 520px);
+  overflow: auto;
+  overscroll-behavior-y: contain;
+}
+.sales-scope.fd-discounts .fd-discount-invoices > .table-wrap > .table-scroll > .dt > thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.fd-discount-dialog {
+  width: min(940px, calc(100vw - 24px));
+  max-height: min(82dvh, 760px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 24px 80px #0009;
+}
+.fd-discount-dialog::backdrop { background: #020b14b8; }
+.fd-discount-dialog[open] { display: flex; flex-direction: column; }
+.fd-discount-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.fd-discount-dialog > header h3 { margin: 0; font-size: 17px; }
+.fd-discount-dialog > header p { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+.fd-discount-dialog-body { padding: 16px; min-height: 0; overflow-y: auto; }
+.fd-discount-rates { list-style: none; margin: 0; padding: 0; }
+.fd-discount-rates li + li { margin-top: 6px; }
+
+@container discount-table (max-width: 680px) {
+  .fd-discount-table .dt,
+  .fd-discount-table .dt > tbody { display: block; }
+  .fd-discount-table .dt > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .fd-discount-table .dt > tbody > tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 98px), 1fr));
+    gap: 2px 8px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+  .fd-discount-table .dt > tbody > tr > td {
+    max-width: none;
+    border: 0;
+    box-shadow: none;
+    background: transparent;
+    text-align: start;
+  }
+  .fd-discount-table .dt > tbody > tr > td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .fd-discount-table .dt > tbody > tr > td:first-child,
+  .fd-discount-table .dt > tbody > tr > td[colspan] { grid-column: 1 / -1; }
+  .fd-discount-table .dt > tbody > .expand-row { display: block; }
+}
+
+@media (max-width: 720px) {
+  .fd-discount-sources { grid-template-columns: 1fr; gap: 14px; }
+  .fd-discount-source { min-height: 220px; padding: 20px; }
+  .fd-discount-hero { padding: 18px; }
+  .sales-scope.fd-discounts .expand-panel { padding-inline: 8px; }
+  .fd-discount-dialog-body { padding: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fd-discount-source { transition: none; }
+  .fd-discount-source:hover { transform: none; }
+}

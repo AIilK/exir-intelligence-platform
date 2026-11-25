@@ -41,7 +41,8 @@ MGMT_POLICY = "تخفیف مدیریتی"
 TAX_POLICY = "مالیات"
 POLICIES_SQL = """OUTER APPLY (SELECT SUM(CASE WHEN bp.Name LIKE N'{cash}%' THEN pr2.Price END) AS cash,
                     SUM(CASE WHEN bp.Name LIKE N'{mgmt}%' THEN pr2.Price END) AS mgmt,
-                    SUM(CASE WHEN bp.Name LIKE N'{tax}%' THEN pr2.Price END) AS tax
+                    SUM(CASE WHEN bp.Name LIKE N'{tax}%' THEN pr2.Price END) AS tax,
+                    SUM(CASE WHEN bp.Type = 'Discount' AND bp.Name LIKE N'تخفیف حجمی%' THEN pr2.Price END) AS volume
              FROM SLS3.InvoiceItemPolicyResult pr2 JOIN GNR3.BusinessPolicy bp ON bp.BusinessPolicyID = pr2.BusinessPolicyRef
              WHERE pr2.InvoiceItemRef = ii.InvoiceItemID) cd"""
 
@@ -53,20 +54,21 @@ def policies_sql() -> str:
 LINES_SQL = """
 SELECT 'S' AS kind, c.Number AS code, FORMAT(i.Date, 'yyyy/MM/dd', 'fa-IR') AS date, i.Number AS inv,
        pr.Number AS product_code, pr.Name AS product, ii.MajorUnitQuantity AS qty, ii.Price AS gross, ii.NetPrice AS net,
-       ISNULL(cd.cash, 0) AS cash, ISNULL(cd.mgmt, 0) AS mgmt, ISNULL(cd.tax, 0) AS tax
+       ISNULL(cd.cash, 0) AS cash, ISNULL(cd.mgmt, 0) AS mgmt, ISNULL(cd.tax, 0) AS tax,
+       ISNULL(cd.volume, 0) AS volume, ISNULL(ii.ReductionAmount, 0) AS discount, i.InvoiceID AS invoice_id
 FROM SLS3.InvoiceItem ii JOIN SLS3.Invoice i ON i.InvoiceID = ii.InvoiceRef
 JOIN SLS3.Customer c ON c.CustomerID = i.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = ii.ProductRef
 {policies}
 WHERE i.Date >= ? AND i.Status IN ({st}) AND c.Number IN ({codes})
 UNION ALL
 SELECT 'R', c.Number, FORMAT(r.Date, 'yyyy/MM/dd', 'fa-IR'), r.Number,
-       pr.Number, pr.Name, ri.MajorUnitQuantity, ri.Price, ri.NetPrice, 0, 0, 0
+       pr.Number, pr.Name, ri.MajorUnitQuantity, ri.Price, ri.NetPrice, 0, 0, 0, 0, 0, r.ReturnInvoiceID
 FROM SLS3.ReturnInvoiceItem ri JOIN SLS3.ReturnInvoice r ON r.ReturnInvoiceID = ri.ReturnInvoiceRef
 JOIN SLS3.Customer c ON c.CustomerID = r.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = ri.ProductRef
 WHERE r.Date >= ? AND r.Status IN ({st}) AND c.Number IN ({codes})
 UNION ALL
 SELECT 'Q', c.Number, FORMAT(q.Date, 'yyyy/MM/dd', 'fa-IR'), q.Number,
-       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 0, 0, 0
+       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 0, 0, 0, 0, 0, q.SaleRequestID
 FROM SLS3.SaleRequestItem qi JOIN SLS3.SaleRequest q ON q.SaleRequestID = qi.SaleRequestRef
 JOIN SLS3.Customer c ON c.CustomerID = q.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = qi.ProductRef
 WHERE q.Date >= ? AND q.State IN ({rq}) AND c.Number IN ({codes})"""
@@ -263,7 +265,7 @@ def load(env_file, cfg: dict) -> dict:
         df[k] = df[k].map(loader._clean_code)
     df["product"] = df["product"].map(loader._clean_text)
     df["inv"] = df["inv"].astype(str)
-    for k in ("qty", "gross", "net", "cash", "mgmt", "tax"):
+    for k in ("qty", "gross", "net", "cash", "mgmt", "tax", "volume", "discount"):
         df[k] = pd.to_numeric(df[k], errors="coerce").fillna(0.0)
     df["month"] = df["date"].str[:7]
     cat = product_categories(df["product_code"])

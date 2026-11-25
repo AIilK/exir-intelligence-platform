@@ -49,6 +49,7 @@ const RahkaranCompare = () => import('@sales/pages/RahkaranCompare.jsx')
 const Reorder = () => import('@sales/pages/Reorder.jsx')
 const Export = () => import('@sales/pages/Export.jsx')
 const ExportPreview = () => import('@sales/pages/ExportPreview.jsx')
+const FinanceDiscounts = () => import('@sales/pages/FinanceDiscounts.jsx')
 const RahkaranCommission = () => import('@sales/pages/RahkaranCommission.jsx')
 const Commission = () => import('@sales/pages/Commission.jsx')
 const Contest = () => import('@sales/pages/Contest.jsx')
@@ -69,6 +70,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="files/visitors/:id" element={page(VisitorFile)} />
             <Route path="files/rahkaran" element={page(RahkaranList)} />
             <Route path="files/rahkaran/:code" element={page(RahkaranFile)} />
+            <Route path="finance/discounts" element={page(FinanceDiscounts)} />
             <Route path="finance/:view" element={page(FinanceView)} />
             <Route path="reconciliation" element={page(Reconciliation)} />
             <Route path="contracts" element={page(Contracts)} />

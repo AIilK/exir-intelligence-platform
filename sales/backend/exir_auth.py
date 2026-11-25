@@ -35,6 +35,7 @@ SALES_ALL = {"sales", "salesOverview", "salesHybrid", "salesTeam", "salesProduct
 REPORTS = {"salesProducts", "salesAnalysis"}
 # (مسیر، فقط دقیقاً همین مسیر؟، ماژول‌ها) — اولین تطابق اعمال می‌شود
 API_MODULES: list[tuple[str, bool, set[str]]] = [
+    ("/api/finance-discounts", True, {"discounts"}),
     ("/api/overview", False, {"salesOverview"}),
     # هشدار روز درخواست ویزیتورها (کارت نمای کلی فروش)
     ("/api/request-days", True, {"sales", "salesOverview", "salesHybrid", "salesTeam", "salesCommission"}),

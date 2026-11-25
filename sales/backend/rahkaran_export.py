@@ -27,7 +27,7 @@ DEFAULT_FROM = "1400/01/01"
 USD = 3  # GNR3.Currency
 MAX_UNIT_USD = 1000  # بیشترین قیمت واحد معقول یک کالا به دلار
 # مبالغ هر سطر که به دلار تبدیل می‌شوند (تخفیف نقدی، مدیریتی و مالیات از سیاست‌های فروش، مثل فروش B2B)
-MONEY = ["gross", "net", "cash", "mgmt", "tax"]
+MONEY = ["gross", "net", "cash", "mgmt", "tax", "discount"]
 # برند کالا در products.csv انگلیسی و با چند املاست؛ نام فارسی مثل بقیه داشبورد
 BRANDS = {"padina": "پادینا", "base": "بیس", "jevo": "جوو", "arkia": "آرکیا", "vina": "وینا", "oradent": "اورادنت",
           "tacori": "تاکوری", "kalyon": "کالیون", "mulhens": "مولهنس", "lorient": "لورینت", "upsky": "آپ اسکای",
@@ -37,14 +37,15 @@ LINES_SQL = """
 SELECT 'S' AS kind, c.Number AS code, FORMAT(i.Date, 'yyyy/MM/dd', 'fa-IR') AS date, i.Number AS inv,
        pr.Number AS product_code, pr.Name AS product, ii.MajorUnitQuantity AS qty, ii.Price AS gross, ii.NetPrice AS net,
        CASE WHEN i.Status = 11 THEN 1 ELSE 0 END AS final, i.CurrencyRef AS cur, i.OperationalCurrencyExchangeRate AS rate,
-       ISNULL(cd.cash, 0) AS cash, ISNULL(cd.mgmt, 0) AS mgmt, ISNULL(cd.tax, 0) AS tax
+       ISNULL(cd.cash, 0) AS cash, ISNULL(cd.mgmt, 0) AS mgmt, ISNULL(cd.tax, 0) AS tax,
+       ISNULL(ii.ReductionAmount, 0) AS discount, i.InvoiceID AS invoice_id, ii.InvoiceItemID AS item_id
 FROM SLS3.InvoiceItem ii JOIN SLS3.Invoice i ON i.InvoiceID = ii.InvoiceRef
 JOIN SLS3.Customer c ON c.CustomerID = i.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = ii.ProductRef
 {policies}
 WHERE i.Date >= ? AND i.Status IN ({st}) AND c.Number IN ({codes})
 UNION ALL
 SELECT 'Q', c.Number, FORMAT(q.Date, 'yyyy/MM/dd', 'fa-IR'), q.Number,
-       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 1, q.CurrencyRef, q.OperationalCurrencyExchangeRate, 0, 0, 0
+       pr.Number, pr.Name, qi.MajorUnitQuantity, qi.Price, qi.NetPrice, 1, q.CurrencyRef, q.OperationalCurrencyExchangeRate, 0, 0, 0, 0, q.SaleRequestID, NULL
 FROM SLS3.SaleRequestItem qi JOIN SLS3.SaleRequest q ON q.SaleRequestID = qi.SaleRequestRef
 JOIN SLS3.Customer c ON c.CustomerID = q.CustomerRef JOIN SLS3.Product pr ON pr.ProductID = qi.ProductRef
 WHERE q.Date >= ? AND q.State IN ({rq}) AND c.Number IN ({codes})"""
@@ -144,7 +145,7 @@ def load(env_file, cfg: dict) -> dict:
     df["inv"] = df["inv"].astype(str)
     df["year"] = df["date"].str[:4]
     df["mm"] = df["date"].str[5:7]
-    for k in ("qty", "gross", "net", "rate", "cur", "cash", "mgmt", "tax"):
+    for k in ("qty", "rate", "cur", *MONEY):
         df[k] = pd.to_numeric(df[k], errors="coerce").fillna(0.0)
     _to_usd(df)
     # سطرهای وضعیت ۲ گاهی به ریال‌اند (نمونه رایگان)؛ مبلغشان صفر است و دلار حساب نمی‌شوند
@@ -162,6 +163,27 @@ def load(env_file, cfg: dict) -> dict:
     df["short"] = info["short"].values
     df["country"] = info["country"].values
     return {"lines": df, "customers": cust, "today": today}
+
+
+def invoice_discount_titles(env_file, invoice_id: int) -> dict[int, str]:
+    """Actual nonzero discount policy names for each finalized export invoice item."""
+    cn = sql_source.connect(sql_source.settings(sql_source.read_env(env_file), prefix=RK.ENV_PREFIX))
+    try:
+        cn.timeout = 10
+        rows = RK._read(cn, """
+            SELECT DISTINCT ii.InvoiceItemID AS item_id, LTRIM(RTRIM(bp.Name)) AS title
+            FROM SLS3.InvoiceItem ii
+            JOIN SLS3.Invoice i ON i.InvoiceID = ii.InvoiceRef
+            JOIN SLS3.InvoiceItemPolicyResult pr ON pr.InvoiceItemRef = ii.InvoiceItemID
+            JOIN GNR3.BusinessPolicy bp ON bp.BusinessPolicyID = pr.BusinessPolicyRef
+            WHERE ii.InvoiceRef = ? AND i.Status = 11
+              AND bp.Type IN ('Discount', 'FreeProductDiscount') AND pr.Price <> 0
+              AND LTRIM(RTRIM(bp.Name)) <> ''
+            ORDER BY item_id, title
+        """, [invoice_id])
+        return {int(key): '، '.join(values) for key, values in rows.groupby('item_id')['title']}
+    finally:
+        cn.close()
 
 
 def _to_usd(df: pd.DataFrame) -> None:

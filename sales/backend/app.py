@@ -10,6 +10,7 @@ import re
 import threading
 import time
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -1773,6 +1774,58 @@ def rk_export_workspace(req: Request, compare_year: str | None = None):
     out = export_workspace.report(snap, RE.parse_filters(req.query_params), compare_year)
     out['sale_days'] = sorted(snap['lines'].loc[snap['lines'].kind.eq('S'), 'date'].unique().tolist())
     return _rke_payload(snap, out)
+
+
+@app.get("/api/finance-discounts")
+def finance_discounts(source: Literal["karamad", "b2b", "export"], date_from: str | None = None,
+                      date_to: str | None = None, group: str | None = None, invoice_id: str | None = None):
+    from finance_discounts import karamad_invoice_rates, karamad_registered_discounts, report
+
+    for value in (date_from, date_to):
+        if value and not re.fullmatch(r"[0-9]{4}/[0-9]{2}/[0-9]{2}", value):
+            raise HTTPException(422, "تاریخ را به شکل YYYY/MM/DD وارد کنید.")
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(422, "تاریخ شروع باید قبل از تاریخ پایان باشد.")
+    if source == "karamad":
+        data = STATE["data"]
+        if data is None:
+            raise HTTPException(409, STATE["error"] or "دادهٔ کارآمد بارگذاری نشده است.")
+        lines = data["sales"]
+        today = data["meta"].get("today") or lines.date.max()
+    else:
+        snap = _rk_sales() if source == "b2b" else _rk_export()
+        lines, today = snap["lines"], snap["today"]
+    result = report(lines, source, today, date_from, date_to, group, invoice_id)
+    if source == "export" and group is not None and invoice_id and any(
+        row["discount"] and row.get("item_id") is not None for row in result["rows"]
+    ) and re.fullmatch(r"[0-9]{1,19}", invoice_id):
+        try:
+            titles = RE.invoice_discount_titles(ENV_FILE, int(invoice_id))
+            for row in result["rows"]:
+                row["discount_title"] = titles.get(row.get("item_id"))
+        except (loader.DataError, pd.errors.DatabaseError):
+            result["registered_error"] = "خواندن عنوان تخفیف‌ها از راهکاران ممکن نشد."
+    if source != "karamad" or group is None or not result["rows"]:
+        return result
+    if invoice_id is None:
+        ids = sorted({int(row["invoice_id"]) for row in result["rows"]
+                      if re.fullmatch(r"[0-9]{1,19}", row["invoice_id"])})
+        try:
+            registered = karamad_invoice_rates(ENV_FILE, ids) if ids else {}
+            for row in result["rows"]:
+                row["registered_rates"] = registered.get(row["invoice_id"])
+        except (loader.DataError, pd.errors.DatabaseError):
+            result["registered_error"] = "خواندن نرخ‌های ثبت‌شده از کارآمد ممکن نشد."
+    else:
+        result["registered_discounts"] = []
+        if not re.fullmatch(r"[0-9]{1,19}", invoice_id):
+            result["registered_error"] = "شناسهٔ سند برای خواندن تخفیف‌های ثبت‌شده در دسترس نیست."
+            return result
+        try:
+            result["registered_discounts"] = karamad_registered_discounts(ENV_FILE, int(invoice_id))
+        except (loader.DataError, pd.errors.DatabaseError):
+            result["registered_error"] = "خواندن نرخ‌های ثبت‌شده از کارآمد ممکن نشد."
+    return result
 
 
 @app.get("/api/rk_export/goods_tree")

@@ -15,6 +15,12 @@ MODULES: dict[str, dict[str, Any]] = {
     "productionForecast": {
         "title": "Forecast تولید", "group": "sales", "views": [], "alarm_agents": [], "chat_tools": [],
     },
+    "discounts": {
+        "title": "تخفیف‌ها",
+        "views": ["discounts"],
+        "alarm_agents": [],
+        "chat_tools": [],
+    },
     "management": {
         "title": "خلاصه مدیریتی مالی",
         "views": ["overview", "management", "history"],
