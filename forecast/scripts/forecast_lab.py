@@ -24,6 +24,7 @@ Changes tested (one at a time against "base")
   perclass   separate LightGBM models for A, B and C products
   pool       extra models in the candidate pool (TSB, ADIDA, TD_BRAND, MEAN4, MED_ALL)
 """
+import os
 import sys
 import time
 import warnings
@@ -41,12 +42,22 @@ T0 = time.time()
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "forecast" / "data"
+SNAPSHOT = Path(os.environ["EXIR_FORECAST_SNAPSHOT"]) if os.environ.get("EXIR_FORECAST_SNAPSHOT") else None
 LAB = ROOT / "forecast" / "lab"
 LAB.mkdir(exist_ok=True)
 
+
+def data_path(filename):
+    if SNAPSHOT is not None:
+        override = SNAPSHOT / filename
+        if override.is_file():
+            return override
+    return DATA / filename
+
 MANUAL_EXCLUDE = ["1396/02", "1396/03", "1396/04", "1397/01", "1398/01", "1399/01", "1401/01",
                   "1403/01", "1404/10", "1404/11", "1404/12", "1405/01"]
-TRAIN_START, LAST_FULL = "1397/02", "1405/07"
+TRAIN_START = "1397/02"
+LAST_FULL = os.environ.get("EXIR_FORECAST_LAST_CLOSED_MONTH", "1405/07")
 ROLL_FROM, ROLL_TO, SPLIT = "1403/07", "1405/06", "1404/06"
 CUT_EARLY, CUT_LATE = "1403/06", "1404/06"
 FINAL_TARGETS = ["1405/08", "1405/09", "1405/10", "1405/11"]
@@ -79,7 +90,7 @@ def L(x):
 
 
 # =============================== data ===============================
-sales = pd.read_csv(DATA / "kdb_sales_monthly.csv", dtype={"code": str})
+sales = pd.read_csv(data_path("kdb_sales_monthly.csv"), dtype={"code": str})
 sales["mi"] = sales["pm"].map(mon)
 i_start, i_last = mon(TRAIN_START), mon(LAST_FULL)
 idx = np.arange(i_start, i_last + 1)
@@ -110,37 +121,48 @@ S = np.array([np.mean(rat[m]) for m in range(12)])
 S = S / S.mean()
 S_row = S[idx % 12]
 
-# availability from the stock ledger (same method as v3)
-mv = pd.read_csv(DATA / "kdb_stock_moves_monthly.csv", dtype={"code": str})
-mv = mv[mv["code"].isin(k_idx)]
-mv["mi"] = mv["pm"].map(mon)
-mv = mv.groupby(["bid", "code", "mi"], as_index=False)[["net_move", "opening", "sales_out"]].sum()
-pairs = mv.loc[mv["sales_out"] > 0, ["bid", "code"]].drop_duplicates().sort_values(["bid", "code"])
-all_mi = np.arange(mon("1396/01"), i_last + 1)
-grid = pairs.merge(pd.DataFrame({"mi": all_mi}), how="cross").merge(
-    mv, on=["bid", "code", "mi"], how="left")
-grid[["net_move", "opening", "sales_out"]] = grid[["net_move", "opening", "sales_out"]].fillna(0.0)
-grid = grid.sort_values(["bid", "code", "mi"]).reset_index(drop=True)
-grid["close"] = grid.groupby(["bid", "code", grid["mi"] // 12])["net_move"].cumsum()
-grid["start"] = grid["close"] - grid["net_move"] + grid["opening"]
-Mn, Pn = len(all_mi), len(pairs)
-out_arr = np.where((grid["start"] <= 0) & (grid["close"] <= 0), 1.0,
-                   np.where((grid["start"] <= 0) | (grid["close"] <= 0), 0.5, 0.0)).reshape(Pn, Mn)
-so = grid["sales_out"].values.reshape(Pn, Mn)
-cs = np.concatenate([np.zeros((Pn, 1)), np.cumsum(so, axis=1)], axis=1)
-tt = np.arange(Mn)
-hist = cs[:, tt] - cs[:, np.maximum(tt - 12, 0)]
-pc = grid["code"].values[::Mn]
-avail = (1 - pd.DataFrame(hist * out_arr).groupby(pc).sum() / pd.DataFrame(hist).groupby(pc).sum().replace(0, np.nan)).fillna(1.0)
-AV = np.ones((T, n))
-cols = [int(i - all_mi[0]) for i in idx]
-for c, row in avail.iterrows():
-    AV[:, k_idx[c]] = row.values[cols]
-del grid, mv, out_arr, so, cs, hist
+def stock_availability(moves, product_codes, months):
+    """Weight inferred branch stockouts by the SKU's prior 12 months of sales."""
+    first = mon("1396/01")
+    width = int(months[-1]) - first + 1
+    fields = ["net_move", "opening", "sales_out"]
+    keys = ["bid", "code"]
+    moves = moves.loc[moves.code.isin(product_codes)].assign(mi=lambda d: d.pm.map(mon))
+    grouped = moves.groupby([*keys, "mi"], as_index=False)[fields].sum()
+    pairs = grouped.loc[grouped.sales_out.gt(0), keys].drop_duplicates().reset_index(drop=True)
+    indexed = grouped.loc[grouped.mi.between(first, months[-1])].merge(
+        pairs.assign(pair=np.arange(len(pairs))), on=keys, how="inner").sort_values("pair")
+    pair_ids = indexed.pair.to_numpy()
+    product = pd.Index(product_codes).get_indexer(pairs.code)
+    weights = np.zeros((len(product_codes), width))
+    unavailable = np.zeros_like(weights)
+    time = np.arange(width)
+    year_starts = np.arange(0, width, 12)
+    for lo in range(0, len(pairs), 1024):
+        hi = min(len(pairs), lo + 1024)
+        chunk = indexed.iloc[np.searchsorted(pair_ids, lo):np.searchsorted(pair_ids, hi)]
+        ledger = np.zeros((hi - lo, width, 3))
+        ledger[chunk.pair.to_numpy() - lo, chunk.mi.to_numpy() - first] = chunk[fields].to_numpy()
+        move, opening, sold = ledger.transpose(2, 0, 1)
+        close = np.empty_like(move)
+        for start in year_starts:
+            window = slice(start, start + 12)
+            close[:, window] = np.cumsum(move[:, window], axis=1)
+        start_stock = close - move + opening
+        loss = 0.5 * ((start_stock <= 0).astype(float) + (close <= 0))
+        prefix = np.pad(np.cumsum(sold, axis=1), ((0, 0), (1, 0)))
+        prior = prefix[:, time] - prefix[:, np.maximum(time - 12, 0)]
+        np.add.at(weights, product[lo:hi], prior)
+        np.add.at(unavailable, product[lo:hi], prior * loss)
+    rate = np.divide(unavailable, weights, out=np.zeros_like(weights), where=weights != 0)
+    return (1 - rate[:, months - first]).T
+
+
+AV = stock_availability(pd.read_csv(data_path("kdb_stock_moves_monthly.csv"), dtype={"code": str}), codes, idx)
 
 # extra feature inputs
 BRC = sales.pivot_table(index="mi", columns="code", values="branches", aggfunc="max").reindex(idx).reindex(columns=codes).fillna(0.0).values
-disc = pd.read_csv(DATA / "kdb_discount_monthly.csv", dtype={"code": str})
+disc = pd.read_csv(data_path("kdb_discount_monthly.csv"), dtype={"code": str})
 disc["mi"] = disc["pm"].map(mon)
 pv = lambda col: disc.pivot_table(index="mi", columns="code", values=col, aggfunc="sum").reindex(idx).reindex(columns=codes)
 _g, _d, _q = pv("gross"), pv("discount"), pv("qty")
@@ -181,7 +203,7 @@ for t in range(T):
     lab = np.where(w[order] > 0, lab, 3)
     CLS[t, order] = lab
 
-goods = pd.read_csv(DATA / "kdb_goods.csv", dtype={"code": str}).drop_duplicates("code").set_index("code")
+goods = pd.read_csv(data_path("kdb_goods.csv"), dtype={"code": str}).drop_duplicates("code").set_index("code")
 brand_of = [str(goods.loc[c, "brand"]) if c in goods.index and pd.notna(goods.loc[c, "brand"]) else f"_{c}" for c in codes]
 log("data ready:", T, "months x", n, "products")
 

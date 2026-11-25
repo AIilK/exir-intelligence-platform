@@ -12,6 +12,9 @@ from __future__ import annotations
 from typing import Any
 
 MODULES: dict[str, dict[str, Any]] = {
+    "productionForecast": {
+        "title": "Forecast تولید", "group": "sales", "views": [], "alarm_agents": [], "chat_tools": [],
+    },
     "management": {
         "title": "خلاصه مدیریتی مالی",
         "views": ["overview", "management", "history"],
@@ -184,6 +187,8 @@ COMMON_VIEWS = ["alerts"]
 # API هایی که فقط برای بعضی ماژول‌ها باز است (پیشوند مسیر ← ماژول‌های مجاز). بقیه APIها فقط ورود می‌خواهند.
 # «admin» یعنی فقط مدیر سیستم (اجرای دستی همه Agentها).
 API_RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("/api/v1/forecast/refresh", ("admin",)),
+    ("/api/v1/forecast", ("productionForecast",)),
     ("/api/v1/chatbot", ("chatbot",)),
     ("/api/v1/whatsapp", ("whatsapp",)),
     ("/api/v1/finance/contracts", ("contracts",)),

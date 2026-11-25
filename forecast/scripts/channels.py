@@ -9,49 +9,30 @@ Price inputs
   company price index = chained, quantity-weighted monthly change of KDB list prices (gross / qty) per product
   official inflation  = point-to-point CPI figures reported in the news for 1404 (context for the LLM only)
 """
-from pathlib import Path
-
 import jdatetime
 import numpy as np
 import pandas as pd
 
 import forecast_lab as F
+from channel_rules import channel_of
+from channel_rules import normalize as norm
 
-ROOT = F.ROOT
-EXPORT_LIST = ROOT / "sales" / "data" / "rahkaran" / "export_customers.csv"
-COUNTRY = ["عراق", "بغداد", "اربیل", "سلیمانیه", "افغانستان", "هرات", "کابل", "مزار", "ارمنستان", "یروان", "ایروان",
-           "تاجکستان", "آذربایجان", "باکو", "روسیه", "سنگال", "ترکیه", "عمان", "امارات", "دبی", "قطر", "کویت",
-           "ترکمنستان", "ازبکستان", "گرجستان"]
 OFFICIAL_INFLATION = {  # point-to-point household CPI inflation, as reported in the news (SCI / CBI)
     "1404/04": 41.2, "1404/05": 42.4, "1404/06": 45.3, "1404/07": 48.6, "1404/08": 49.4,
     "1404/10": 60.0, "1404/11": 68.1, "1404/12": 71.8}
-
-norm = lambda s: str(s).replace("ي", "ی").replace("ك", "ک").strip()
-_export_names = set(map(norm, pd.read_csv(EXPORT_LIST, encoding="utf-8-sig")["name"]))
-
-
-def channel_of(name):
-    c = norm(name)
-    if any(k in c for k in ("هیبرید", "زنجیره", "اینترنت")):
-        return "own"
-    if "اهدایی" in c or "مواد" in c:
-        return "drop"
-    if c in _export_names or any(k in c for k in COUNTRY):
-        return "export"
-    return "b2b"
-
 
 def _pm_index(dates):
     u = {d: jdatetime.date.fromgregorian(date=pd.Timestamp(d).date()) for d in pd.unique(dates)}
     return dates.map(lambda d: u[d].year * 12 + u[d].month - 1)
 
 
-def rahkaran_channels():
+def rahkaran_channels(valid_months=None):
     """dict channel -> (Y matrix T x n with NaN for unknown/excluded months, codes)."""
-    prod_codes = set(pd.read_csv(F.DATA / "rk_production_daily.csv", dtype={"code": str})["code"])
+    valid_months = F.valid_row if valid_months is None else valid_months
+    prod_codes = set(pd.read_csv(F.data_path("rk_production_daily.csv"), dtype={"code": str})["code"])
     finished = set(F.goods.index) | prod_codes
-    inv = pd.read_csv(F.DATA / "rk_invoices_daily.csv", dtype={"code": str})
-    ret = pd.read_csv(F.DATA / "rk_returns_daily.csv", dtype={"code": str})
+    inv = pd.read_csv(F.data_path("rk_invoices_daily.csv"), dtype={"code": str})
+    ret = pd.read_csv(F.data_path("rk_returns_daily.csv"), dtype={"code": str})
     ret = ret[ret["status"] == 11].copy()
     ret["qty"] = -ret["qty"]
     both = pd.concat([inv, ret], ignore_index=True)
@@ -66,14 +47,14 @@ def rahkaran_channels():
         codes = sorted(P.columns)
         Y = P[codes].to_numpy(copy=True)
         Y[F.idx < first] = np.nan
-        Y[~F.valid_row] = np.nan
+        Y[~valid_months] = np.nan
         out[ch] = (Y, codes)
     return out, first
 
 
 def company_price_index():
     """monthly company price index from KDB list prices; returns dict of per-row series."""
-    disc = pd.read_csv(F.DATA / "kdb_discount_monthly.csv", dtype={"code": str})
+    disc = pd.read_csv(F.data_path("kdb_discount_monthly.csv"), dtype={"code": str})
     disc["mi"] = disc["pm"].map(F.mon)
     disc = disc[(disc["qty"] > 0) & (disc["gross"] > 0)]
     P = (disc.pivot_table(index="mi", columns="code", values="gross", aggfunc="sum") /
@@ -93,7 +74,7 @@ def company_price_index():
 
 def product_price_features(codes):
     """discount rate and recent list-price change per product (KDB prices), aligned to `codes`."""
-    disc = pd.read_csv(F.DATA / "kdb_discount_monthly.csv", dtype={"code": str})
+    disc = pd.read_csv(F.data_path("kdb_discount_monthly.csv"), dtype={"code": str})
     disc["mi"] = disc["pm"].map(F.mon)
     pv = lambda col: disc.pivot_table(index="mi", columns="code", values=col, aggfunc="sum").reindex(F.idx).reindex(columns=codes)
     g, d, q = pv("gross"), pv("discount"), pv("qty")

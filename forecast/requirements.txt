@@ -1,0 +1,9 @@
+numpy
+pandas
+lightgbm
+scikit-learn
+scipy
+jdatetime
+pyodbc
+xlsxwriter
+tzdata

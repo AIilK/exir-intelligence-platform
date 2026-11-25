@@ -13,6 +13,7 @@ Model per ABC class is chosen on EARLY origins (by tolWAPE) and scored on LATE o
 Outputs: forecast/lab/channels_experiments.xlsx, lab/backtest_<channel>.npz, lab/final_<channel>.npz
 """
 import json
+from tempfile import TemporaryFile
 import time
 
 import lightgbm as lgb
@@ -30,21 +31,26 @@ CFGS = {"prev": dict(spikes=True, features=True, inflation=False),
 
 
 class Channel:
-    def __init__(self, name, Y, codes):
+    def __init__(self, name, Y, codes, *, valid_months=None, season_cutoff=None):
         self.name, self.Y, self.codes, self.n = name, Y, list(codes), len(codes)
         self.hybrid = name == "hybrid"
         known = ~np.isnan(Y).all(axis=1)
-        self.valid = F.valid_row & known
+        valid_months = F.valid_row if valid_months is None else valid_months
+        self.valid = valid_months & known
+        self.season_cutoff = F.i_last if season_cutoff is None else season_cutoff
         self.first_row = int(np.argmax(known))
         tot = np.where(self.valid, np.nansum(Y, axis=1), np.nan)
         rat = {m: [] for m in range(12)}
         for yy in range(F.idx[0] // 12, F.idx[-1] // 12 + 1):
-            rows = [F.R(i) for i in range(yy * 12, yy * 12 + 12) if F.i_start <= i <= F.i_last and self.valid[F.R(i)]]
+            rows = [F.R(i) for i in range(yy * 12, yy * 12 + 12) if F.i_start <= i <= self.season_cutoff and self.valid[F.R(i)]]
             if len(rows) >= 10:
-                for r in rows:
-                    rat[F.idx[r] % 12].append(tot[r] / np.nanmean(tot[rows]))
-        S = np.array([np.mean(rat[m]) if rat[m] else 1.0 for m in range(12)])
-        self.S = S / S.mean()
+                annual_mean = np.mean(tot[rows])
+                if annual_mean > 0:
+                    for r in rows:
+                        rat[F.idx[r] % 12].append(tot[r] / annual_mean)
+        season = np.array([np.mean(rat[m]) if rat[m] else 1.0 for m in range(12)])
+        season = np.where(np.isfinite(season) & (season > 0), season, 1.0)
+        self.S = season / season.mean()
         Yz = np.nan_to_num(np.clip(Y, 0, None))
         cz = np.vstack([np.zeros(self.n), np.cumsum(Yz, axis=0)])
         self.CLS = np.full((F.T, self.n), 3, dtype=np.int8)
@@ -155,23 +161,47 @@ class Feats:
 
 
 class Learn:
-    def __init__(self, feats, cut_global):
+    def __init__(self, feats, cut_global, *, batch_size=4096):
         self.feats = feats
         cut = F.R(cut_global)
-        Xs, ys = [], []
+        training = []
         for h in range(1, F.H_MAX + 1):
             P = np.arange(0, cut - h + 1)
-            X, ok = feats.block(P, h)
             tgt = feats.D[P + h].reshape(-1)
-            m = ok & ~np.isnan(tgt)
-            Xs.append(X[m])
-            ys.append(tgt[m])
-        X, y = np.vstack(Xs), F.L(np.concatenate(ys))
+            mask = (~np.isnan(feats.m12[P])).reshape(-1) & ~np.isnan(tgt)
+            training.append((P, h, mask))
+        sample, _ = feats.block(np.array([cut]), 1)
+        size = sum(mask.sum() for _, _, mask in training)
+        y = np.empty(size, dtype=np.float32)
         self.rows = len(y)
-        self.gbm = lgb.LGBMRegressor(**F.LGB_PARAMS).fit(X, y)
-        self.mu, self.sd = np.nanmean(X, 0), np.nanstd(X, 0) + 1e-9
-        self.mlp = MLPRegressor(hidden_layer_sizes=(32,), batch_size=4096, learning_rate_init=2e-3, max_iter=5,
-                                random_state=0).fit(np.nan_to_num((X - self.mu) / self.sd), y)
+        with TemporaryFile() as store:
+            X = np.memmap(store, dtype=np.float32, mode="w+", shape=(size, sample.shape[1]))
+            start = 0
+            for P, h, mask in training:
+                mask = mask.reshape(len(P), -1)
+                for offset in range(0, len(P), 8):
+                    band = slice(offset, offset + 8)
+                    block, _ = feats.block(P[band], h)
+                    keep = mask[band].reshape(-1)
+                    end = start + keep.sum()
+                    X[start:end] = block[keep]
+                    y[start:end] = F.L(feats.D[P[band] + h].reshape(-1)[keep])
+                    start = end
+            del training, sample, block
+            self.gbm = lgb.LGBMRegressor(**F.LGB_PARAMS).fit(X, y)
+            self.mu = np.empty(X.shape[1], dtype=np.float32)
+            self.sd = np.empty_like(self.mu)
+            for j in range(X.shape[1]):
+                values = X[:, j]
+                self.mu[j] = np.nanmean(values)
+                self.sd[j] = np.nanstd(values) + 1e-9
+                values -= self.mu[j]
+                values /= self.sd[j]
+                np.nan_to_num(values, copy=False)
+            del values
+            self.mlp = MLPRegressor(hidden_layer_sizes=(32,), batch_size=batch_size, learning_rate_init=2e-3, max_iter=5,
+                                    random_state=0).fit(X, y)
+            del X
 
     def forecast(self, p, targets):
         n = self.feats.ch.n

@@ -22,9 +22,16 @@ def run_daily_customer_intelligence():
 def start_customer_scheduler():
     global _scheduler
     if _scheduler is not None: return _scheduler
-    if not settings.customer_intelligence_scheduler_enabled and not settings.karamad_excel_scan_enabled and not settings.hybrid_risk_weekly_enabled and not settings.whatsapp_enabled: return None
+    if not any((settings.customer_intelligence_scheduler_enabled, settings.karamad_excel_scan_enabled,
+                settings.hybrid_risk_weekly_enabled, settings.whatsapp_enabled, settings.forecast_refresh_enabled)): return None
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler=BackgroundScheduler(timezone="Asia/Tehran")
+    if settings.forecast_refresh_enabled:
+        from app.services.production_forecast import run_scheduled_plan, run_scheduled_market
+        _scheduler.add_job(run_scheduled_plan, "cron", hour=6, minute=15, id="production_forecast",
+                           max_instances=1, coalesce=True, misfire_grace_time=6*3600)
+        _scheduler.add_job(run_scheduled_market, "cron", day_of_week="sat", hour=9, minute=15,
+                           id="production_forecast_market", max_instances=1, coalesce=True, misfire_grace_time=6*3600)
     if settings.customer_intelligence_scheduler_enabled:
         _scheduler.add_job(run_daily_customer_intelligence,"cron",hour=settings.customer_intelligence_daily_hour,minute=settings.customer_intelligence_daily_minute,id="daily_customer_intelligence",replace_existing=True,max_instances=1,coalesce=True)
     if settings.hybrid_risk_weekly_enabled:

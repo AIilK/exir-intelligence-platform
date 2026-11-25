@@ -1,6 +1,6 @@
 """Pull all forecasting inputs from KDB (Karamad) and Rahkaran (factory). Read-only.
 
-Credentials:
+Credentials from backend/.env, backend/env, or the environment:
   KDB       -> backend/.env  (KARAMAD_SQLSERVER_*)
   Rahkaran  -> backend/.env  (RAHKARAN_SQLSERVER_*), or environment variables RK_SERVER / RK_DB / RK_USER / RK_PWD
 Outputs go to forecast/data/*.csv. Nothing is written to either database.
@@ -13,21 +13,25 @@ import pandas as pd
 import pyodbc
 
 ROOT = Path(__file__).resolve().parents[2]          # project root
-ENV_FILE = ROOT / "backend" / ".env"
+BACKEND_DIR = next(
+    (path / "backend" for path in (ROOT, ROOT.parent) if (path / "backend" / "app").is_dir()),
+    ROOT / "backend",
+)
 OUT = ROOT / "forecast" / "data"
-sys.path.insert(0, str(ROOT / "sales" / "backend"))  # reuse the SQL text the app already uses
+sys.path.insert(0, str(BACKEND_DIR.parent / "sales" / "backend"))  # reuse the SQL text the app already uses
 import rahkaran as RK  # noqa: E402  (only its SQL constants are used)
-
-OPEN_DAYS = 60
-
 
 def read_env(prefix):
     env = {}
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip().strip('"').strip("'")
+    for filename in ("env", ".env"):
+        path = BACKEND_DIR / filename
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            key, sep, value = line.strip().partition("=")
+            if sep and not key.startswith("#"):
+                env[key.strip()] = value.strip().strip('"').strip("'")
+    env.update(os.environ)
     return {k[len(prefix):]: v for k, v in env.items() if k.startswith(prefix)}
 
 
@@ -39,6 +43,8 @@ def conn_string(d, driver="ODBC Driver 18 for SQL Server"):
 
 def kdb():
     d = read_env("KARAMAD_SQLSERVER_")
+    if not all(d.get(k) for k in ("SERVER", "DATABASE", "USERNAME", "PASSWORD")):
+        raise SystemExit("Karamad settings missing (backend/.env, backend/env, or KARAMAD_SQLSERVER_* variables)")
     return pyodbc.connect(conn_string(d), timeout=30, readonly=True)
 
 
@@ -121,11 +127,9 @@ def main():
     with rahkaran() as cn:
         prod = df(cn, RK_PRODUCTION_DAILY)
         stock = df(cn, RK.STOCK_SQL)
-        open_orders = df(cn, RK.OPEN_SQL, [OPEN_DAYS])
     prod.to_csv(OUT / "rk_production_daily.csv", index=False, encoding="utf-8-sig")
     stock.to_csv(OUT / "rk_factory_stock.csv", index=False, encoding="utf-8-sig")
-    open_orders.to_csv(OUT / "rk_open_orders_lines.csv", index=False, encoding="utf-8-sig")
-    print("Rahkaran: production rows", len(prod), "| factory stock rows", len(stock), "| open order lines", len(open_orders))
+    print("Rahkaran: production rows", len(prod), "| factory stock rows", len(stock))
 
 
 if __name__ == "__main__":

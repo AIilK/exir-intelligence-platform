@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -38,6 +43,9 @@ class Settings(BaseSettings):
     reconciliation_api_key: str = ""
     # ورود کاربران و سطح دسترسی ماژول‌ها (app/auth). false فقط برای اجرای محلی بدون ورود.
     auth_enabled: bool = True
+    forecast_refresh_enabled: bool = True
+    forecast_data_dir: str = ""
+    forecast_python: str = ""
     payment_commitment_review_file: str = "./data/payment_commitment_reviews.json"
     # سود و زیان (P&L) فقط برای فصل‌هایی که پورسانتشان پرداخت و ثبت شده: آخرین فصل بسته‌شده.
     # فصل‌های بعد (مثلاً مهر و آبان قبل از پرداخت پورسانت) نه در فهرست می‌آیند نه در «کل سال» حساب می‌شوند.
@@ -98,8 +106,8 @@ class Settings(BaseSettings):
     # =====================================================
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
+        env_file=(BACKEND_DIR / "env", BACKEND_DIR / ".env", ".env"),
+        env_file_encoding="utf-8-sig",
         extra="ignore",
     )
 

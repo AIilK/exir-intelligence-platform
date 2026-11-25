@@ -32,6 +32,7 @@ const FinanceView = () => import('./FinanceView.jsx')
 const Reconciliation = () => import('./pages/Reconciliation.jsx')
 const Contracts = () => import('./pages/Contracts.jsx')
 const ExcelReports = () => import('./pages/ExcelReports.jsx')
+const ProductionForecast = () => import('./pages/ProductionForecast.jsx')
 const SalesOverview = () => import('@sales/pages/Overview.jsx')
 const Hybrid = () => import('@sales/pages/Hybrid.jsx')
 const Team = () => import('@sales/pages/Team.jsx')
@@ -72,6 +73,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             <Route path="reconciliation" element={page(Reconciliation)} />
             <Route path="contracts" element={page(Contracts)} />
             <Route path="reports" element={page(ExcelReports)} />
+            <Route path="forecast" element={<Navigate to="/forecast/production" replace />} />
+            <Route path="forecast/production" element={page(ProductionForecast)} />
             <Route element={<SalesFrame />}>
               <Route path="sales" element={page(SalesOverview)} />
               <Route path="hybrid" element={page(Hybrid)} />

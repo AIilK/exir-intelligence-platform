@@ -11,6 +11,9 @@ import TopBar from './TopBar.jsx'
 import { getMoneyUnit, setMoneyUnit } from '@finance/money-unit.ts'
 
 const GROUPS = [
+  { id: 'forecast', label: 'Forecast', dot: 'var(--u-fin)', items: [
+    { to: '/forecast/production', label: 'Forecast تولید', icon: '◷' },
+  ] },
   { id: 'home', items: [{ to: '/', label: 'نمای مدیر', icon: '✦', end: true }] },
   {
     id: 'sales', label: 'فروش کارآمد (هیبرید)', dot: 'var(--u-sales)', items: [
@@ -85,6 +88,7 @@ const GROUPS = [
 // اولین تطابق اعمال می‌شود؛ پس مسیر دقیق‌تر بالاتر است.
 const SALES_ALL = ['sales', 'salesOverview', 'salesHybrid', 'salesTeam', 'salesProducts', 'salesCustomers', 'salesAnalysis', 'salesInventory', 'salesB2B', 'salesExport', 'salesCommission']
 const ROUTE_MODULES = [
+  ['/forecast', ['productionForecast']],
   ['/', ['management', 'sales'], true],
   ['/sales', ['salesOverview']],
   ['/hybrid', ['salesHybrid']],

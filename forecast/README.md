@@ -46,3 +46,30 @@ Against the company spreadsheet formula on the same 3,172 products: 54.5% (ours)
 Promotion and inflation inputs did not improve the later months; the LLM helped only for export.
 
 Requirements: `pandas`, `numpy`, `pyodbc`, `jdatetime`, `lightgbm`, `scikit-learn`, `openpyxl`.
+
+
+## Production dashboard
+
+The unified app exposes `/forecast/production` behind the `productionForecast` permission.
+The published production plan combines Hybrid and domestic B2B demand. Export and open orders
+are excluded from this dashboard. Monthly category production consumes inventory once over the
+forecast horizon. Quarterly and annual summaries show the published months and report incomplete coverage.
+
+Install the worker dependencies with `python -m pip install -r forecast/requirements.txt`.
+Set `FORECAST_PYTHON` to that Python executable when the API uses a separate environment.
+Company connection settings are read from `backend/env`, `backend/.env`, and environment variables.
+`SQLSERVER_*` is accepted for Rahkaran. Keep credentials and all snapshots local.
+
+The API reads atomic JSON snapshots from `backend/data/production_forecast` or `FORECAST_DATA_DIR`.
+To refresh from live, read-only company databases, run
+
+```sh
+python forecast/scripts/refresh_production_dashboard.py refresh --data-root backend/data/production_forecast
+```
+
+The selected model definitions and backtest artifacts must exist in local `forecast/lab`.
+Public-market collection uses the local source and brand catalogs in `forecast/data`.
+Use `market` in place of `refresh` to collect public prices and USD observations.
+With `FORECAST_REFRESH_ENABLED=true`, inventory refresh runs daily at 06:15 Tehran and retraining
+uses the last Persian month closed after day 3. Public-market refresh runs Saturday at 09:15 Tehran.
+Last successful data remains available if refresh fails. The page displays observation dates and job status.

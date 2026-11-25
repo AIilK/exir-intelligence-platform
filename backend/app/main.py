@@ -14,6 +14,7 @@ from app.api.v1.liquidity import router as liquidity_router
 from app.api.v1.whatsapp import router as whatsapp_router
 from app.api.v1.staff_contracts import router as staff_contracts_router
 from app.api.v1.global_search import router as global_search_router
+from app.api.v1.production_forecast import router as production_forecast_router
 from app.chatbot.router import router as chatbot_router
 from app.auth.router import router as auth_router
 from app.auth.alarms import router as alarms_router
@@ -118,6 +119,7 @@ app.include_router(reminders_router, prefix="/api/v1")
 app.include_router(whatsapp_router, prefix="/api/v1")
 app.include_router(staff_contracts_router, prefix="/api/v1")
 app.include_router(global_search_router, prefix="/api/v1")
+app.include_router(production_forecast_router, prefix="/api/v1")
 
 @app.get("/")
 def root():

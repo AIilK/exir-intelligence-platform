@@ -53,3 +53,7 @@ sales/data/online_sale/
 linkedin-video/
 backend/test_fixtures/*.xlsx
 reports/
+
+# Runtime credentials and Python environment
+/backend/env
+.venv-runtime/
