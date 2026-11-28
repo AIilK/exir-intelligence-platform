@@ -50,7 +50,7 @@ CAT_WORDS = {"hair color": ["رنگ مو", "رنگ موی", "رنگمو"], "oxid
              "bleach powder": ["دکلره"]}
 # accessories and other products whose titles mention a category word
 EXCLUDE = re.compile(r"ابرو|کاسه|فرچه|دستکش|شانه|کلاه|سشوار|خوشبو|بدن|دوفاز|دو فاز|گره\s*باز|ناخن|ریمل|مژه|شامپو|ماسک|سرم")
-PAUSE = 1.5
+PAUSE = 0.8
 UA = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫", "01234567890123456789.")
 ML_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:میلی\s*لیتر|میلی‌لیتر|میل|ml|cc|سی\s*سی|گرم|گرمی|gr|g)(?![a-z])", re.I)
@@ -59,14 +59,14 @@ PACK_RE = re.compile(r"(?:(\d+)\s*(?:عددی|عدد|تایی|تا|دانه)|(?:
 UNIT_PRICE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*هزار\s*تومان")
 
 
-def fetch(url, tries=3):
+def fetch(url, tries=2):
     for k in range(tries):
         try:
-            d = json.loads(urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=45).read().decode("utf-8-sig"))
+            d = json.loads(urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20).read().decode("utf-8-sig"))
             time.sleep(PAUSE)
             return d
         except Exception as e:
-            wait = 60 * 2 ** k if getattr(e, "code", None) in (429, 490) else 5 * (k + 1)
+            wait = 30 * (k + 1) if getattr(e, "code", None) in (429, 490) else 5 * (k + 1)
             print(f"   retry in {wait}s ({str(e)[:60]})", flush=True)
             time.sleep(wait)
     return None
@@ -144,14 +144,21 @@ def basalam(src, wholesale, cfg, today, pm):
         jobs = [(cat, {"q": fa}) for cat, fa in CATEGORIES.items()]
     else:
         jobs = [(cat, {"q": f"{fa} {r.brand}"}) for cat, fa in CATEGORIES.items() for r in cfg.itertuples()]
-    seen = set()
+    seen, failures = set(), 0
     for k, (cat, q) in enumerate(jobs):
+        if failures >= 3:
+            print(f"   {src}: stopping early after {failures} consecutive failed requests", flush=True)
+            break
         for frm in (0, 48) if wholesale else (0,):
             p = {**q, "from": frm, "size": 48}
             if wholesale:
                 p["filters.isWholesale"] = "true"
             d = fetch(base + urllib.parse.urlencode(p))
-            if not d or not d.get("products"):
+            if d is None:
+                failures += 1
+                break
+            failures = 0
+            if not d.get("products"):
                 break
             for x in d["products"]:
                 if x["id"] in seen or bool(x.get("is_wholesale")) != wholesale or not x.get("IsAvailable", True):
@@ -168,8 +175,8 @@ def basalam(src, wholesale, cfg, today, pm):
 
 
 def woo(src, url, channel, cfg, today, pm):
-    rows, page = [], 1
-    while True:
+    rows, page, started = [], 1, time.time()
+    while page <= 30 and time.time() - started <= 90:
         d = fetch(f"{url}/wp-json/wc/store/v1/products?per_page=100&page={page}")
         if not d:
             break

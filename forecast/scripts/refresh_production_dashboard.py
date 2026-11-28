@@ -16,6 +16,8 @@ import pyodbc
 
 import pull_data as PD
 import pull_extra as PE
+from accuracy_tracker import build_accuracy_history
+from distributor_forecast import build_distributor_forecast
 from production_dashboard_data import (
     TEHRAN, external, historical_prices, live_listings, model_file_name, publish_plan, write_json,
 )
@@ -55,7 +57,7 @@ def rahkaran():
 
 def pull(source, full):
     kdb = {"kdb_goods.csv": PD.GOODS, "kdb_branch_stock.csv": PD.BRANCH_STOCK}
-    rk = {"rk_factory_stock.csv": PD.RK.STOCK_SQL}
+    rk = {"rk_factory_stock.csv": PD.RK.STOCK_SQL, "rk_goods.csv": PD.RK_GOODS}
     if full:
         kdb.update({"kdb_sales_monthly.csv": PD.SALES_MONTHLY, "kdb_stock_moves_monthly.csv": PE.STOCK_MOVES,
                     "kdb_discount_monthly.csv": PE.DISCOUNTS})
@@ -73,11 +75,34 @@ def pull(source, full):
 
 
 def put_model(root, closed, source):
-    target = root / model_file_name(closed)
+    name = model_file_name(closed)
+    target = root / name
     pending = target.with_suffix(".tmp")
     shutil.copyfile(source, pending)
     os.replace(pending, target)
+    archive_dir = root / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    arch_target = archive_dir / name
+    arch_pending = arch_target.with_suffix(".tmp")
+    shutil.copyfile(target, arch_pending)
+    os.replace(arch_pending, arch_target)
     return target
+
+
+def _publish_insights(sales_source, root, active_closed, *, goods_source=None):
+    plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
+    months = sorted(plan["overview"]["months"])
+    src = sales_source if (sales_source / "rk_invoices_daily.csv").is_file() else DATA
+    gsrc = goods_source or sales_source
+    lab_dir = HERE.parent / "lab"
+    write_json(
+        root / "distributors.json",
+        build_distributor_forecast(src, months, active_closed, top_n=30, goods_source=gsrc),
+    )
+    write_json(
+        root / "accuracy_history.json",
+        build_accuracy_history(src, root, active_closed, lab_dir=lab_dir, goods_source=gsrc),
+    )
 
 
 def seed(args):
@@ -97,6 +122,7 @@ def seed(args):
                        for name in ("rk_factory_stock.csv", "kdb_branch_stock.csv")).isoformat(timespec="seconds")
     model_at = datetime.fromtimestamp(args.model.stat().st_mtime, TEHRAN).isoformat(timespec="seconds")
     publish_plan(model, args.source, args.data_root, args.closed_month, inventory_at, model_at=model_at)
+    _publish_insights(args.source, args.data_root, args.closed_month)
 
 
 def refresh(root):
@@ -122,6 +148,7 @@ def refresh(root):
             model = put_model(root, active, stage / "production_plan_hybrid_b2b.csv")
             model_at = now()
         publish_plan(model, stage, root, active, now(), model_at=model_at)
+        _publish_insights(stage, root, active, goods_source=stage)
 
 
 def markets(root):
@@ -134,17 +161,6 @@ def markets(root):
         market.LISTINGS = stage / "rival_price_listings.csv"
         macro.OUT = stage
         try:
-            market.collect()
-            product_rows = live_listings(market.LISTINGS, market.SOURCES)
-            path = root / "market.json"
-            saved = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-            saved["live_products"] = product_rows
-            saved["live_updated_at"] = now()
-            write_json(path, saved)
-            done.append("market")
-        except (OSError, ValueError) as error:
-            print(f"Market updates unavailable ({type(error).__name__})", flush=True)
-        try:
             macro.usd()
             probe = stage / "usd_daily.csv"
             if not external(probe)["usd"]["date"]:
@@ -155,6 +171,17 @@ def markets(root):
             done.append("usd")
         except (OSError, ValueError) as error:
             print(f"USD updates unavailable ({type(error).__name__})", flush=True)
+        try:
+            market.collect()
+            product_rows = live_listings(market.LISTINGS, market.SOURCES)
+            path = root / "market.json"
+            saved = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+            saved["live_products"] = product_rows
+            saved["live_updated_at"] = now()
+            write_json(path, saved)
+            done.append("market")
+        except (OSError, ValueError) as error:
+            print(f"Market updates unavailable ({type(error).__name__})", flush=True)
     if not done:
         raise RuntimeError("All market sources failed")
 

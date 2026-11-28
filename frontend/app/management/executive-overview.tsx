@@ -193,7 +193,7 @@ function ChequeBlock({ data, open }: { data: ChequeOverview; open: (view: View) 
           <Stat dot={C_RECEIVED} label="دریافتی آینده" value={data.ready ? shortToman(data.receivedFuture.amount) : wait}
             hint={data.ready ? `${fa(data.receivedFuture.count)} چک · امروز به بعد` : "در حال دریافت"} go={() => open("receivedCheques")} peek={recFuturePeek} />
           <Stat tone="follow" label="برگشتی" value={returned ? shortToman(returned.amount_rial) : wait}
-            hint={returned ? `${fa(returned.count)} چک از ${faDigits(returned.from_date_jalali || "ابتدای سال")} · راهکاران (واخواست) ${shortToman(bySys("rahkaran")?.amount_rial)} · کارآمد (برگشتی نزد مشتری/صندوق) ${shortToman(bySys("karamad")?.amount_rial)}` : "در حال دریافت"}
+            hint={returned ? `${fa(returned.count)} چک · راهکاران (واخواست از ${faDigits(returned.from_date_jalali || "ابتدای سال")}) ${shortToman(bySys("rahkaran")?.amount_rial)} · کارآمد (مانده تسویه چک‌های برگشتی) ${shortToman(bySys("karamad")?.amount_rial)}` : "در حال دریافت"}
             go={() => setDrawer("returned")} goLabel="جزئیات و پیگیری وصول" />
           <Stat tone="watch" label="تعیین تکلیف نشده" value={overdue ? shortToman(Number(overdue.definite_rial || 0) + Number(overdue.other_state_rial || 0)) : wait}
             hint={overdue ? `${fa(Number(overdue.count || 0) + Number(overdue.other_state_count || 0))} چک سررسیدگذشته · نه وصول شده، نه برگشتی${recent ? ` · ${fa(recent.count)} چک تا ۳۰ روز` : ""}` : "در حال دریافت"}

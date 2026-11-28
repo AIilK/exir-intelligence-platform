@@ -46,9 +46,8 @@ RAHKARAN_HOLDING = {"نزد صندوق": "cashbox", "نزد بانک": "bank", "
 KARAMAD_OPEN = {1: "pending", 2: "cashbox", 3: "bank"}
 KARAMAD_COLLECTED = {4}
 KARAMAD_RETURNED = {6, 7, 8, 9, 10}      # history: returned at some point (8 = returned then collected)
-KARAMAD_RETURNED_OPEN = {6, 7, 10}       # returned and not settled yet (fetched together)
-# Finance rule (1405/07): in Karamad only «برگشتی نزد مشتری» (7) and «برگشتی نزد صندوق» (10) are returned
-# cheques; «برگشت نزذ صندوق» (6) and every other open overdue state is «تعیین تکلیف نشده».
+KARAMAD_RETURNED_OPEN = {6}              # 6 «برگشت نزذ صندوق» flows into undetermined; 7,10 come from vwReturnChequeRemain
+# Karamad «تسویه چکهای برگشتی» filtered to «برگشتی نزد مشتری» / «برگشتی نزد صندوق» (7, 10) for the active fiscal year.
 KARAMAD_RETURNED_STATES = {7, 10}
 
 
@@ -68,7 +67,7 @@ RAHKARAN_RETURNED_OPEN_STATES = (4, 17)  # fetched together: واخواست شد
 RAHKARAN_PROTESTED_STATE = 4
 RAHKARAN_STATE_LABELS = {4: "واخواست شده", 17: "حقوقی شده"}
 KARAMAD_STATE_LABELS = {1: "غیرقطعی", 2: "نزد صندوق", 3: "واگذار شده", 6: "برگشت نزد صندوق (کد ۶)",
-                        7: "برگشتی نزد مشتری", 10: "برگشتی نزد صندوق"}
+                        7: "برگشتی نزد مشتری", 8: "برگشتی وصول شده", 9: "عودت نزد مشتری", 10: "برگشتی نزد صندوق"}
 RAHKARAN_HOLDING_LABELS = {"cashbox": "نزد صندوق", "bank": "نزد بانک", "collector": "نزد مأمور وصول"}
 
 RELIANCE_BANDS = {"high": (80.0, None), "medium": (50.0, 80.0), "low": (None, 50.0)}
@@ -86,6 +85,48 @@ KARAMAD_CHEQUES_SQL = text("""
     LEFT JOIN dbo.[tblFactorF] AS f ON f.[ID] = c.[FactorRef]
     LEFT JOIN dbo.[tblVisitor] AS v ON v.[ID] = f.[VisitorRef]
     WHERE c.[DueDate] IS NOT NULL AND c.[DLRef] IS NOT NULL
+""")
+
+KARAMAD_RETURNED_SETTLEMENT_SQL = text("""
+    WITH active_fy AS (
+        SELECT TOP (1) [ID], [Name], [DateStart]
+        FROM dbo.[tblFiscalYear]
+        WHERE CAST(GETDATE() AS date) BETWEEN [DateStart] AND [DateEnd]
+        ORDER BY [DateStart] DESC
+    )
+    SELECT c.[inx] AS [ChequeID],
+           v.[Price] AS [NominalAmount],
+           v.[Paid] AS [PaidAmount],
+           v.[Spend] AS [SpendAmount],
+           v.[UnPaid] AS [Amount],
+           c.[DueDate],
+           c.[StatusRef],
+           st.[Name] AS [StatusName],
+           c.[Serial],
+           CAST(c.[Code] AS nvarchar(50)) AS [ChequeCode],
+           c.[InquiryCode] AS [SayadNumber],
+           c.[DLRef] AS [CustomerRef],
+           CAST(dl.[Code] AS nvarchar(50)) AS [CustomerCode],
+           dl.[Name] AS [CustomerName],
+           c.[BranchRef],
+           br.[Name] AS [BranchName],
+           vis.[Name] AS [VisitorName],
+           sl.[Name] AS [SLName],
+           fy.[Name] AS [FiscalYearName]
+    FROM dbo.[tblChequeD] AS c
+    CROSS JOIN active_fy AS fy
+    INNER JOIN dbo.[vwReturnChequeRemain] AS v ON v.[inx] = c.[inx]
+    LEFT JOIN dbo.[tblDL] AS dl ON dl.[ID] = c.[DLRef]
+    LEFT JOIN dbo.[tblSL] AS sl ON sl.[ID] = c.[SLRef]
+    LEFT JOIN dbo.[tblBranch] AS br ON br.[ID] = c.[BranchRef]
+    LEFT JOIN dbo.[tblFactorF] AS f ON f.[ID] = c.[FactorRef]
+    LEFT JOIN dbo.[tblVisitor] AS vis ON vis.[ID] = f.[VisitorRef]
+    OUTER APPLY (SELECT TOP (1) s.[Name] FROM dbo.[tblChequeDStatus] s WHERE s.[Code] = c.[StatusRef]) st
+    WHERE c.[StatusRef] IN (7, 10)
+      AND EXISTS (
+          SELECT 1 FROM dbo.[tblChequeDLines] l
+          WHERE l.[ChequeRef] = c.[inx] AND l.[FiscalYearLines] = fy.[ID]
+      )
 """)
 
 RAHKARAN_RETURNED_OPEN_SQL = text(f"""
@@ -138,11 +179,18 @@ def fetch_karamad_cheques() -> list[dict[str, Any]]:
         return [dict(r) for r in connection.execute(KARAMAD_CHEQUES_SQL).mappings()]
 
 
+def fetch_karamad_returned_settlement() -> list[dict[str, Any]]:
+    from app.database.karamad_sqlserver import get_karamad_sqlserver_engine
+    with get_karamad_sqlserver_engine().connect() as connection:
+        return [dict(r) for r in connection.execute(KARAMAD_RETURNED_SETTLEMENT_SQL).mappings()]
+
+
 Fetcher = Callable[[], list[dict[str, Any]]]
 DEFAULT_FETCHERS: dict[str, Fetcher] = {
     "rahkaran": fetch_rahkaran_predictions,
     "rahkaran_returned": fetch_rahkaran_returned_open,
     "karamad": fetch_karamad_cheques,
+    "karamad_returned": fetch_karamad_returned_settlement,
 }
 
 _cache: dict[tuple[str, date], tuple[float, Any]] = {}
@@ -315,6 +363,30 @@ class ReceivedChequeService:
                 "visitor_name": (r.get("VisitorName") or "").strip() or None,
                 "hybrid_settlement": False,
             })
+
+        settlement_rows = self._cached("karamad_returned", self.fetchers["karamad_returned"], refresh)
+        for r in settlement_rows:
+            if "تضمین" in str(r.get("SLName") or ""):
+                continue
+            unpaid = float(r.get("Amount") or 0)
+            if unpaid == 0:
+                continue
+            status = int(r.get("StatusRef") or 0)
+            returned.append({
+                "system": "karamad",
+                "customer_name": (r.get("CustomerName") or "").strip() or "مشتری نامشخص",
+                "amount_rial": unpaid,
+                "nominal_amount_rial": float(r.get("NominalAmount") or 0),
+                "paid_amount_rial": float(r.get("PaidAmount") or 0),
+                "due_date": _as_date(r.get("DueDate")),
+                "state": status,
+                "status_label": (r.get("StatusName") or "").strip() or KARAMAD_STATE_LABELS.get(status, "وضعیت " + str(status)),
+                "customer_code": _code(r.get("CustomerCode")),
+                "serial_number": _code(r.get("ChequeCode") or r.get("Serial")),
+                "sayad_number": _code(r.get("SayadNumber")),
+                "branch_name": (r.get("BranchName") or "").strip() or None,
+                "visitor_name": (r.get("VisitorName") or "").strip() or None,
+            })
         return cheques, returned
 
     # -- assembly -------------------------------------------------------------
@@ -385,15 +457,18 @@ class ReceivedChequeService:
                search: str | None = None, refresh: bool = False) -> dict[str, Any]:
         horizon_days = max(1, min(int(horizon_days), 365))
         cheques, returned, sources, warnings = self._load(channel, refresh)
-        # برگشتی واقعی: راهکاران فقط «واخواست»؛ کارآمد «برگشتی نزد مشتری» و «برگشتی نزد صندوق».
-        # بقیه (حقوقی راهکاران، «برگشت نزذ صندوق» کارآمد، …) «تعیین تکلیف نشده» حساب می‌شوند.
+        # برگشتی واقعی: راهکاران فقط «واخواست»؛ کارآمد «مانده تسویه چک‌های برگشتی نزد مشتری/صندوق» (وضعیت‌های ۷ و ۱۰ سال مالی جاری).
+        # بقیه (حقوقی راهکاران، «برگشت نزذ صندوق» کد ۶ کارآمد، …) «تعیین تکلیف نشده» حساب می‌شوند.
         def is_returned(r: dict[str, Any]) -> bool:
             if r["system"] == "rahkaran":
                 return r.get("state") == RAHKARAN_PROTESTED_STATE
             return r.get("state") in KARAMAD_RETURNED_STATES
         legal = [r for r in returned if not is_returned(r)]
         since = returned_from_date()
-        returned = [r for r in returned if is_returned(r) and r.get("due_date") and r["due_date"] >= since]
+        returned = [
+            r for r in returned
+            if is_returned(r) and (r["system"] != "rahkaran" or (r.get("due_date") and r["due_date"] >= since))
+        ]
         cheques = self._filter(cheques, branch, visitor, holding, reliance_band, search)
         settlement = [c for c in cheques if c["hybrid_settlement"]]
         counted = [c for c in cheques if not c["hybrid_settlement"]]
@@ -445,7 +520,7 @@ class ReceivedChequeService:
                            "count": sum(1 for r in returned if r["system"] == s)}
                           for s in sorted({r["system"] for r in returned})],
             "in_totals": False,
-            "rule": "چک برگشتی تسویه‌نشده با سررسید از اول سال جاری (راهکاران: فقط واخواست؛ کارآمد: برگشتی نزد مشتری و برگشتی نزد صندوق) فقط برای اطلاع است و در قطعی و اتکا نیست.",
+            "rule": "راهکاران: چک واخواست‌شده از اول سال جاری؛ کارآمد: مانده تسویه چک‌های برگشتی نزد مشتری/صندوق (vwReturnChequeRemain.UnPaid) در سال مالی جاری؛ فقط برای اطلاع است و در قطعی و اتکا نیست.",
             "from_date_jalali": format_jalali_date(since),
         }
 
@@ -483,7 +558,7 @@ class ReceivedChequeService:
 
     @staticmethod
     def _is_returned(r: dict[str, Any]) -> bool:
-        """برگشتی واقعی: راهکاران فقط «واخواست»؛ کارآمد «برگشتی نزد مشتری» و «برگشتی نزد صندوق»."""
+        """برگشتی واقعی: راهکاران فقط «واخواست»؛ کارآمد «مانده تسویه چک‌های برگشتی نزد مشتری/صندوق» (کدهای ۷ و ۱۰)."""
         if r["system"] == "rahkaran":
             return r.get("state") == RAHKARAN_PROTESTED_STATE
         return r.get("state") in KARAMAD_RETURNED_STATES
@@ -509,10 +584,10 @@ class ReceivedChequeService:
         if kind == "returned":
             since = returned_from_date()
             rows = [row(r, r.get("status_label") or "") for r in returned
-                    if self._is_returned(r) and r.get("due_date") and r["due_date"] >= since]
+                    if self._is_returned(r) and (r["system"] != "rahkaran" or (r.get("due_date") and r["due_date"] >= since))]
             title = "چک‌های برگشتی"
-            rule = ("فقط سررسید " + format_jalali_date(returned_from_date()) + " به بعد · "
-                    "راهکاران: فقط «واخواست شده»؛ کارآمد: «برگشتی نزد مشتری» و «برگشتی نزد صندوق».")
+            rule = ("راهکاران: واخواست‌شده از " + format_jalali_date(returned_from_date()) + " به بعد · "
+                    "کارآمد: مانده تسویه چک‌های برگشتی نزد مشتری/صندوق در سال مالی جاری (vwReturnChequeRemain.UnPaid).")
         else:
             overdue = [c for c in cheques if not c["hybrid_settlement"] and c["days_to_due"] < 0]
             rows = [row(c, c.get("status_label") or RAHKARAN_HOLDING_LABELS.get(c.get("holding"), HOLDING_LABELS.get(c.get("holding"), "")))

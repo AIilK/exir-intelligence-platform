@@ -73,3 +73,36 @@ Use `market` in place of `refresh` to collect public prices and USD observations
 With `FORECAST_REFRESH_ENABLED=true`, inventory refresh runs daily at 06:15 Tehran and retraining
 uses the last Persian month closed after day 3. Public-market refresh runs Saturday at 09:15 Tehran.
 Last successful data remains available if refresh fails. The page displays observation dates and job status.
+
+## Historical integrity and safety-stock audit
+
+`forecast_lab2.backtest` estimates statistical seasonality separately at each origin.
+Learned models use seasonal factors estimated at their training cutoff. Configuration
+selection uses early outcomes only; early totals that cross into the late period are
+excluded. Automatic low-sales detection in `forecast_lab` uses a trailing baseline.
+
+Run the reproducible audit against an explicit saved snapshot:
+
+```powershell
+$env:EXIR_FORECAST_SNAPSHOT = (Resolve-Path forecast/data/confirmation_2026-11-25).Path
+$env:EXIR_FORECAST_LAST_CLOSED_MONTH = '1405/08'
+.venv-runtime/Scripts/python.exe forecast/scripts/audit_forecast_fixes.py --output forecast/review/causal-safety-latest-2026-11-28
+```
+
+Outputs include input hashes, both full-history and causal backtests, early-selected
+model definitions, and held-out safety coverage. This reads saved company exports;
+it does not query the LAN or publish a production snapshot. Checkpoints require the
+same input hashes. Keep these private artifacts in the ignored `forecast/review/`.
+
+The safety candidate pools normalized **joint three-month Hybrid+B2B residuals**
+within ABC classes, calibrated on early outcomes for horizons 2, 3, 4. It measures
+late-period coverage and buffer size without assuming independent monthly/channel
+errors. Sparse SKU history uses its class pool. Overlapping forecast windows and
+shared SKU shocks mean these observations are dependent: targets are not guarantees.
+The 1-, 6-, and 12-month displayed buffers remain square-root approximations and
+have no demonstrated coverage. Legacy plans are explicitly labeled unvalidated;
+missing SKU RMSE uses a nonzero historical pool instead of zero.
+
+Use `run_hybrid_b2b_plan.py --lab-dir <audit-output> --output-dir <candidate-output>`
+with the same snapshot/month environment to build an isolated candidate. The audit
+does not automatically replace operational models or inventory recommendations.

@@ -49,12 +49,12 @@ def kdb():
 
 
 def rahkaran():
-    d = read_env("RAHKARAN_SQLSERVER_")
+    d = read_env("RAHKARAN_SQLSERVER_") or read_env("SQLSERVER_")
     if not d.get("SERVER"):
         d = {"SERVER": os.environ.get("RK_SERVER", ""), "DATABASE": os.environ.get("RK_DB", ""),
              "USERNAME": os.environ.get("RK_USER", ""), "PASSWORD": os.environ.get("RK_PWD", "")}
     if not all(d.get(k) for k in ("SERVER", "DATABASE", "USERNAME", "PASSWORD")):
-        raise SystemExit("Rahkaran settings missing (backend/.env RAHKARAN_SQLSERVER_* or RK_* env vars)")
+        raise SystemExit("Rahkaran settings missing (backend/.env RAHKARAN_SQLSERVER_*, SQLSERVER_*, or RK_* env vars)")
     return pyodbc.connect(conn_string(d), timeout=30, readonly=True)
 
 
@@ -110,6 +110,17 @@ WHERE sp.Name = N'دریافت از تولید'
 GROUP BY pt.Code, CONVERT(char(10), iv.Date, 23)
 """
 
+RK_GOODS = """
+SELECT CAST(pt.Code AS nvarchar(50)) AS code,
+       LTRIM(RTRIM(ISNULL(pt.Name, N''))) AS name,
+       CASE WHEN pt.State = 1 THEN 1 ELSE 0 END AS active,
+       N'' AS brand,
+       LTRIM(RTRIM(ISNULL(c.Name, N''))) AS category,
+       N'' AS unit
+FROM LGS3.Part pt
+LEFT JOIN LGS3.Category c ON c.CategoryID = pt.CategoryRef
+"""
+
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
@@ -127,9 +138,11 @@ def main():
     with rahkaran() as cn:
         prod = df(cn, RK_PRODUCTION_DAILY)
         stock = df(cn, RK.STOCK_SQL)
+        rk_goods = df(cn, RK_GOODS)
     prod.to_csv(OUT / "rk_production_daily.csv", index=False, encoding="utf-8-sig")
     stock.to_csv(OUT / "rk_factory_stock.csv", index=False, encoding="utf-8-sig")
-    print("Rahkaran: production rows", len(prod), "| factory stock rows", len(stock))
+    rk_goods.to_csv(OUT / "rk_goods.csv", index=False, encoding="utf-8-sig")
+    print("Rahkaran: production rows", len(prod), "| factory stock rows", len(stock), "| goods", len(rk_goods))
 
 
 if __name__ == "__main__":

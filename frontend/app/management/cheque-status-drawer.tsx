@@ -119,7 +119,7 @@ export default function ChequeStatusDrawer({ kind, onClose, onOpenPage, initial 
               <h4>چند روز از سررسید گذشته</h4>
               {d.by_age.map((g) => <div key={g.label} className="csd-bar">
                 <span>{g.label}</span>
-                <span className="csd-track"><i style={{ width: `${(100 * g.amount_rial) / maxAge}%` }} /></span>
+                <span className="csd-track"><i style={{ width: `${Math.max(0, (100 * g.amount_rial) / maxAge)}%` }} /></span>
                 <span className="csd-val">{shortToman(g.amount_rial)}<small>{fa(g.count)} چک</small></span>
               </div>)}
             </section>
@@ -127,7 +127,7 @@ export default function ChequeStatusDrawer({ kind, onClose, onOpenPage, initial 
               <h4>بیشترین مبلغ به تفکیک مشتری</h4>
               {d.top_customers.map((g) => <button key={g.label} className="csd-bar link" onClick={() => { setSearch(g.label); setTab("list"); }}>
                 <span className="csd-name">{g.label}</span>
-                <span className="csd-track"><i className="alt" style={{ width: `${(100 * g.amount_rial) / maxTop}%` }} /></span>
+                <span className="csd-track"><i className="alt" style={{ width: `${Math.max(0, (100 * g.amount_rial) / maxTop)}%` }} /></span>
                 <span className="csd-val">{shortToman(g.amount_rial)}<small>{fa(g.count)} چک</small></span>
               </button>)}
             </section>
@@ -147,7 +147,7 @@ export default function ChequeStatusDrawer({ kind, onClose, onOpenPage, initial 
               <table className="csd-table">
                 <thead><tr>
                   <th onClick={() => sortBy("customer")}>مشتری{arrow("customer")}</th>
-                  <th onClick={() => sortBy("amount")}>مبلغ (تومان){arrow("amount")}</th>
+                  <th onClick={() => sortBy("amount")}>{kind === "returned" ? "مانده (تومان)" : "مبلغ (تومان)"}{arrow("amount")}</th>
                   <th onClick={() => sortBy("due")}>سررسید{arrow("due")}</th>
                   <th onClick={() => sortBy("days")}>گذشته{arrow("days")}</th>
                   <th>وضعیت</th><th>شماره چک</th><th>ثبت در سیستم</th>

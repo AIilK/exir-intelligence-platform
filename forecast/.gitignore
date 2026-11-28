@@ -1,6 +1,7 @@
 # company sales/stock data and generated outputs stay local
 data/
 lab/
+review/
 *.xlsx
 *.csv
 *.log

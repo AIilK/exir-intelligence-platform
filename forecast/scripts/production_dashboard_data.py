@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from production_plan_io import production_quantities
+from safety_calibration import apply as apply_safety
 
 TEHRAN = ZoneInfo("Asia/Tehran")
 CHANNELS = ("hybrid", "b2b")
@@ -48,19 +49,44 @@ def inventory(source):
     return factory, branches
 
 
+def load_goods(source):
+    goods = read(source, "kdb_goods.csv", dtype={"code": str}).drop_duplicates("code").set_index("code")
+    fallback_path = source / "rk_goods.csv"
+    if not fallback_path.is_file():
+        return goods
+    rk = read(source, "rk_goods.csv", dtype={"code": str}).drop_duplicates("code").set_index("code")
+    rk = rk.reindex(columns=goods.columns)
+    goods = goods.reindex(goods.index.union(rk.index)).rename_axis("code")
+    for col in ("name", "brand", "category"):
+        if col in goods.columns and col in rk.columns:
+            cur = goods[col].fillna("").astype(str).str.strip()
+            fb = rk[col].reindex(goods.index).fillna("").astype(str).str.strip()
+            goods[col] = cur.where(cur.ne(""), fb)
+    if "active" in goods.columns and "active" in rk.columns:
+        goods["active"] = goods["active"].combine_first(rk["active"].reindex(goods.index))
+    return goods
+
+
 def publish_plan(model, source, root, closed_month, inventory_at, *, model_at=None):
     model = pd.read_csv(model, dtype={"code": str}, index_col="code")
     if not model.index.is_unique:
         raise ValueError("Duplicate product codes in the forecast")
     months = sorted(key.removeprefix("hybrid_") for key in model if key.startswith("hybrid_") and "/" in key)
-    if len(months) != 3 or not all(f"b2b_{month}" in model for month in months):
+    if len(months) < 3 or not all(f"b2b_{month}" in model for month in months):
         raise ValueError("Incomplete production forecast horizon")
-    goods = read(source, "kdb_goods.csv", dtype={"code": str}).drop_duplicates("code").set_index("code")
+    goods = load_goods(source)
     factory, branches = inventory(source)
     factories = factory.groupby("code").qty.sum()
     branch_stock = branches.groupby("code").qty.sum()
     keep = [f"{ch}_{field}" for ch in CHANNELS for field in ("class", "model", "rmse", "3m", *months)]
     plan = model[keep].copy()
+    calibration_path = root / "safety_calibration.json"
+    calibration = json.loads(calibration_path.read_text(encoding="utf-8")) if calibration_path.is_file() else None
+    if calibration:
+        plan = apply_safety(plan, calibration, CHANNELS)
+    elif "safety_calibrated_3m" in model:
+        for key in ("safety_calibrated_3m", "safety_calibration_samples", "safety_method"):
+            plan[key] = model[key]
     # Keep stock-only codes in inventory, and give them no production recommendation.
     plan = plan.reindex(plan.index.union(factories.index).union(branch_stock.index)).rename_axis("code")
     is_forecast = plan.index.isin(model.index)
@@ -77,7 +103,7 @@ def publish_plan(model, source, root, closed_month, inventory_at, *, model_at=No
         for month in months:
             plan[f"{ch}_{month}"] = plan[f"{ch}_{month}"].fillna(0)
     for horizon in HORIZONS:
-        plan[f"safety_{horizon}"] = plan.safety * np.sqrt(horizon / 3)
+        plan[f"safety_{horizon}"] = plan.safety * np.sqrt(horizon / len(months))
     missing_names = plan.name.eq("")
     plan.loc[missing_names, "name"] = model.name.reindex(plan.index).loc[missing_names].fillna("")
     plan["category"] = goods.category.reindex(plan.index).fillna("")
@@ -95,6 +121,9 @@ def publish_plan(model, source, root, closed_month, inventory_at, *, model_at=No
     write_json(root / "plan.json", {
         "overview": {
             "closed_month": closed_month, "months": months, "model_at": model_at or published,
+            "safety": {"method": "joint_empirical_3m" if calibration or "safety_calibrated_3m" in model else "legacy_rmse_unvalidated",
+                       "validation": calibration.get("validation", []) if calibration else [],
+                       "note": "Observed historical coverage; service targets are not guarantees. Other horizons are approximations."},
             "model_file": model_file_name(closed_month), "inventory_at": inventory_at, "published_at": published,
             "totals": totals, "sku_count": int(is_forecast.sum()), "inventory_skus": len(factories.index.union(branch_stock.index)),
             "production_skus": int(plan.production_need.gt(0).sum()),
@@ -143,7 +172,7 @@ def live_listings(path, sources):
     if raw.empty:
         raise ValueError("No current offers received")
     raw["source_url"] = raw.source.map(catalog)
-    raw = raw.rename(columns={"unit_price": "price", "size_ml": "pack_size"})
+    raw = raw.drop(columns=["price"], errors="ignore").rename(columns={"unit_price": "price", "size_ml": "pack_size"})
     raw["size_unit"] = np.where(raw.category.eq("bleach powder"), "g", "ml")
     columns = ["company", "brand", "category", "title", "source", "source_url", "date", "pmonth", "price", "pack_size", "size_unit", "channel"]
     return records(raw[columns].drop_duplicates())

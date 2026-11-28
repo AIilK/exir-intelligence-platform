@@ -11,9 +11,6 @@ import TopBar from './TopBar.jsx'
 import { getMoneyUnit, setMoneyUnit } from '@finance/money-unit.ts'
 
 const GROUPS = [
-  { id: 'forecast', label: 'Forecast', dot: 'var(--u-fin)', items: [
-    { to: '/forecast/production', label: 'Forecast تولید', icon: '◷' },
-  ] },
   { id: 'home', items: [{ to: '/', label: 'نمای مدیر', icon: '✦', end: true }] },
   {
     id: 'sales', label: 'فروش کارآمد (هیبرید)', dot: 'var(--u-sales)', items: [
@@ -58,6 +55,9 @@ const GROUPS = [
       { to: '/reconciliation', label: 'مغایرت‌گیری بانک', icon: '⚖' },
     ],
   },
+  { id: 'forecast', label: 'Forecast', dot: 'var(--u-fin)', items: [
+    { to: '/forecast/production', label: 'Forecast تولید', icon: '◷' },
+  ] },
   {
     id: 'files', label: 'پرونده‌ها', dot: 'var(--u-text)', items: [
       { to: '/files/hybrids', label: 'هیبریدها', icon: '⬢' },

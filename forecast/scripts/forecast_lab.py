@@ -101,7 +101,7 @@ n = len(codes)
 k_idx = {c: k for k, c in enumerate(codes)}
 branches = sales.groupby("mi")["branches"].max().reindex(idx).ffill().fillna(1).values.astype(float)
 total = net[codes].sum(axis=1)
-local_med = total.rolling(13, center=True, min_periods=5).median()
+local_med = total.shift(1).rolling(13, min_periods=5).median()
 excluded = set(mon(m) for m in MANUAL_EXCLUDE) | set(int(i) for i in total.index[total < 0.3 * local_med])
 valid_row = np.array([i not in excluded for i in idx])
 Y = net[codes].to_numpy(copy=True)

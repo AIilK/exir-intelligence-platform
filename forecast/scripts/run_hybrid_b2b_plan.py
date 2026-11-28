@@ -9,14 +9,19 @@ import pandas as pd
 import channels as C
 import forecast_lab2 as L
 from production_plan_io import production_quantities
+from safety_calibration import apply as apply_safety
 
 F = C.F
 CHANNELS = ("hybrid", "b2b")
 
 
 def saved_rmse(name, choices):
-    with np.load(F.LAB / f"final_{name}.npz", allow_pickle=True) as saved, np.load(F.LAB / f"backtest_{name}.npz") as run:
-        codes = pd.Index(saved["codes"].astype(str), name="code")
+    with np.load(F.LAB / f"backtest_{name}.npz") as run:
+        if "codes" in run:
+            codes = pd.Index(run["codes"].astype(str), name="code")
+        else:
+            with np.load(F.LAB / f"final_{name}.npz", allow_pickle=True) as saved:
+                codes = pd.Index(saved["codes"].astype(str), name="code")
         actual, classes = run["ACT"], run["CLS_P"]
         chosen = np.zeros_like(actual)
         for i, cls in enumerate(F.CLASSES):
@@ -31,14 +36,21 @@ def forecast(name, history, codes, valid, targets, last):
     stat = L.Stat(channel, channel.history(config))
     row = F.R(last)
     variants = stat.forecast(row, targets)
-    if name == "b2b":
-        F.log("fitting B2B LightGBM and neural network on closed months")
-        learner = L.Learn(L.Feats(channel, stat.D, config), last, batch_size=1024)
+    if any(model not in variants for model in choices.values()):
+        F.log(f"fitting {name} LightGBM and diverse ensemble on closed months")
+        learner = L.Learn(L.Feats(channel, stat.D, config), last)
         variants.update(learner.forecast(row, targets))
-        variants = F.ensembles(variants)
+        variants = L.ensembles(variants)
+    rec = config.get("reconcile")
+    if rec:
+        variants = L.reconcile_origin(channel, config, variants, row, targets, rec[0], rec[1])
     classes = channel.CLS[row]
     monthly = np.stack([np.choose(classes, [variants[choices[cls]][j] for cls in F.CLASSES])
                         for j in range(len(targets))])
+    bias_factors = reference.get("bias_factors")
+    if bias_factors:
+        mult = np.array([float(bias_factors.get(F.CLASSES[c], 1.0)) for c in classes], dtype=np.float32)
+        monthly = np.clip(monthly * mult[None, :], 0, None)
     if not np.isfinite(monthly).all() or (monthly < 0).any():
         raise ValueError(f"Invalid {name} demand predictions")
     labels = np.array(F.CLASSES)[classes]
@@ -91,11 +103,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--lab-dir", type=Path, help="Use an isolated validated model/calibration bundle")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.lab_dir:
+        F.LAB = args.lab_dir.resolve()
     F.LGB_PARAMS.update(n_jobs=args.threads, n_estimators=160)
     last = F.mon(F.LAST_FULL)
-    targets = [last + horizon for horizon in (2, 3, 4)]
+    targets = [last + horizon for horizon in (1, 2, 3, 4)]
     valid = ~np.isin(F.idx, [F.mon(m) for m in F.MANUAL_EXCLUDE])
     hybrid = F.net.reindex(columns=F.codes).to_numpy(copy=True)
     hybrid[~valid] = np.nan
@@ -103,6 +118,12 @@ def main():
     forecast_rows = [forecast(name, hist, codes, valid, targets, last)
                      for name, hist, codes in (("hybrid", hybrid, F.codes), ("b2b", b2b, b2b_codes))]
     panel = pd.concat(forecast_rows, axis=1)
+    calibration_path = F.LAB / "safety_calibration.json"
+    if calibration_path.is_file():
+        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+        panel = apply_safety(panel, calibration, CHANNELS)
+    else:
+        F.log("No empirical calibration installed; legacy safety coverage remains unvalidated")
     for ch in CHANNELS:
         for target in targets:
             field = f"{ch}_{F.plabel(target)}"

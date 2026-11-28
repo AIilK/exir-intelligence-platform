@@ -12,14 +12,33 @@ LEGACY_ORDER_FIELDS = [
 
 def production_quantities(plan, channels, goods, factory_stock, branch_stock):
     """Calculate production from channel demand, backtest error and inventory."""
-    fields = [f"{ch}_{value}" for ch in channels for value in ("3m", "rmse")]
+    fields = [f"{ch}_3m" for ch in channels]
     plan = plan.fillna({key: 0 for key in fields})
     plan["factory_stock_1_4"] = factory_stock.reindex(plan.index).fillna(0)
     plan["branch_stock"] = branch_stock.reindex(plan.index).fillna(0)
     plan["demand_3m"] = plan[[f"{ch}_3m" for ch in channels]].sum(axis=1)
     classes = plan[[f"{ch}_class" for ch in channels]]
     z = np.select([classes.eq("A").any(axis=1), classes.eq("B").any(axis=1)], [1.645, 1.282], default=0)
-    plan["safety"] = z * np.sqrt(plan[[f"{ch}_rmse" for ch in channels]].pow(2).sum(axis=1)) * np.sqrt(3)
+    if "safety_calibrated_3m" in plan:
+        # Stock-only rows have no forecast and require no buffer.
+        buffer = plan.safety_calibrated_3m.where(classes.notna().any(axis=1), 0)
+        if buffer.isna().any() or not np.isfinite(buffer).all() or buffer.lt(0).any():
+            raise ValueError("Missing or invalid calibrated safety stock")
+        plan["safety"] = buffer
+    else:
+        # Compatibility for old saved plans: missing SKU error uses a pool,
+        # never a zero that implies evidence of perfect accuracy.
+        errors = plan[[f"{ch}_rmse" for ch in channels]].copy()
+        for ch in channels:
+            key = f"{ch}_rmse"
+            known = errors[key].where(errors[key].gt(0)).median()
+            missing = errors[key].isna() & plan[f"{ch}_class"].notna() & (z > 0)
+            if missing.any() and not np.isfinite(known):
+                raise ValueError("No safety error history or calibration available")
+            errors.loc[missing, key] = known
+        horizon_months = len([k for k in plan.columns if k.startswith(f"{channels[0]}_") and "/" in k]) or 3
+        plan["safety"] = z * np.sqrt(errors.fillna(0).pow(2).sum(axis=1)) * np.sqrt(horizon_months)
+        plan["safety_method"] = "legacy_rmse_unvalidated"
     active = goods["active"].reindex(plan.index)
     plan["inactive"] = active.astype(str).str.lower().isin(("false", "0"))
     need = plan.demand_3m + plan.safety - plan.factory_stock_1_4 - plan.branch_stock

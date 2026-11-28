@@ -194,6 +194,7 @@ COMMON_VIEWS = ["alerts"]
 # «admin» یعنی فقط مدیر سیستم (اجرای دستی همه Agentها).
 API_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("/api/v1/forecast/refresh", ("admin",)),
+    ("/api/v1/forecast/distributors/overrides", ("admin",)),
     ("/api/v1/forecast", ("productionForecast",)),
     ("/api/v1/chatbot", ("chatbot",)),
     ("/api/v1/whatsapp", ("whatsapp",)),
